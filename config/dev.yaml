@@ -1,0 +1,6 @@
+VPC_CIDR: 10.254.172.0/24
+FQDN: dev.mydomain.io
+
+# Optional
+# CERTIFICATE_ARN: >-
+#   arn:aws:acm:us-east-1:XXXXXXXXX:certificate/e8093404-7db1-4042-90d0-01eb5bde1ffc
