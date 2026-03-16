@@ -1,7 +1,46 @@
 
 # AWS CDK app
 
-A Github template using the AWS CDK to create an ECS infrastructure project
+A Github template using the AWS CDK to create an ECS infrastructure project with Amazon Neptune graph database support.
+
+## Features
+
+- **ECS Cluster**: Container orchestration with Fargate
+- **Application Load Balancer**: Traffic distribution and SSL termination  
+- **VPC Networking**: Isolated network environment
+- **Amazon Neptune**: Managed graph database for knowledge graphs
+- **Bastion Host**: Secure remote access for Neptune development
+
+## Neptune Graph Database
+
+This template includes a complete Neptune deployment with:
+- Multi-AZ Neptune cluster for high availability
+- Automated backups and monitoring
+- Secure bastion host for local development access
+- Example scripts for data ingestion and querying
+
+For detailed Neptune setup and usage instructions, see [docs/neptune.md](docs/neptune.md).
+
+### Quick Start with Neptune
+
+1. **Deploy the infrastructure**:
+   ```bash
+   cdk deploy --context env=dev
+   ```
+
+2. **Set up local Neptune development**:
+   ```bash
+   ./tools/setup_neptune_local.sh
+   ```
+
+3. **Connect and run examples**:
+   ```bash
+   # Get connection details from CDK outputs
+   python tools/neptune_connect.py --bastion-ip YOUR_BASTION_IP --neptune-endpoint YOUR_NEPTUNE_ENDPOINT --mode test
+   
+   # Run example graph operations
+   python tools/neptune_examples.py
+   ```
 
 # Prerequisites
 
