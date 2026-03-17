@@ -151,16 +151,7 @@ awscurl --service neptune-db --region us-east-1 \
 awscurl --service neptune-db --region us-east-1 \
   -X POST \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  --data-urlencode 'update=
-    PREFIX ex: <http://example.org/>
-    INSERT DATA {
-      ex:Alice a ex:Person ;
-               ex:name "Alice" ;
-               ex:knows ex:Bob .
-      ex:Bob   a ex:Person ;
-               ex:name "Bob" .
-    }
-  ' \
+  --data "update=PREFIX+ex%3A+%3Chttp%3A%2F%2Fexample.org%2F%3E+INSERT+DATA+%7B+ex%3AAlice+a+ex%3APerson+%3B+ex%3Aname+%22Alice%22+%3B+ex%3Aknows+ex%3ABob+.+ex%3ABob+a+ex%3APerson+%3B+ex%3Aname+%22Bob%22+.+%7D" \
   "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
 ```
 
@@ -171,9 +162,22 @@ awscurl --service neptune-db --region us-east-1 \
   -X POST \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -H "Accept: application/sparql-results+json" \
-  --data-urlencode "query=SELECT * WHERE { ?s ?p ?o } LIMIT 10" \
+  --data "query=SELECT+%2A+WHERE+%7B+%3Fs+%3Fp+%3Fo+%7D+LIMIT+10" \
   "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
 ```
+
+**Delete all data:**
+
+```console
+awscurl --service neptune-db --region us-east-1 \
+  -X POST \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data "update=CLEAR+ALL" \
+  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
+```
+
+> [!WARNING]
+> `CLEAR ALL` permanently deletes every triple in the database. To delete a specific named graph only: `CLEAR GRAPH <http://example.org/>`.
 
 > [!NOTE]
 > Neptune has IAM auth enabled. All requests must be signed — plain `curl` will return `AccessDeniedException`. Use `awscurl` or the Python `aws-requests-auth` library.
