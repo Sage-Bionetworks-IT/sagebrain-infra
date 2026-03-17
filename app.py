@@ -1,8 +1,9 @@
 import aws_cdk as cdk
 
 from src.network_stack import NetworkStack
-from src.neptune_stack import NeptuneStack
+from src.neptune_api_stack import NeptuneApiStack
 from src.neptune_bastion_stack import NeptuneBastionStack
+from src.neptune_stack import NeptuneStack
 from src.utils import load_context_config
 
 cdk_app = cdk.App()
@@ -45,5 +46,16 @@ neptune_bastion_stack = NeptuneBastionStack(
     env=env,
 )
 # Note: No explicit dependency needed as the security group reference creates the implicit dependency
+
+# Public read-only API for Neptune
+neptune_api_stack = NeptuneApiStack(
+    scope=cdk_app,
+    construct_id=f"{STACK_NAME_PREFIX}-neptune-api",
+    vpc=network_stack.vpc,
+    neptune_cluster_endpoint=neptune_stack.neptune_cluster.attr_endpoint,
+    neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
+    env=env,
+)
+neptune_api_stack.add_dependency(neptune_stack)
 
 cdk_app.synth()
