@@ -130,10 +130,12 @@ aws --profile sagebrain ssm start-session --target i-052ceee0a9de50b47
 
 ### 2. Query Neptune from the Bastion
 
-Install `awscurl` on the bastion:
+Once connected via SSM, activate the Neptune environment (`awscurl` is pre-installed):
 
 ```console
-pip3 install awscurl
+cd
+source ~/.bashrc
+conda activate neptune
 ```
 
 Use `awscurl` to interact with Neptune. Requests are automatically signed using the EC2 instance's IAM role.
