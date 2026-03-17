@@ -16,7 +16,7 @@ class NeptuneBastionStack(cdk.Stack):
         vpc: ec2.Vpc,
         neptune_security_group: ec2.SecurityGroup,
         bastion_config: dict,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
@@ -54,7 +54,9 @@ class NeptuneBastionStack(cdk.Stack):
         # -------------------
         # Allow Neptune access from bastion host
         neptune_security_group.add_ingress_rule(
-            peer=ec2.Peer.security_group_id(self.bastion_security_group.security_group_id),
+            peer=ec2.Peer.security_group_id(
+                self.bastion_security_group.security_group_id
+            ),
             connection=ec2.Port.tcp(8182),
             description="Neptune access from bastion host",
         )
@@ -67,8 +69,12 @@ class NeptuneBastionStack(cdk.Stack):
             "BastionRole",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
             managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore"),
-                iam.ManagedPolicy.from_aws_managed_policy_name("CloudWatchAgentServerPolicy"),
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "AmazonSSMManagedInstanceCore"
+                ),
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "CloudWatchAgentServerPolicy"
+                ),
             ],
         )
 
@@ -101,29 +107,29 @@ class NeptuneBastionStack(cdk.Stack):
         # User Data Script
         # -------------------
         user_data_script = ec2.UserData.for_linux()
-        
+
         # Basic system setup
         user_data_script.add_commands(
             "dnf update -y",
             "dnf install -y amazon-cloudwatch-agent",
             "dnf install -y python3 python3-pip git",
         )
-        
+
         # Install Neptune tools
         user_data_script.add_commands(
             "pip3 install --user gremlinpython boto3 requests",
             "pip3 install --user awscli",
         )
-        
+
         # Setup Neptune proxy script if enabled
         if bastion_config.get("enable_neptune_proxy", True):
             user_data_script.add_commands(
                 "mkdir -p /home/ec2-user/neptune-proxy",
                 "chown ec2-user:ec2-user /home/ec2-user/neptune-proxy",
             )
-            
+
             # Create a simple Neptune WebSocket proxy
-            proxy_script = '''#!/usr/bin/env python3
+            proxy_script = """#!/usr/bin/env python3
 import asyncio
 import websockets
 import ssl
@@ -136,24 +142,24 @@ async def proxy_handler(websocket, path):
     if not neptune_endpoint:
         print("NEPTUNE_ENDPOINT environment variable not set")
         return
-    
+
     neptune_url = f"wss://{neptune_endpoint}:8182{path}"
     print(f"Proxying to: {neptune_url}")
-    
+
     try:
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-        
+
         async with websockets.connect(neptune_url, ssl=ssl_context) as neptune_ws:
             async def forward_to_neptune():
                 async for message in websocket:
                     await neptune_ws.send(message)
-            
+
             async def forward_to_client():
                 async for message in neptune_ws:
                     await websocket.send(message)
-            
+
             await asyncio.gather(
                 forward_to_neptune(),
                 forward_to_client()
@@ -167,8 +173,8 @@ if __name__ == "__main__":
     start_server = websockets.serve(proxy_handler, "0.0.0.0", port)
     asyncio.get_event_loop().run_until_complete(start_server)
     asyncio.get_event_loop().run_forever()
-'''
-            
+"""
+
             user_data_script.add_commands(
                 f'cat > /home/ec2-user/neptune-proxy/proxy.py << "EOF"\n{proxy_script}\nEOF',
                 "chown ec2-user:ec2-user /home/ec2-user/neptune-proxy/proxy.py",
