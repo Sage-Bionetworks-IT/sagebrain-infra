@@ -104,9 +104,9 @@ class NeptuneBastionStack(cdk.Stack):
         
         # Basic system setup
         user_data_script.add_commands(
-            "yum update -y",
-            "yum install -y amazon-cloudwatch-agent",
-            "yum install -y python3 python3-pip git",
+            "dnf update -y",
+            "dnf install -y amazon-cloudwatch-agent",
+            "dnf install -y python3 python3-pip git",
         )
         
         # Install Neptune tools
@@ -190,7 +190,7 @@ if __name__ == "__main__":
             self,
             "BastionInstance",
             instance_type=ec2.InstanceType(bastion_config.get("instance_type", "t3.medium")),
-            machine_image=ec2.MachineImage.latest_amazon_linux2(),
+            machine_image=ec2.MachineImage.latest_amazon_linux2023(),
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             security_group=self.bastion_security_group,
