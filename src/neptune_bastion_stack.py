@@ -195,7 +195,9 @@ if __name__ == "__main__":
         self.bastion_instance = ec2.Instance(
             self,
             "BastionInstance",
-            instance_type=ec2.InstanceType(bastion_config.get("instance_type", "t3.medium")),
+            instance_type=ec2.InstanceType(
+                bastion_config.get("instance_type", "t3.medium")
+            ),
             machine_image=ec2.MachineImage.latest_amazon_linux2023(),
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
