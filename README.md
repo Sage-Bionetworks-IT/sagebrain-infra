@@ -6,7 +6,7 @@ A Github template using the AWS CDK to create an ECS infrastructure project with
 ## Features
 
 - **ECS Cluster**: Container orchestration with Fargate
-- **Application Load Balancer**: Traffic distribution and SSL termination  
+- **Application Load Balancer**: Traffic distribution and SSL termination
 - **VPC Networking**: Isolated network environment
 - **Amazon Neptune**: Managed graph database for knowledge graphs
 - **Bastion Host**: Secure remote access for Neptune development
@@ -37,7 +37,7 @@ For detailed Neptune setup and usage instructions, see [docs/neptune.md](docs/ne
    ```bash
    # Get connection details from CDK outputs
    python tools/neptune_connect.py --bastion-ip YOUR_BASTION_IP --neptune-endpoint YOUR_NEPTUNE_ENDPOINT --mode test
-   
+
    # Run example graph operations
    python tools/neptune_examples.py
    ```

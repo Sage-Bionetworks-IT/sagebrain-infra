@@ -12,10 +12,7 @@ STACK_NAME_PREFIX = f"app-{env_name}"
 TAGS = config["TAGS"]
 
 # Define the deployment environment
-env = cdk.Environment(
-    account="620117233256",  # sagebrain account
-    region="us-east-1"
-)
+env = cdk.Environment(account="620117233256", region="us-east-1")  # sagebrain account
 
 # recursively apply tags to all stack resources
 if TAGS:

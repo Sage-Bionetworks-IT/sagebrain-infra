@@ -15,7 +15,7 @@ class NeptuneStack(cdk.Stack):
         construct_id: str,
         vpc: ec2.Vpc,
         neptune_config: dict,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
@@ -110,7 +110,9 @@ class NeptuneStack(cdk.Stack):
                 f"NeptuneInstance{i + 1}",
                 db_instance_class=instance_class,
                 db_cluster_identifier=self.neptune_cluster.ref,
-                availability_zone=vpc.availability_zones[i % len(vpc.availability_zones)],
+                availability_zone=vpc.availability_zones[
+                    i % len(vpc.availability_zones)
+                ],
                 auto_minor_version_upgrade=neptune_config.get(
                     "auto_minor_version_upgrade", True
                 ),

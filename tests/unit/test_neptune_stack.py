@@ -31,7 +31,7 @@ def neptune_config():
         "storage_encrypted": True,
         "auto_minor_version_upgrade": True,
         "create_parameter_group": False,
-        "parameter_group_parameters": {}
+        "parameter_group_parameters": {},
     }
 
 
@@ -39,10 +39,7 @@ def test_neptune_stack_creation(app_and_vpc, neptune_config):
     """Test that Neptune stack creates required resources"""
     app, vpc = app_and_vpc
     stack = NeptuneStack(
-        app, 
-        "TestNeptuneStack", 
-        vpc=vpc, 
-        neptune_config=neptune_config
+        app, "TestNeptuneStack", vpc=vpc, neptune_config=neptune_config
     )
     template = Template.from_stack(stack)
 
@@ -55,7 +52,7 @@ def test_neptune_stack_creation(app_and_vpc, neptune_config):
             "DeletionProtection": False,
             "StorageEncrypted": True,
             "IamAuthEnabled": True,
-        }
+        },
     )
 
     # Check that Neptune instance is created
@@ -63,7 +60,7 @@ def test_neptune_stack_creation(app_and_vpc, neptune_config):
         "AWS::Neptune::DBInstance",
         {
             "DBInstanceClass": "db.t3.medium",
-        }
+        },
     )
 
     # Check that security group is created
@@ -71,7 +68,7 @@ def test_neptune_stack_creation(app_and_vpc, neptune_config):
         "AWS::EC2::SecurityGroup",
         {
             "GroupDescription": "Security group for Neptune cluster",
-        }
+        },
     )
 
     # Check that subnet group is created
@@ -79,7 +76,7 @@ def test_neptune_stack_creation(app_and_vpc, neptune_config):
         "AWS::Neptune::DBSubnetGroup",
         {
             "DBSubnetGroupDescription": "Subnet group for Neptune cluster",
-        }
+        },
     )
 
 
@@ -99,28 +96,18 @@ def test_neptune_stack_with_parameter_group(app_and_vpc):
         "storage_encrypted": True,
         "auto_minor_version_upgrade": True,
         "create_parameter_group": True,
-        "parameter_group_parameters": {
-            "neptune_enable_audit_log": "1"
-        }
+        "parameter_group_parameters": {"neptune_enable_audit_log": "1"},
     }
 
     stack = NeptuneStack(
-        app, 
-        "TestNeptuneStackWithParams", 
-        vpc=vpc, 
-        neptune_config=neptune_config
+        app, "TestNeptuneStackWithParams", vpc=vpc, neptune_config=neptune_config
     )
     template = Template.from_stack(stack)
 
     # Check that parameter group is created
     template.has_resource_properties(
         "AWS::Neptune::DBParameterGroup",
-        {
-            "Family": "neptune1.3",
-            "Parameters": {
-                "neptune_enable_audit_log": "1"
-            }
-        }
+        {"Family": "neptune1.3", "Parameters": {"neptune_enable_audit_log": "1"}},
     )
 
 
@@ -140,14 +127,11 @@ def test_neptune_stack_multiple_instances(app_and_vpc):
         "storage_encrypted": True,
         "auto_minor_version_upgrade": True,
         "create_parameter_group": False,
-        "parameter_group_parameters": {}
+        "parameter_group_parameters": {},
     }
 
     stack = NeptuneStack(
-        app, 
-        "TestNeptuneStackMultiple", 
-        vpc=vpc, 
-        neptune_config=neptune_config
+        app, "TestNeptuneStackMultiple", vpc=vpc, neptune_config=neptune_config
     )
     template = Template.from_stack(stack)
 
@@ -160,5 +144,5 @@ def test_neptune_stack_multiple_instances(app_and_vpc):
         {
             "BackupRetentionPeriod": 30,
             "DeletionProtection": True,
-        }
+        },
     )
