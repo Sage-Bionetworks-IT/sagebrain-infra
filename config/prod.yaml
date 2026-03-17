@@ -11,7 +11,8 @@ NEPTUNE:
   backup_retention_days: 30  # Longer retention for production
 
 NEPTUNE_BASTION:
-  instance_type: "t3.small"
+  instance_type: "t3.medium"
+  root_volume_size_gb: 500
   allowed_ssh_cidrs:
     - "52.44.61.21/32"  # Sage IT VPN - secure access for production
   # key_pair_name: "my-prod-keypair"  # Specify your production key pair

@@ -189,7 +189,7 @@ if __name__ == "__main__":
         self.bastion_instance = ec2.Instance(
             self,
             "BastionInstance",
-            instance_type=ec2.InstanceType(bastion_config.get("instance_type", "t3.micro")),
+            instance_type=ec2.InstanceType(bastion_config.get("instance_type", "t3.medium")),
             machine_image=ec2.MachineImage.latest_amazon_linux2(),
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
@@ -197,6 +197,15 @@ if __name__ == "__main__":
             user_data=user_data_script,
             key_name=key_pair,
             role=self.bastion_role,
+            block_devices=[
+                ec2.BlockDevice(
+                    device_name="/dev/xvda",
+                    volume=ec2.BlockDeviceVolume.ebs(
+                        bastion_config.get("root_volume_size_gb", 500),
+                        volume_type=ec2.EbsDeviceVolumeType.GP3,
+                    ),
+                )
+            ],
         )
 
         # -------------------
