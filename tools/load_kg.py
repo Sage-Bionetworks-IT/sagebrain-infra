@@ -36,16 +36,15 @@ import requests
 from aws_requests_auth.boto_utils import BotoAWSRequestsAuth
 from rdflib import ConjunctiveGraph, Graph
 
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 DEFAULT_REGION = "us-east-1"
 NEPTUNE_PORT = 8182
-BATCH_SIZE = 500        # triples per INSERT DATA request
+BATCH_SIZE = 500  # triples per INSERT DATA request
 RETRY_LIMIT = 3
-RETRY_BACKOFF = 5       # seconds between retries
+RETRY_BACKOFF = 5  # seconds between retries
 
 # Ordered list: ontology first so type info is present when data loads
 LOAD_ORDER = [
@@ -73,6 +72,7 @@ LOAD_ORDER = [
 # ---------------------------------------------------------------------------
 # Neptune SPARQL helpers
 # ---------------------------------------------------------------------------
+
 
 def make_auth(endpoint: str, region: str) -> BotoAWSRequestsAuth:
     # aws_host must include port so it matches the Host header Neptune receives
@@ -137,6 +137,7 @@ def clear_all(endpoint: str, auth, dry_run: bool = False):
 # Core loader
 # ---------------------------------------------------------------------------
 
+
 def named_graph_uri(ttl_path: Path) -> str:
     """Derive a stable named graph URI from the file path."""
     # e.g. kgdata/data/rdf/studies.ttl  ->  http://nf-osi.github.com/graphs/studies
@@ -147,7 +148,9 @@ def named_graph_uri(ttl_path: Path) -> str:
 def triples_to_ntriples_lines(graph: Graph) -> list[str]:
     """Serialize all triples as N-Triples strings (one per line)."""
     nt = graph.serialize(format="nt")
-    return [line for line in nt.splitlines() if line.strip() and not line.startswith("#")]
+    return [
+        line for line in nt.splitlines() if line.strip() and not line.startswith("#")
+    ]
 
 
 def build_insert_data(graph_uri: str, nt_lines: list[str]) -> str:
@@ -194,7 +197,10 @@ def load_file(
         ok = sparql_update(endpoint, auth, update, dry_run)
         if ok:
             batches_ok += 1
-            print(f"  Batch {batch_num}/{total_batches}: {len(chunk)} triples  ✓", end="\r")
+            print(
+                f"  Batch {batch_num}/{total_batches}: {len(chunk)} triples  ✓",
+                end="\r",
+            )
         else:
             failed += 1
             print(f"  Batch {batch_num}/{total_batches}: FAILED", file=sys.stderr)
@@ -206,6 +212,7 @@ def load_file(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -278,11 +285,15 @@ def main():
         if not ttl_path.exists():
             print(f"  Skipping (not found): {ttl_path}", file=sys.stderr)
             continue
-        triples, _ = load_file(ttl_path, args.endpoint, auth, args.batch_size, args.dry_run)
+        triples, _ = load_file(
+            ttl_path, args.endpoint, auth, args.batch_size, args.dry_run
+        )
         grand_total += triples
 
     elapsed = time.time() - t0
-    print(f"\n{'[DRY-RUN] ' if args.dry_run else ''}Done. {grand_total:,} triples in {elapsed:.1f}s")
+    print(
+        f"\n{'[DRY-RUN] ' if args.dry_run else ''}Done. {grand_total:,} triples in {elapsed:.1f}s"
+    )
 
     if args.stats and not args.dry_run:
         result = sparql_query(
