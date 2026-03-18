@@ -30,7 +30,7 @@ def make_stack(bastion_config):
 def test_bastion_stack_creation():
     """Test that bastion stack creates required resources"""
     template = make_stack(
-        {"instance_type": "t3.micro", "enable_neptune_proxy": True}
+        {"instance_type": "t3.micro"}
     )
 
     template.has_resource_properties(
@@ -61,7 +61,7 @@ def test_bastion_stack_creation():
 def test_bastion_no_ssh_ingress():
     """Test that bastion security group has no inbound SSH rules"""
     template = make_stack(
-        {"instance_type": "t3.micro", "enable_neptune_proxy": True}
+        {"instance_type": "t3.micro"}
     )
 
     ingress_rules = template.find_resources("AWS::EC2::SecurityGroupIngress")
@@ -73,7 +73,7 @@ def test_bastion_no_ssh_ingress():
 def test_bastion_no_key_pair():
     """Test that bastion has no SSH key pair configured"""
     template = make_stack(
-        {"instance_type": "t3.micro", "enable_neptune_proxy": True}
+        {"instance_type": "t3.micro"}
     )
 
     instances = template.find_resources("AWS::EC2::Instance")
@@ -82,22 +82,20 @@ def test_bastion_no_key_pair():
             "No key pair should be configured"
 
 
-def test_bastion_stack_with_proxy_disabled():
-    """Test bastion stack with Neptune proxy disabled"""
-    template = make_stack(
-        {"instance_type": "t3.micro", "enable_neptune_proxy": False}
-    )
+def test_bastion_no_proxy_port_exposed():
+    """Test that bastion security group does not expose port 8182"""
+    template = make_stack({"instance_type": "t3.micro"})
 
     ingress_rules = template.find_resources("AWS::EC2::SecurityGroupIngress")
     for rule_props in ingress_rules.values():
         assert rule_props["Properties"].get("FromPort") != 8182, \
-            "Neptune proxy port 8182 should not be open when proxy is disabled"
+            "Neptune proxy port 8182 should not be exposed on the bastion"
 
 
 def test_bastion_iam_permissions():
     """Test that bastion has correct IAM permissions for Neptune"""
     template = make_stack(
-        {"instance_type": "t3.micro", "enable_neptune_proxy": True}
+        {"instance_type": "t3.micro"}
     )
 
     template.has_resource_properties(
