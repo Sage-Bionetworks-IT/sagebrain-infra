@@ -33,9 +33,7 @@ def test_bastion_stack_creation():
         {"instance_type": "t3.micro"}
     )
 
-    template.has_resource_properties(
-        "AWS::EC2::Instance", {"InstanceType": "t3.micro"}
-    )
+    template.has_resource_properties("AWS::EC2::Instance", {"InstanceType": "t3.micro"})
 
     template.has_resource_properties(
         "AWS::EC2::SecurityGroup",
@@ -66,8 +64,9 @@ def test_bastion_no_ssh_ingress():
 
     ingress_rules = template.find_resources("AWS::EC2::SecurityGroupIngress")
     for rule_props in ingress_rules.values():
-        assert rule_props["Properties"].get("FromPort") != 22, \
-            "SSH port 22 should not be open"
+        assert (
+            rule_props["Properties"].get("FromPort") != 22
+        ), "SSH port 22 should not be open"
 
 
 def test_bastion_no_key_pair():
@@ -78,8 +77,9 @@ def test_bastion_no_key_pair():
 
     instances = template.find_resources("AWS::EC2::Instance")
     for instance in instances.values():
-        assert "KeyName" not in instance.get("Properties", {}), \
-            "No key pair should be configured"
+        assert "KeyName" not in instance.get(
+            "Properties", {}
+        ), "No key pair should be configured"
 
 
 def test_bastion_no_proxy_port_exposed():
