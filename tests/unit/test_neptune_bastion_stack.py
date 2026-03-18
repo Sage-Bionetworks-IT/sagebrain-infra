@@ -96,10 +96,14 @@ def test_bastion_no_proxy_port_exposed():
         if props.get("FromPort") == 8182:
             # Port 8182 is allowed only when targeting the Neptune SG (not bastion SG)
             group_id = props.get("GroupId", {})
-            ref = group_id.get("Fn::GetAtt", [None])[0] if isinstance(group_id, dict) else None
-            assert ref not in bastion_sg_ids, (
-                "Neptune proxy port 8182 should not be exposed on the bastion SG"
+            ref = (
+                group_id.get("Fn::GetAtt", [None])[0]
+                if isinstance(group_id, dict)
+                else None
             )
+            assert (
+                ref not in bastion_sg_ids
+            ), "Neptune proxy port 8182 should not be exposed on the bastion SG"
 
 
 def test_bastion_iam_permissions():
