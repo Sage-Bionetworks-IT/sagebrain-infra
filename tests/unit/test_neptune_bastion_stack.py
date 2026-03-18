@@ -77,14 +77,29 @@ def test_bastion_no_key_pair():
 
 
 def test_bastion_no_proxy_port_exposed():
-    """Test that bastion security group does not expose port 8182"""
+    """Test that bastion security group does not expose port 8182 as inbound.
+    The bastion stack owns a CfnSecurityGroupIngress rule on port 8182, but it
+    targets the Neptune SG (not the bastion SG), so the bastion SG itself must
+    not have port 8182 open inbound."""
     template = make_stack({"instance_type": "t3.micro"})
+
+    # Find the bastion SG logical ID so we can exclude it from the check
+    bastion_sgs = template.find_resources(
+        "AWS::EC2::SecurityGroup",
+        {"Properties": {"GroupDescription": "Security group for Neptune bastion host"}},
+    )
+    bastion_sg_ids = set(bastion_sgs.keys())
 
     ingress_rules = template.find_resources("AWS::EC2::SecurityGroupIngress")
     for rule_props in ingress_rules.values():
-        assert (
-            rule_props["Properties"].get("FromPort") != 8182
-        ), "Neptune proxy port 8182 should not be exposed on the bastion"
+        props = rule_props["Properties"]
+        if props.get("FromPort") == 8182:
+            # Port 8182 is allowed only when targeting the Neptune SG (not bastion SG)
+            group_id = props.get("GroupId", {})
+            ref = group_id.get("Fn::GetAtt", [None])[0] if isinstance(group_id, dict) else None
+            assert ref not in bastion_sg_ids, (
+                "Neptune proxy port 8182 should not be exposed on the bastion SG"
+            )
 
 
 def test_bastion_iam_permissions():
@@ -105,6 +120,7 @@ def test_bastion_iam_permissions():
                             "neptune-db:GetEngineStatus",
                             "neptune-db:GetQueryStatus",
                             "neptune-db:CancelQuery",
+                            "neptune-db:ResetDatabase",
                         ],
                         "Resource": "*",
                     }
