@@ -31,10 +31,9 @@ import sys
 import time
 from pathlib import Path
 
-import boto3
 import requests
 from aws_requests_auth.boto_utils import BotoAWSRequestsAuth
-from rdflib import ConjunctiveGraph, Graph
+from rdflib import Graph
 
 # ---------------------------------------------------------------------------
 # Configuration
