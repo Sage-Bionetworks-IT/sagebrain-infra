@@ -54,10 +54,15 @@ class NeptuneStack(cdk.Stack):
         # Neptune Parameter Group (optional)
         # -------------------
         if neptune_config.get("create_parameter_group", False):
+            engine_version = neptune_config.get("engine_version", "1.3.2.1")
+            # Family is derived from the major.minor version, e.g. "1.3.2.1" -> "neptune1.3"
+            version_parts = engine_version.split(".")
+            parameter_group_family = f"neptune{version_parts[0]}.{version_parts[1]}"
+
             self.parameter_group = neptune.CfnDBParameterGroup(
                 self,
                 "NeptuneParameterGroup",
-                family="neptune1.3",
+                family=parameter_group_family,
                 description="Parameter group for Neptune cluster",
                 parameters=neptune_config.get("parameter_group_parameters", {}),
                 tags=[
