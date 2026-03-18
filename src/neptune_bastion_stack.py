@@ -79,15 +79,6 @@ class NeptuneBastionStack(cdk.Stack):
         )
 
         # -------------------
-        # Instance Profile
-        # -------------------
-        self.instance_profile = iam.CfnInstanceProfile(
-            self,
-            "BastionInstanceProfile",
-            roles=[self.bastion_role.role_name],
-        )
-
-        # -------------------
         # User Data Script
         # -------------------
         user_data_script = ec2.UserData.for_linux()
