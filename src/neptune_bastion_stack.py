@@ -73,6 +73,7 @@ class NeptuneBastionStack(cdk.Stack):
                     "neptune-db:GetEngineStatus",
                     "neptune-db:GetQueryStatus",
                     "neptune-db:CancelQuery",
+                    "neptune-db:ResetDatabase",
                 ],
                 resources=["*"],
             )
