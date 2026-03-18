@@ -93,12 +93,14 @@ class NeptuneBastionStack(cdk.Stack):
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             security_group=self.bastion_security_group,
             role=self.bastion_role,
+            require_imdsv2=True,
             block_devices=[
                 ec2.BlockDevice(
                     device_name="/dev/xvda",
                     volume=ec2.BlockDeviceVolume.ebs(
                         bastion_config.get("root_volume_size_gb", 500),
                         volume_type=ec2.EbsDeviceVolumeType.GP3,
+                        encrypted=True,
                     ),
                 )
             ],
