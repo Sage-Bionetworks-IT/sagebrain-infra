@@ -30,12 +30,8 @@ class NeptuneStack(cdk.Stack):
             allow_all_outbound=False,
         )
 
-        # Allow inbound connections on Neptune port 8182 from VPC
-        self.neptune_security_group.add_ingress_rule(
-            peer=ec2.Peer.ipv4(vpc.vpc_cidr_block),
-            connection=ec2.Port.tcp(8182),
-            description="Neptune graph database port",
-        )
+        # No broad ingress rules here. Each consumer stack (bastion, Lambda, etc.)
+        # adds a targeted SG-to-SG rule on port 8182 for least-privilege access.
 
         # -------------------
         # Neptune Subnet Group
