@@ -31,23 +31,7 @@ class NeptuneBastionStack(cdk.Stack):
             allow_all_outbound=True,
         )
 
-        # Allow SSH access from specified CIDR blocks
-        allowed_cidrs = bastion_config.get("allowed_ssh_cidrs", ["0.0.0.0/0"])
-        for cidr in allowed_cidrs:
-            self.bastion_security_group.add_ingress_rule(
-                peer=ec2.Peer.ipv4(cidr),
-                connection=ec2.Port.tcp(22),
-                description=f"SSH access from {cidr}",
-            )
-
-        # Allow Neptune proxy port if enabled
-        if bastion_config.get("enable_neptune_proxy", True):
-            for cidr in allowed_cidrs:
-                self.bastion_security_group.add_ingress_rule(
-                    peer=ec2.Peer.ipv4(cidr),
-                    connection=ec2.Port.tcp(8182),
-                    description=f"Neptune proxy port from {cidr}",
-                )
+        # No inbound rules — access is via SSM only, no SSH needed
 
         # -------------------
         # Update Neptune Security Group
@@ -183,13 +167,6 @@ if __name__ == "__main__":
             )
 
         # -------------------
-        # Key Pair (if specified)
-        # -------------------
-        key_pair = None
-        if bastion_config.get("key_pair_name"):
-            key_pair = bastion_config["key_pair_name"]
-
-        # -------------------
         # Bastion EC2 Instance
         # -------------------
         self.bastion_instance = ec2.Instance(
@@ -203,7 +180,6 @@ if __name__ == "__main__":
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             security_group=self.bastion_security_group,
             user_data=user_data_script,
-            key_name=key_pair,
             role=self.bastion_role,
             block_devices=[
                 ec2.BlockDevice(
@@ -221,13 +197,6 @@ if __name__ == "__main__":
         # -------------------
         cdk.CfnOutput(
             self,
-            "BastionPublicIP",
-            value=self.bastion_instance.instance_public_ip,
-            description="Public IP address of the bastion host",
-        )
-
-        cdk.CfnOutput(
-            self,
             "BastionInstanceId",
             value=self.bastion_instance.instance_id,
             description="Instance ID of the bastion host",
@@ -235,15 +204,7 @@ if __name__ == "__main__":
 
         cdk.CfnOutput(
             self,
-            "SSHCommand",
-            value=f"ssh -i your-key.pem ec2-user@{self.bastion_instance.instance_public_ip}",
-            description="SSH command to connect to bastion host",
+            "SSMCommand",
+            value=f"aws ssm start-session --target {self.bastion_instance.instance_id}",
+            description="SSM command to connect to bastion host",
         )
-
-        if bastion_config.get("enable_neptune_proxy", True):
-            cdk.CfnOutput(
-                self,
-                "NeptuneProxyEndpoint",
-                value=f"{self.bastion_instance.instance_public_ip}:8182",
-                description="Neptune proxy endpoint for local connections",
-            )

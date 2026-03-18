@@ -19,6 +19,3 @@ NEPTUNE:
 NEPTUNE_BASTION:
   instance_type: "t3.micro"
   enable_neptune_proxy: true
-  allowed_ssh_cidrs:
-    - "52.44.61.21/32"  # Sage IT VPN public IP - restricts access to Sage employees only
-  # key_pair_name: "" # Optional: specify EC2 key pair for SSH access
