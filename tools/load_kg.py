@@ -75,8 +75,9 @@ LOAD_ORDER = [
 # ---------------------------------------------------------------------------
 
 def make_auth(endpoint: str, region: str) -> BotoAWSRequestsAuth:
+    # aws_host must include port so it matches the Host header Neptune receives
     return BotoAWSRequestsAuth(
-        aws_host=endpoint,
+        aws_host=f"{endpoint}:{NEPTUNE_PORT}",
         aws_region=region,
         aws_service="neptune-db",
     )
