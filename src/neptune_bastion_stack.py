@@ -79,23 +79,6 @@ class NeptuneBastionStack(cdk.Stack):
         )
 
         # -------------------
-        # User Data Script
-        # -------------------
-        user_data_script = ec2.UserData.for_linux()
-
-        # Basic system setup
-        user_data_script.add_commands(
-            "dnf update -y",
-            "dnf install -y amazon-cloudwatch-agent",
-            "dnf install -y python3 python3-pip git",
-        )
-
-        # Install Neptune tools
-        user_data_script.add_commands(
-            "pip3 install --user awscurl gremlinpython boto3 requests",
-        )
-
-        # -------------------
         # Bastion EC2 Instance
         # -------------------
         self.bastion_instance = ec2.Instance(
@@ -108,7 +91,6 @@ class NeptuneBastionStack(cdk.Stack):
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             security_group=self.bastion_security_group,
-            user_data=user_data_script,
             role=self.bastion_role,
             block_devices=[
                 ec2.BlockDevice(
