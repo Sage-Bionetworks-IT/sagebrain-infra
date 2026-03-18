@@ -29,13 +29,9 @@ def make_stack(bastion_config):
 
 def test_bastion_stack_creation():
     """Test that bastion stack creates required resources"""
-    template = make_stack(
-        {"instance_type": "t3.micro", "enable_neptune_proxy": True}
-    )
+    template = make_stack({"instance_type": "t3.micro", "enable_neptune_proxy": True})
 
-    template.has_resource_properties(
-        "AWS::EC2::Instance", {"InstanceType": "t3.micro"}
-    )
+    template.has_resource_properties("AWS::EC2::Instance", {"InstanceType": "t3.micro"})
 
     template.has_resource_properties(
         "AWS::EC2::SecurityGroup",
@@ -60,45 +56,40 @@ def test_bastion_stack_creation():
 
 def test_bastion_no_ssh_ingress():
     """Test that bastion security group has no inbound SSH rules"""
-    template = make_stack(
-        {"instance_type": "t3.micro", "enable_neptune_proxy": True}
-    )
+    template = make_stack({"instance_type": "t3.micro", "enable_neptune_proxy": True})
 
     ingress_rules = template.find_resources("AWS::EC2::SecurityGroupIngress")
     for rule_props in ingress_rules.values():
-        assert rule_props["Properties"].get("FromPort") != 22, \
-            "SSH port 22 should not be open"
+        assert (
+            rule_props["Properties"].get("FromPort") != 22
+        ), "SSH port 22 should not be open"
 
 
 def test_bastion_no_key_pair():
     """Test that bastion has no SSH key pair configured"""
-    template = make_stack(
-        {"instance_type": "t3.micro", "enable_neptune_proxy": True}
-    )
+    template = make_stack({"instance_type": "t3.micro", "enable_neptune_proxy": True})
 
     instances = template.find_resources("AWS::EC2::Instance")
     for instance in instances.values():
-        assert "KeyName" not in instance.get("Properties", {}), \
-            "No key pair should be configured"
+        assert "KeyName" not in instance.get(
+            "Properties", {}
+        ), "No key pair should be configured"
 
 
 def test_bastion_stack_with_proxy_disabled():
     """Test bastion stack with Neptune proxy disabled"""
-    template = make_stack(
-        {"instance_type": "t3.micro", "enable_neptune_proxy": False}
-    )
+    template = make_stack({"instance_type": "t3.micro", "enable_neptune_proxy": False})
 
     ingress_rules = template.find_resources("AWS::EC2::SecurityGroupIngress")
     for rule_props in ingress_rules.values():
-        assert rule_props["Properties"].get("FromPort") != 8182, \
-            "Neptune proxy port 8182 should not be open when proxy is disabled"
+        assert (
+            rule_props["Properties"].get("FromPort") != 8182
+        ), "Neptune proxy port 8182 should not be open when proxy is disabled"
 
 
 def test_bastion_iam_permissions():
     """Test that bastion has correct IAM permissions for Neptune"""
-    template = make_stack(
-        {"instance_type": "t3.micro", "enable_neptune_proxy": True}
-    )
+    template = make_stack({"instance_type": "t3.micro", "enable_neptune_proxy": True})
 
     template.has_resource_properties(
         "AWS::IAM::Policy",
