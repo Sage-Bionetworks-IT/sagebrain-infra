@@ -176,7 +176,7 @@ awscurl --service neptune-db --region us-east-1 \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -H "Accept: application/sparql-results+json" \
   --data "query=SELECT+%2A+WHERE+%7B+%3Fs+%3Fp+%3Fo+%7D+LIMIT+10" \
-  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
+  "https://$NEPTUNE_ENDPOINT:8182/sparql"
 ```
 
 **Delete all data:**
@@ -186,7 +186,7 @@ awscurl --service neptune-db --region us-east-1 \
   -X POST \
   -H "Content-Type: application/x-www-form-urlencoded" \
   --data "update=CLEAR+ALL" \
-  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
+  "https://$NEPTUNE_ENDPOINT:8182/sparql"
 ```
 
 > [!WARNING]
@@ -194,46 +194,6 @@ awscurl --service neptune-db --region us-east-1 \
 
 > [!NOTE]
 > Neptune has IAM auth enabled. All requests must be signed — plain `curl` will return `AccessDeniedException`. Use `awscurl` or the Python `aws-requests-auth` library.
-
-### 3. Load KG Data into Neptune
-
-The `tools/load_kg.py` script loads all NF-OSI KG Turtle files (ontology + data) into Neptune in one shot.
-
-**Install dependencies (one time):**
-
-```console
-pip3 install rdflib requests aws-requests-auth boto3
-```
-
-**Set the endpoint** — hostname only, no `https://` and no `:8182`:
-
-```console
-export NEPTUNE_ENDPOINT=neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com
-```
-
-**Dry-run first (parses files, no writes):**
-
-```console
-python3 tools/load_kg.py --dry-run
-```
-
-**Load everything:**
-
-```console
-python3 tools/load_kg.py
-```
-
-**Load a single file:**
-
-```console
-python3 tools/load_kg.py --file kgdata/schema/ontology.ttl
-```
-
-**Clear all data then reload:**
-
-```console
-python3 tools/load_kg.py --clear-first
-```
 
 ## Secrets
 
