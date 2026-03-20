@@ -116,7 +116,7 @@ AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-bastion --context env=dev
 No SSH key required — the bastion has the SSM agent installed.
 
 ```console
-aws --profile sagebrain ssm start-session --target i-052ceee0a9de50b47
+aws --profile sagebrain ssm start-session --target <BASTION_INSTANCE_ID>
 ```
 
 > [!NOTE]
