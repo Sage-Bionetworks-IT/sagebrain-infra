@@ -1,67 +1,35 @@
 
-# AWS CDK app
+# sage-brain-infra
 
-A Github template using the AWS CDK to create an ECS infrastructure project
+AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a secure bastion host for development access.
 
-# Prerequisites
+## Features
 
-AWS CDK projects require some bootstrapping before synthesis or deployment.
-Please review the [bootstapping documentation](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_bootstrap)
-before development.
+- **VPC Networking**: Isolated network environment with public and private subnets
+- **Amazon Neptune**: Managed graph database for knowledge graphs
+- **Bastion Host**: Secure remote access for Neptune development via SSM
 
-> [!Note]
+## Prerequisites
+
+AWS CDK projects require bootstrapping before synthesis or deployment.
+Please review the [bootstrapping documentation](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html#getting_started_bootstrap).
+
+> [!NOTE]
 > Sage IT deploys this CDK bootstrap upon creation of every AWS account in our AWS Organization.
-
-# Dev Container
-
-This repository provides a [dev container](https://containers.dev/) that includes all the tools
-required to develop this AWS CDK app.
-
-## Opening the project inside its dev container
-
-With VS Code:
-
-1. Clone this repo
-2. File > Open Folder...
-3. A prompt should invite you to open the project inside the dev container. If not, open VS Code
-    Command Palette and select "Dev Containers: Open Folder in Container..."
-
-With GitHub Codespaces:
-
-1. From the main page of this repository, click on the button "Code" > Codespaces > Click on the
-   button "Create codespace"
-
-That's it! You are now inside the dev container and have access to all the development tools.
 
 # Development
 
-All the development tools are provided when developing inside the dev container
-(see above). These tools include Python, AWS CLI, AWS CDK CLI, etc. These tools
-also include a Python virtual environment where all the Python packages needed
-are already installed.
-
-If you decide the develop outside of the dev container, some of the development
-tools can be installed by running:
+Activate the Python virtual environment:
 
 ```console
-./tools/setup.sh
+source .venv/bin/activate
 ```
 
-Development requires the activation of the Python virtual environment:
+Install dependencies:
 
+```console
+pip install -r requirements.txt
 ```
-$ source .venv/bin/activate
-```
-
-At this point you can now synthesize the CloudFormation template for this code.
-
-```
-$ cdk synth
-```
-
-To add additional dependencies, for example other CDK libraries, just add
-them to your `setup.py` file and rerun the `pip install -r requirements.txt`
-command.
 
 ## Useful commands
 
@@ -71,71 +39,201 @@ command.
  * `cdk diff`        compare deployed stack with current state
  * `cdk docs`        open CDK documentation
 
+## Testing
 
-# Testing
+### Static Analysis
 
-## Static Analysis
+Validate CDK json, yaml and python files with [pre-commit](https://pre-commit.com):
 
-As a pre-deployment step we syntactically validate the CDK json, yaml and
-python files with [pre-commit](https://pre-commit.com).
+```console
+pre-commit run --all-files
+```
 
-Please install pre-commit, once installed the file validations will
-automatically run on every commit.  Alternatively you can manually
-execute the validations by running `pre-commit run --all-files`.
-
-Verify CDK to Cloudformation conversion by running [cdk synth]:
+Verify CDK to CloudFormation conversion:
 
 ```console
 cdk synth --context env=dev
 ```
 
-The Cloudformation output is saved to the `cdk.out` folder
+### Unit Tests
 
-## Unit Tests
-
-Tests are available in the tests folder. Execute the following to run tests:
-
-```
+```console
 python -m pytest tests/ -s -v
 ```
 
-
 ## Environments
 
-When running `cdk` commands, you must specify which environment's
-configuration to use.  This is done by passing a context variable to
-CDK, which loads environment-specific parameters.
-
-Create a configuration file in the [config folder](./config) for each environment
-(e.g., `dev.yaml`, `prod.yaml`).  Both yaml and json files are supported.
-The supported environments are dev, stage, and prod.
-
-To synthesize or deploy using the `prod` environment configuration:
+When running `cdk` commands, specify the environment via context variable:
 
 ```console
+cdk synth --context env=dev
 cdk synth --context env=prod
 ```
 
-There is also an optional base configuration file that is always loaded
-and merged with one of the passed in environment configuration.
-
-The values from the environment-specific configuration file will
-override those in the base configuration file if there are conflicts.
-For example, if both files define `TAGS`, the value from `dev.yaml`
-will take precedence.
-
+Environment-specific config files live in [config/](./config). A `base.yaml` is always loaded and merged with the environment-specific file, with environment values taking precedence.
 
 > [!NOTE]
 > Ensure that `VPC_CIDR` is unique within your AWS organization.
-Refer to our [guidance](https://sagebionetworks.jira.com/wiki/spaces/IT/pages/2850586648/Setup+AWS+VPC) on selecting a unique CIDR block.
+> Refer to our [guidance](https://sagebionetworks.jira.com/wiki/spaces/IT/pages/2850586648/Setup+AWS+VPC) on selecting a unique CIDR block.
 
-## Certificates
+# Deployment
 
-Certificates to set up HTTPS connections should be created manually in AWS certificate manager.
-This is not automated due to AWS requiring manual verification of the domain ownership.
-Once created take the ARN of the certificate and set that ARN in environment_variables.
+## Login with the AWS CLI
 
-![ACM certificate](docs/acm-certificate.png)
+> [!NOTE]
+> Requires AWS CLI v2. Check your version with `aws --version`. If needed, [install AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
+
+Configure SSO interactively (first time only):
+
+```console
+aws configure sso
+```
+
+When prompted, select the `org-sagebase-sagebrain-prod` account and set the profile name to `sagebrain`.
+
+Login:
+
+```console
+aws --profile sagebrain sso login
+```
+
+## Deploy
+
+```console
+AWS_PROFILE=sagebrain cdk deploy --context env=dev --all
+```
+
+To deploy a specific stack:
+
+```console
+AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-bastion --context env=dev
+```
+
+## Connecting to the Neptune Bastion Host
+
+### 1. Connect via SSM
+
+No SSH key required — the bastion has the SSM agent installed.
+
+```console
+aws --profile sagebrain ssm start-session --target <BASTION_INSTANCE_ID>
+```
+
+> [!NOTE]
+> Get the latest instance ID from CDK outputs if the instance has been replaced:
+> ```console
+> aws --profile sagebrain cloudformation describe-stacks \
+>   --stack-name app-dev-neptune-bastion \
+>   --query "Stacks[0].Outputs[?OutputKey=='BastionInstanceId'].OutputValue" \
+>   --output text
+> ```
+
+### 2. Query Neptune from the Bastion
+
+Once connected via SSM, activate the Neptune environment (`awscurl` is pre-installed):
+
+```console
+cd
+source ~/.bashrc
+conda activate neptune
+```
+
+Before calling Neptune, set an environment variable for the cluster endpoint. For example, using the CloudFormation output:
+
+```console
+export NEPTUNE_ENDPOINT=$(aws cloudformation describe-stacks \
+  --stack-name <YOUR_STACK_NAME> \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
+  --output text)
+```
+
+Replace `<YOUR_STACK_NAME>` with the name of the deployed CDK stack. Alternatively, set `NEPTUNE_ENDPOINT` manually to your cluster's writer endpoint (without protocol or port).
+
+Use `awscurl` to interact with Neptune. Requests are automatically signed using the EC2 instance's IAM role.
+
+**Check cluster status:**
+
+```console
+awscurl --service neptune-db --region us-east-1 \
+  "https://$NEPTUNE_ENDPOINT:8182/status"
+```
+
+**Insert RDF data (SPARQL UPDATE):**
+
+```console
+awscurl --service neptune-db --region us-east-1 \
+  -X POST \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data "update=PREFIX+ex%3A+%3Chttp%3A%2F%2Fexample.org%2F%3E+INSERT+DATA+%7B+ex%3AAlice+a+ex%3APerson+%3B+ex%3Aname+%22Alice%22+%3B+ex%3Aknows+ex%3ABob+.+ex%3ABob+a+ex%3APerson+%3B+ex%3Aname+%22Bob%22+.+%7D" \
+  "https://$NEPTUNE_ENDPOINT:8182/sparql"
+```
+
+**Query data (SPARQL SELECT):**
+
+```console
+awscurl --service neptune-db --region us-east-1 \
+  -X POST \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "Accept: application/sparql-results+json" \
+  --data "query=SELECT+%2A+WHERE+%7B+%3Fs+%3Fp+%3Fo+%7D+LIMIT+10" \
+  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
+```
+
+**Delete all data:**
+
+```console
+awscurl --service neptune-db --region us-east-1 \
+  -X POST \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data "update=CLEAR+ALL" \
+  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
+```
+
+> [!WARNING]
+> `CLEAR ALL` permanently deletes every triple in the database. To delete a specific named graph only: `CLEAR GRAPH <http://example.org/>`.
+
+> [!NOTE]
+> Neptune has IAM auth enabled. All requests must be signed — plain `curl` will return `AccessDeniedException`. Use `awscurl` or the Python `aws-requests-auth` library.
+
+### 3. Load KG Data into Neptune
+
+The `tools/load_kg.py` script loads all NF-OSI KG Turtle files (ontology + data) into Neptune in one shot.
+
+**Install dependencies (one time):**
+
+```console
+pip3 install rdflib requests aws-requests-auth boto3
+```
+
+**Set the endpoint** — hostname only, no `https://` and no `:8182`:
+
+```console
+export NEPTUNE_ENDPOINT=neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com
+```
+
+**Dry-run first (parses files, no writes):**
+
+```console
+python3 tools/load_kg.py --dry-run
+```
+
+**Load everything:**
+
+```console
+python3 tools/load_kg.py
+```
+
+**Load a single file:**
+
+```console
+python3 tools/load_kg.py --file kgdata/schema/ontology.ttl
+```
+
+**Clear all data then reload:**
+
+```console
+python3 tools/load_kg.py --clear-first
+```
 
 ## Secrets
 
@@ -145,202 +243,20 @@ When naming your secret make sure that the secret does not end in a pattern that
 `-??????`, this will cause issues with how AWS CDK looks up secrets.
 
 To pass secrets to a container set the secrets manager `container_secrets`
-when creating a `ServiceProp` object. You'll be creating a list of `ServiceSecret` objects:
-```python
-from src.service_props import ServiceProps, ServiceSecret
+In this repository, the infrastructure does not define application-specific helpers such as `ServiceProps` or `ServiceSecret`. Instead, it assumes that:
 
-app_service_props = ServiceProps(
-    ecs_task_cpu=256,
-    ecs_task_memory=512,
-    container_name="app",
-    container_port=443,
-    container_location="ghcr.io/sage-bionetworks/app:v1.0",
-    container_secrets=[
-        ServiceSecret(
-            secret_name="app/dev/DATABASE",
-            environment_key="NAME_OF_ENVIRONMENT_VARIABLE_SET_FOR_CONTAINER",
-        ),
-        ServiceSecret(
-            secret_name="app/dev/PASSWORD",
-            environment_key="SINGLE_VALUE_SECRET",
-        )
-    ]
-)
-```
+- Sensitive values (for example, Neptune credentials or application API keys) are stored in **AWS Secrets Manager** or **SSM Parameter Store**.
+- Client applications that connect to Neptune (typically through the bastion host or from other trusted workloads in the VPC) are responsible for retrieving those secrets and exposing them to their own runtime (for example, as environment variables or in their own configuration layer).
 
-For example, the KVs for `app/dev/DATABASE` could be:
-```json
-{
-    "DATABASE_USER": "maria",
-    "DATABASE_PASSWORD": "password"
-}
-```
+A typical pattern is:
 
-And the value for `app/dev/PASSWORD` could be: `password`
+1. Store connection details (host, port, user, password, etc.) in a secret in AWS Secrets Manager.
+2. Grant IAM permissions for that secret to:
+   - Developers or automation that need to connect via the bastion host, and/or
+   - Application workloads that will access Neptune from within the VPC.
+3. Have those clients retrieve the secret at runtime and use it to construct the Neptune endpoint/connection string.
 
-In the application (Python) code the secrets may be loaded into a dict using code like:
-
-```python
-import json
-import os
-
-all_secrets_dict = json.loads(os.environ["NAME_OF_ENVIRONMENT_VARIABLE_SET_FOR_CONTAINER"])
-```
-
-In the case of a single value you may load the value like:
-
-```python
-import os
-
-my_secret = os.environ.get("SINGLE_VALUE_SECRET", None)
-```
-![Secrets Manager secret](docs/secrets-manager-secret.png)
+The exact mechanism for loading and using secrets (for example, via environment variables, configuration files, or direct SDK calls to AWS Secrets Manager) is left to the consuming application or tooling and is not implemented in this CDK stack.
 
 > [!NOTE]
-> Retrieving secrets requires access to the AWS Secrets Manager
-
-## DNS
-
-A DNS CNAME must be created in org-formation after the initial
-deployment of the application to make the application available at the desired
-URL. The CDK application exports the DNS name of the Application Load Balancer
-to be consumed in org-formation. [An example PR setting up a CNAME](https://github.com/Sage-Bionetworks-IT/organizations-infra/pull/1299).
-
-Login to the AWS cloudformation console and navigate to the deployed stack `app-load-balancer`
-and click on the `Outputs` tab.  On the row whose key is `LoadBalancerDNS` look for the
-value in the `Export Name` column, e.g., `app-dev-load-balancer-dns`.
-![Cloudformation Load Balancer](docs/cloudformation-load-balancer.png)
-
-Now use the name in the `TargetHostName` definition, for example:
-
-```
-TargetHostName: !CopyValue [!Sub 'app-dev-load-balancer-dns', !Ref DnTDevAccount]
-```
-
-(You would also replace `DnTDevAccount` with the name of the account in which the application is deployed.)
-
-> [!NOTE]
-> Setting up the DNS cname should be done at the very end of this infra setup
-
-
-## Debugging
-
-Generally CDK deployments will create cloudformation events during a CDK deploy.
-The events can be viewed in the AWS console under the cloudformation service page.
-Viewing those events will help with errors during a deployment.  Below are cases
-where it might be difficult to debug due to misleading or insufficient error
-messages from AWS
-
-### Missing Secrets
-
-Each new environment (dev/staging/prod/etc..) may require adding secrets.  If a
-secret is not created for the environment you may get an error with the following
-stack trace..
-```
-Resource handler returned message: "Error occurred during operation 'ECS Deployment Circuit Breaker was triggered'." (RequestToken: d180e115-ba94-d8a2-acf9-abe17a3aaed9, HandlerErrorCode: GeneralServiceException)
-    new BaseService (/private/var/folders/qr/ztb40vmn2pncyh8jpsgfnrt40000gp/T/jsii-kernel-4PEWmj/node_modules/aws-cdk-lib/aws-ecs/lib/base/base-service.js:1:3583)
-    \_ new FargateService (/private/var/folders/qr/ztb40vmn2pncyh8jpsgfnrt40000gp/T/jsii-kernel-4PEWmj/node_modules/aws-cdk-lib/aws-ecs/lib/fargate/fargate-service.js:1:967)
-    \_ new ApplicationLoadBalancedFargateService (/private/var/folders/qr/ztb40vmn2pncyh8jpsgfnrt40000gp/T/jsii-kernel-4PEWmj/node_modules/aws-cdk-lib/aws-ecs-patterns/lib/fargate/application-load-balanced-fargate-service.js:1:2300)
-    \_ Kernel._create (/private/var/folders/qr/ztb40vmn2pncyh8jpsgfnrt40000gp/T/tmpqkmckdm2/lib/program.js:9964:29)
-    \_ Kernel.create (/private/var/folders/qr/ztb40vmn2pncyh8jpsgfnrt40000gp/T/tmpqkmckdm2/lib/program.js:9693:29)
-    \_ KernelHost.processRequest (/private/var/folders/qr/ztb40vmn2pncyh8jpsgfnrt40000gp/T/tmpqkmckdm2/lib/program.js:11544:36)
-    \_ KernelHost.run (/private/var/folders/qr/ztb40vmn2pncyh8jpsgfnrt40000gp/T/tmpqkmckdm2/lib/program.js:11504:22)
-    \_ Immediate._onImmediate (/private/var/folders/qr/ztb40vmn2pncyh8jpsgfnrt40000gp/T/tmpqkmckdm2/lib/program.js:11505:46)
-    \_ processImmediate (node:internal/timers:464:21)
-```
-
-# Deployment
-
-## Bootstrap
-
-There are a few items that need to be manually bootstrapped before deploying the application.
-
-* Add secrets to the AWS Secrets Manager
-* Create an [ACM certificate for the application](#Certificates) using the AWS Certificates Manager
-* Update environment_variables in [app.py](app.py) with variable specific to each environment.
-* Update references to the docker images in [app.py](app.py)
-  (i.e. `ghcr.io/sage-bionetworks/app-xxx:<tag>`)
-* (Optional) Update the `ServiceProps` objects in [app.py](app.py) with parameters specific to
-  each container.
-
-## Login with the AWS CLI
-
-> [!NOTE]
-> This and the following sections assume that you are working in the AWS account
-> `org-sagebase-itsandbox` with the role `Developer` and that you are deploying
-> to the `us-east-1` region. If this assumption is correct, you should be able
-> to simply copy-paste the following commands, otherwise adapting the
-> configuration should be straightforward.
-
-Create the config file if it doesn't exist yet.
-
-```console
-mkdir ~/.aws && touch ~/.aws/config
-```
-
-As a Developer working in Sage IT Sandbox AWS account, add the following profile to the config file.
-
-```ini
-[profile itsandbox-dev]
-sso_start_url = https://d-906769aa66.awsapps.com/start
-sso_region = us-east-1
-sso_account_id = XXXXXXXXX
-sso_role_name = Developer
-```
-
-Login with the AWS CLI:
-
-```console
-aws --profile itsandbox-dev sso login
-```
-
-
-## Deploy
-
-Deployment requires setting up an [AWS profile](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html)
-then executing the following command:
-
-```console
-AWS_PROFILE=itsandbox-dev AWS_DEFAULT_REGION=us-east-1 cdk deploy --context env=dev --all
-```
-
-## Force new deployment
-
-```console
-AWS_PROFILE=itsandbox-dev AWS_DEFAULT_REGION=us-east-1 aws ecs update-service \
-  --cluster <cluster-name> \
-  --service <service-name> \
-  --force-new-deployment
-```
-
-# Execute a command from a container running on ECS
-
-Once a container has been deployed successfully it is accessible for debugging using the
-[ECS execute-command](https://docs.aws.amazon.com/cli/latest/reference/ecs/execute-command.html)
-
-Example to get an interactive shell run into a container:
-
-```console
-AWS_PROFILE=itsandbox-dev AWS_DEFAULT_REGION=us-east-1 aws ecs execute-command \
-  --cluster AppEcs-ClusterEB0386A7-BygXkQgSvdjY \
-  --task a2916461f65747f390fd3e29f1b387d8 \
-  --container app-mariadb \
-  --command "/bin/sh" --interactive
-```
-
-# CI Workflow
-
-This repo has been set up to use Github Actions CI to continuously deploy the application.
-
-The workflow for continuous integration:
-
-* Create PR from the git dev branch
-* PR is reviewed and approved
-* PR is merged
-* CI deploys changes to the dev environment (dev.app.io) in the AWS dev account.
-* Changes are promoted (or merged) to the git stage branch.
-* CI deploys changes to the staging environment (stage.app.io) in the AWS prod account.
-* Changes are promoted (or merged) to the git prod branch.
-* CI deploys changes to the prod environment (prod.app.io) in the AWS prod account.
-
-![CI deployment workflow](docs/ci-deployment-workflow.png)
+> Retrieving secrets requires access to the AWS Secrets Manager (and/or SSM Parameter Store) and appropriate IAM permissions.
