@@ -138,13 +138,24 @@ source ~/.bashrc
 conda activate neptune
 ```
 
+Before calling Neptune, set an environment variable for the cluster endpoint. For example, using the CloudFormation output:
+
+```console
+export NEPTUNE_ENDPOINT=$(aws cloudformation describe-stacks \
+  --stack-name <YOUR_STACK_NAME> \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
+  --output text)
+```
+
+Replace `<YOUR_STACK_NAME>` with the name of the deployed CDK stack. Alternatively, set `NEPTUNE_ENDPOINT` manually to your cluster's writer endpoint (without protocol or port).
+
 Use `awscurl` to interact with Neptune. Requests are automatically signed using the EC2 instance's IAM role.
 
 **Check cluster status:**
 
 ```console
 awscurl --service neptune-db --region us-east-1 \
-  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/status"
+  "https://$NEPTUNE_ENDPOINT:8182/status"
 ```
 
 **Insert RDF data (SPARQL UPDATE):**
@@ -154,7 +165,7 @@ awscurl --service neptune-db --region us-east-1 \
   -X POST \
   -H "Content-Type: application/x-www-form-urlencoded" \
   --data "update=PREFIX+ex%3A+%3Chttp%3A%2F%2Fexample.org%2F%3E+INSERT+DATA+%7B+ex%3AAlice+a+ex%3APerson+%3B+ex%3Aname+%22Alice%22+%3B+ex%3Aknows+ex%3ABob+.+ex%3ABob+a+ex%3APerson+%3B+ex%3Aname+%22Bob%22+.+%7D" \
-  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
+  "https://$NEPTUNE_ENDPOINT:8182/sparql"
 ```
 
 **Query data (SPARQL SELECT):**
