@@ -36,12 +36,16 @@ class NeptuneBastionStack(cdk.Stack):
         # -------------------
         # Update Neptune Security Group
         # -------------------
-        # Allow Neptune access from bastion host
-        neptune_security_group.add_ingress_rule(
-            peer=ec2.Peer.security_group_id(
-                self.bastion_security_group.security_group_id
-            ),
-            connection=ec2.Port.tcp(8182),
+        # Explicitly place the ingress rule in this (bastion) stack so that the
+        # Neptune stack has no CloudFormation dependency on the bastion stack.
+        ec2.CfnSecurityGroupIngress(
+            self,
+            "NeptuneIngressFromBastion",
+            group_id=neptune_security_group.security_group_id,
+            ip_protocol="tcp",
+            from_port=8182,
+            to_port=8182,
+            source_security_group_id=self.bastion_security_group.security_group_id,
             description="Neptune access from bastion host",
         )
 
@@ -73,6 +77,7 @@ class NeptuneBastionStack(cdk.Stack):
                     "neptune-db:GetEngineStatus",
                     "neptune-db:GetQueryStatus",
                     "neptune-db:CancelQuery",
+                    "neptune-db:ResetDatabase",
                 ],
                 resources=["*"],
             )
@@ -92,12 +97,14 @@ class NeptuneBastionStack(cdk.Stack):
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             security_group=self.bastion_security_group,
             role=self.bastion_role,
+            require_imdsv2=True,
             block_devices=[
                 ec2.BlockDevice(
                     device_name="/dev/xvda",
                     volume=ec2.BlockDeviceVolume.ebs(
                         bastion_config.get("root_volume_size_gb", 500),
                         volume_type=ec2.EbsDeviceVolumeType.GP3,
+                        encrypted=True,
                     ),
                 )
             ],

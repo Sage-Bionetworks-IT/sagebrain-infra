@@ -116,7 +116,7 @@ AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-bastion --context env=dev
 No SSH key required — the bastion has the SSM agent installed.
 
 ```console
-aws --profile sagebrain ssm start-session --target i-052ceee0a9de50b47
+aws --profile sagebrain ssm start-session --target <BASTION_INSTANCE_ID>
 ```
 
 > [!NOTE]
@@ -138,13 +138,24 @@ source ~/.bashrc
 conda activate neptune
 ```
 
+Before calling Neptune, set an environment variable for the cluster endpoint. For example, using the CloudFormation output:
+
+```console
+export NEPTUNE_ENDPOINT=$(aws cloudformation describe-stacks \
+  --stack-name <YOUR_STACK_NAME> \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
+  --output text)
+```
+
+Replace `<YOUR_STACK_NAME>` with the name of the deployed CDK stack. Alternatively, set `NEPTUNE_ENDPOINT` manually to your cluster's writer endpoint (without protocol or port).
+
 Use `awscurl` to interact with Neptune. Requests are automatically signed using the EC2 instance's IAM role.
 
 **Check cluster status:**
 
 ```console
 awscurl --service neptune-db --region us-east-1 \
-  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/status"
+  "https://$NEPTUNE_ENDPOINT:8182/status"
 ```
 
 **Insert RDF data (SPARQL UPDATE):**
@@ -154,7 +165,7 @@ awscurl --service neptune-db --region us-east-1 \
   -X POST \
   -H "Content-Type: application/x-www-form-urlencoded" \
   --data "update=PREFIX+ex%3A+%3Chttp%3A%2F%2Fexample.org%2F%3E+INSERT+DATA+%7B+ex%3AAlice+a+ex%3APerson+%3B+ex%3Aname+%22Alice%22+%3B+ex%3Aknows+ex%3ABob+.+ex%3ABob+a+ex%3APerson+%3B+ex%3Aname+%22Bob%22+.+%7D" \
-  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
+  "https://$NEPTUNE_ENDPOINT:8182/sparql"
 ```
 
 **Query data (SPARQL SELECT):**
@@ -165,7 +176,7 @@ awscurl --service neptune-db --region us-east-1 \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -H "Accept: application/sparql-results+json" \
   --data "query=SELECT+%2A+WHERE+%7B+%3Fs+%3Fp+%3Fo+%7D+LIMIT+10" \
-  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
+  "https://$NEPTUNE_ENDPOINT:8182/sparql"
 ```
 
 **Delete all data:**
@@ -175,7 +186,7 @@ awscurl --service neptune-db --region us-east-1 \
   -X POST \
   -H "Content-Type: application/x-www-form-urlencoded" \
   --data "update=CLEAR+ALL" \
-  "https://neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com:8182/sparql"
+  "https://$NEPTUNE_ENDPOINT:8182/sparql"
 ```
 
 > [!WARNING]
@@ -192,48 +203,20 @@ When naming your secret make sure that the secret does not end in a pattern that
 `-??????`, this will cause issues with how AWS CDK looks up secrets.
 
 To pass secrets to a container set the secrets manager `container_secrets`
-when creating a `ServiceProp` object. You'll be creating a list of `ServiceSecret` objects:
-```python
-from src.service_props import ServiceProps, ServiceSecret
+In this repository, the infrastructure does not define application-specific helpers such as `ServiceProps` or `ServiceSecret`. Instead, it assumes that:
 
-app_service_props = ServiceProps(
-    ecs_task_cpu=256,
-    ecs_task_memory=512,
-    container_name="app",
-    container_port=443,
-    container_location="ghcr.io/sage-bionetworks/app:v1.0",
-    container_secrets=[
-        ServiceSecret(
-            secret_name="app/dev/DATABASE",
-            environment_key="NAME_OF_ENVIRONMENT_VARIABLE_SET_FOR_CONTAINER",
-        ),
-        ServiceSecret(
-            secret_name="app/dev/PASSWORD",
-            environment_key="SINGLE_VALUE_SECRET",
-        )
-    ]
-)
-```
+- Sensitive values (for example, Neptune credentials or application API keys) are stored in **AWS Secrets Manager** or **SSM Parameter Store**.
+- Client applications that connect to Neptune (typically through the bastion host or from other trusted workloads in the VPC) are responsible for retrieving those secrets and exposing them to their own runtime (for example, as environment variables or in their own configuration layer).
 
-For example, the KVs for `app/dev/DATABASE` could be:
-```json
-{
-    "DATABASE_USER": "maria",
-    "DATABASE_PASSWORD": "password"
-}
-```
+A typical pattern is:
 
-And the value for `app/dev/PASSWORD` could be: `password`
+1. Store connection details (host, port, user, password, etc.) in a secret in AWS Secrets Manager.
+2. Grant IAM permissions for that secret to:
+   - Developers or automation that need to connect via the bastion host, and/or
+   - Application workloads that will access Neptune from within the VPC.
+3. Have those clients retrieve the secret at runtime and use it to construct the Neptune endpoint/connection string.
 
-In the application (Python) code the secrets may be loaded using:
-
-```python
-import json
-import os
-
-all_secrets_dict = json.loads(os.environ["NAME_OF_ENVIRONMENT_VARIABLE_SET_FOR_CONTAINER"])
-my_secret = os.environ.get("SINGLE_VALUE_SECRET", None)
-```
+The exact mechanism for loading and using secrets (for example, via environment variables, configuration files, or direct SDK calls to AWS Secrets Manager) is left to the consuming application or tooling and is not implemented in this CDK stack.
 
 > [!NOTE]
-> Retrieving secrets requires access to the AWS Secrets Manager
+> Retrieving secrets requires access to the AWS Secrets Manager (and/or SSM Parameter Store) and appropriate IAM permissions.
