@@ -54,6 +54,7 @@ neptune_api_stack = NeptuneApiStack(
     vpc=network_stack.vpc,
     neptune_cluster_endpoint=neptune_stack.neptune_cluster.attr_endpoint,
     neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
+    neptune_security_group=neptune_stack.neptune_security_group,
     env=env,
 )
 neptune_api_stack.add_dependency(neptune_stack)

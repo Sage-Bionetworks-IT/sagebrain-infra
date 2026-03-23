@@ -18,6 +18,7 @@ class NeptuneApiStack(cdk.Stack):
         vpc: ec2.Vpc,
         neptune_cluster_endpoint: str,
         neptune_cluster_resource_id: str,
+        neptune_security_group: ec2.SecurityGroup,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -68,8 +69,19 @@ class NeptuneApiStack(cdk.Stack):
             )
         )
 
-        # Neptune already allows all traffic from the VPC CIDR on port 8182,
-        # so the Lambda (inside the VPC) can reach it without an extra ingress rule.
+        # Allow Lambda to reach Neptune on port 8182.
+        # Use CfnSecurityGroupIngress (owned by this stack) to avoid a cross-stack cyclic reference.
+        ec2.CfnSecurityGroupIngress(
+            self,
+            "LambdaToNeptuneIngress",
+            group_id=neptune_security_group.security_group_id,
+            ip_protocol="tcp",
+            from_port=8182,
+            to_port=8182,
+            source_security_group_id=self.query_fn.connections.security_groups[
+                0
+            ].security_group_id,
+        )
 
         # -------------------
         # API Gateway

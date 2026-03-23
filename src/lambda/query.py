@@ -1,8 +1,11 @@
 import json
 import os
+from urllib.parse import urlencode
 
+import botocore.session
 import requests
-from aws_requests_auth.boto_utils import BotoAWSRequestsAuth
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 
 NEPTUNE_ENDPOINT = os.environ["NEPTUNE_ENDPOINT"]
 REGION = os.environ["AWS_REGION"]
@@ -12,18 +15,24 @@ def handler(event, context):
     params = event.get("queryStringParameters") or {}
     query = params.get("query", "SELECT * WHERE { ?s ?p ?o } LIMIT 10")
 
-    auth = BotoAWSRequestsAuth(
-        aws_host=NEPTUNE_ENDPOINT,
-        aws_region=REGION,
-        aws_service="neptune-db",
-    )
+    url = f"https://{NEPTUNE_ENDPOINT}:8182/sparql"
+    body = urlencode({"query": query})
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/sparql-results+json",
+    }
+
+    # Sign the request with SigV4 using botocore directly
+    session = botocore.session.Session()
+    credentials = session.get_credentials()
+    aws_request = AWSRequest(method="POST", url=url, data=body, headers=headers)
+    SigV4Auth(credentials, "neptune-db", REGION).add_auth(aws_request)
 
     try:
         response = requests.post(
-            f"https://{NEPTUNE_ENDPOINT}:8182/sparql",
-            auth=auth,
-            data={"query": query},
-            headers={"Accept": "application/sparql-results+json"},
+            url,
+            data=body,
+            headers=dict(aws_request.headers),
             timeout=30,
         )
         response.raise_for_status()
