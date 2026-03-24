@@ -24,6 +24,17 @@ class NeptuneApiStack(cdk.Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         # -------------------
+        # Lambda Security Group
+        # -------------------
+        self.lambda_sg = ec2.SecurityGroup(
+            self,
+            "NeptuneQueryFunctionSG",
+            vpc=vpc,
+            description="Security group for Neptune query Lambda",
+            allow_all_outbound=True,
+        )
+
+        # -------------------
         # Lambda Function
         # -------------------
         self.query_fn = lambda_.Function(
@@ -43,6 +54,7 @@ class NeptuneApiStack(cdk.Stack):
                 ),
             ),
             vpc=vpc,
+            security_groups=[self.lambda_sg],
             vpc_subnets=ec2.SubnetSelection(
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
             ),
@@ -78,9 +90,7 @@ class NeptuneApiStack(cdk.Stack):
             ip_protocol="tcp",
             from_port=8182,
             to_port=8182,
-            source_security_group_id=self.query_fn.connections.security_groups[
-                0
-            ].security_group_id,
+            source_security_group_id=self.lambda_sg.security_group_id,
         )
 
         # -------------------
