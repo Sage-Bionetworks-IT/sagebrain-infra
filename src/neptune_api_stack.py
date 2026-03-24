@@ -16,7 +16,7 @@ class NeptuneApiStack(cdk.Stack):
         scope: Construct,
         construct_id: str,
         vpc: ec2.Vpc,
-        neptune_cluster_endpoint: str,
+        neptune_read_endpoint: str,
         neptune_cluster_resource_id: str,
         neptune_security_group: ec2.SecurityGroup,
         **kwargs,
@@ -47,7 +47,7 @@ class NeptuneApiStack(cdk.Stack):
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
             ),
             environment={
-                "NEPTUNE_ENDPOINT": neptune_cluster_endpoint,
+                "NEPTUNE_ENDPOINT": neptune_read_endpoint,
             },
             timeout=cdk.Duration.seconds(30),
         )

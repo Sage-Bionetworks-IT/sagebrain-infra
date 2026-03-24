@@ -137,6 +137,7 @@ class NeptuneStack(cdk.Stack):
             self,
             "NeptuneClusterReadEndpoint",
             value=self.neptune_cluster.attr_read_endpoint,
+            export_name=f"{construct_id}-read-endpoint",
             description="Neptune cluster read endpoint",
         )
 
