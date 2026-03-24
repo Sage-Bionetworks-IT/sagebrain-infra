@@ -64,7 +64,7 @@ class NeptuneApiStack(cdk.Stack):
                     "neptune-db:GetQueryStatus",
                 ],
                 resources=[
-                    f"arn:aws:neptune-db:{self.region}:{self.account}:{neptune_cluster_resource_id}/*"
+                    f"arn:{self.partition}:neptune-db:{self.region}:{self.account}:{neptune_cluster_resource_id}/*"
                 ],
             )
         )
