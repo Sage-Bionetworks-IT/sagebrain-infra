@@ -36,10 +36,13 @@ def handler(event, context):
             timeout=30,
         )
         response.raise_for_status()
+        content_type = response.headers.get(
+            "Content-Type", "application/sparql-results+json"
+        )
         return {
             "statusCode": 200,
             "headers": {
-                "Content-Type": "application/json",
+                "Content-Type": content_type,
                 "Access-Control-Allow-Origin": "*",
             },
             "body": response.text,
