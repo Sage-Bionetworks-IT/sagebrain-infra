@@ -3,6 +3,7 @@ from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
+from aws_cdk import aws_logs as logs
 from constructs import Construct
 
 
@@ -96,14 +97,39 @@ class NeptuneApiStack(cdk.Stack):
         # -------------------
         # API Gateway
         # -------------------
+        access_log_group = logs.LogGroup(
+            self,
+            "NeptuneApiAccessLogs",
+            retention=logs.RetentionDays.ONE_MONTH,
+        )
+
         self.api = apigw.RestApi(
             self,
             "NeptuneApi",
             rest_api_name="neptune-query-api",
             description="Read-only public API for Neptune graph queries",
+            cloud_watch_role=True,
             default_cors_preflight_options=apigw.CorsOptions(
                 allow_origins=apigw.Cors.ALL_ORIGINS,
                 allow_methods=["GET", "OPTIONS"],
+            ),
+            deploy_options=apigw.StageOptions(
+                access_log_destination=apigw.LogGroupLogDestination(access_log_group),
+                access_log_format=apigw.AccessLogFormat.json_with_standard_fields(
+                    caller=True,
+                    http_method=True,
+                    ip=True,
+                    protocol=True,
+                    request_time=True,
+                    resource_path=True,
+                    response_length=True,
+                    status=True,
+                    user=True,
+                ),
+                logging_level=apigw.MethodLoggingLevel.ERROR,
+                metrics_enabled=True,
+                throttling_rate_limit=50,
+                throttling_burst_limit=100,
             ),
         )
 
