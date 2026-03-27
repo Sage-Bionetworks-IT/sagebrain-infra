@@ -10,6 +10,10 @@ from botocore.awsrequest import AWSRequest
 NEPTUNE_ENDPOINT = os.environ["NEPTUNE_ENDPOINT"]
 REGION = os.environ["AWS_REGION"]
 
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+}
+
 
 def handler(event, context):
     params = event.get("queryStringParameters") or {}
@@ -41,21 +45,18 @@ def handler(event, context):
         )
         return {
             "statusCode": 200,
-            "headers": {
-                "Content-Type": content_type,
-                "Access-Control-Allow-Origin": "*",
-            },
+            "headers": {"Content-Type": content_type, **CORS_HEADERS},
             "body": response.text,
         }
     except requests.exceptions.HTTPError as e:
         return {
             "statusCode": response.status_code,
-            "headers": {"Content-Type": "application/json"},
+            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
             "body": json.dumps({"error": str(e)}),
         }
     except Exception as e:
         return {
             "statusCode": 500,
-            "headers": {"Content-Type": "application/json"},
+            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
             "body": json.dumps({"error": str(e)}),
         }
