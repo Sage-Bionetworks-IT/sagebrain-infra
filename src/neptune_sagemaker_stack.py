@@ -112,15 +112,74 @@ class NeptuneSageMakerStack(cdk.Stack):
             default_user_settings=sagemaker.CfnDomain.UserSettingsProperty(
                 execution_role=self.execution_role.role_arn,
                 security_groups=[self.studio_security_group.security_group_id],
+                studio_web_portal="ENABLED",
+                studio_web_portal_settings=sagemaker.CfnDomain.StudioWebPortalSettingsProperty(
+                    # Hide everything except JupyterLab.
+                    # Values must match CloudFormation's resource spec exactly —
+                    # see aws cloudformation describe-type --type-name AWS::SageMaker::Domain
+                    hidden_app_types=[
+                        "CodeEditor",
+                        "Canvas",
+                        "RStudioServerPro",
+                        "TensorBoard",
+                        "DetailedProfiler",
+                    ],
+                    hidden_ml_tools=[
+                        "DataWrangler",
+                        "FeatureStore",
+                        "EmrClusters",
+                        "AutoMl",
+                        "Experiments",
+                        "Training",
+                        "ModelEvaluation",
+                        "Pipelines",
+                        "Models",
+                        "JumpStart",
+                        "InferenceRecommender",
+                        "Endpoints",
+                        "Projects",
+                        "InferenceOptimization",
+                        "HyperPodClusters",
+                        "Comet",
+                        "DeepchecksLLMEvaluation",
+                        "Fiddler",
+                        "LakeraGuard",
+                        "PerformanceEvaluation",
+                    ],
+                ),
             ),
             domain_name=sagemaker_config.get("domain_name", "sage-brain-studio"),
             subnet_ids=private_subnets.subnet_ids,
             vpc_id=vpc.vpc_id,
-            # PublicInternetOnly: Studio instances are in private subnets and reach
-            # Neptune via VPC. AWS API calls (S3, CloudWatch, etc.) use the NAT gateway.
-            # Switch to VpcOnly + VPC interface endpoints for full network isolation.
-            app_network_access_type="PublicInternetOnly",
+            # VpcOnly: all kernel traffic routes through the VPC so the space can
+            # reach Neptune. Requires VPC interface endpoints for sagemaker.api and sts
+            # (deployed in NetworkStack). Studio UI is still accessible via the console.
+            app_network_access_type="VpcOnly",
+            # DefaultSpaceSettings applies the SG to JupyterLab spaces (new Studio).
+            # DefaultUserSettings.SecurityGroups only covers legacy Studio Classic kernels.
+            # Without this, the space compute instance doesn't get the Neptune-accessible SG.
+            default_space_settings=sagemaker.CfnDomain.DefaultSpaceSettingsProperty(
+                execution_role=self.execution_role.role_arn,
+                security_groups=[self.studio_security_group.security_group_id],
+            ),
         )
+
+        # -------------------
+        # User Profiles
+        # -------------------
+        # Created via CDK so CloudFormation handles iam:PassRole — developers
+        # don't need that permission on their SSO role.
+        for username in sagemaker_config.get("user_profiles", []):
+            # Profile names: alphanumeric + hyphens only (no dots or underscores)
+            logical_id = (
+                f"UserProfile{''.join(w.capitalize() for w in username.split('-'))}"
+            )
+            sagemaker.CfnUserProfile(
+                self,
+                logical_id,
+                domain_id=self.domain.attr_domain_id,
+                user_profile_name=username,
+            )
 
         # -------------------
         # Outputs
