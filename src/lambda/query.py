@@ -15,9 +15,30 @@ CORS_HEADERS = {
 }
 
 
+MAX_QUERY_LENGTH = 8000
+
+
 def handler(event, context):
-    params = event.get("queryStringParameters") or {}
-    query = params.get("query", "SELECT * WHERE { ?s ?p ?o } LIMIT 10")
+    try:
+        body = json.loads(event.get("body") or "{}")
+        query = body.get("query", "SELECT * WHERE { ?s ?p ?o } LIMIT 10")
+    except json.JSONDecodeError:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+            "body": json.dumps({"error": "Request body must be valid JSON"}),
+        }
+
+    if len(query) > MAX_QUERY_LENGTH:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+            "body": json.dumps(
+                {
+                    "error": f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters"
+                }
+            ),
+        }
 
     url = f"https://{NEPTUNE_ENDPOINT}:8182/sparql"
     body = urlencode({"query": query})

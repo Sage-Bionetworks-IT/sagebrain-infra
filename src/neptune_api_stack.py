@@ -111,7 +111,7 @@ class NeptuneApiStack(cdk.Stack):
             cloud_watch_role=True,
             default_cors_preflight_options=apigw.CorsOptions(
                 allow_origins=apigw.Cors.ALL_ORIGINS,
-                allow_methods=["GET", "OPTIONS"],
+                allow_methods=["POST", "OPTIONS"],
             ),
             deploy_options=apigw.StageOptions(
                 access_log_destination=apigw.LogGroupLogDestination(access_log_group),
@@ -135,7 +135,7 @@ class NeptuneApiStack(cdk.Stack):
 
         query_resource = self.api.root.add_resource("query")
         query_resource.add_method(
-            "GET",
+            "POST",
             apigw.LambdaIntegration(self.query_fn),
         )
 
