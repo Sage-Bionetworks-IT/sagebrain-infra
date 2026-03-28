@@ -1,7 +1,7 @@
 import aws_cdk as cdk
 import pytest
 from aws_cdk import aws_ec2 as ec2
-from aws_cdk.assertions import Template
+from aws_cdk.assertions import Match, Template
 
 from src.neptune_stack import NeptuneStack
 
@@ -108,6 +108,109 @@ def test_neptune_stack_with_parameter_group(app_and_vpc):
     template.has_resource_properties(
         "AWS::Neptune::DBParameterGroup",
         {"Family": "neptune1.3", "Parameters": {"neptune_enable_audit_log": "1"}},
+    )
+
+
+def test_data_bucket_created(app_and_vpc, neptune_config):
+    """Neptune stack must create an S3 bucket for bulk data loading."""
+    app, vpc = app_and_vpc
+    stack = NeptuneStack(
+        app, "TestNeptuneBucket", vpc=vpc, neptune_config=neptune_config
+    )
+    template = Template.from_stack(stack)
+
+    template.has_resource_properties(
+        "AWS::S3::Bucket",
+        {
+            "VersioningConfiguration": {"Status": "Enabled"},
+            "BucketEncryption": Match.any_value(),
+            "PublicAccessBlockConfiguration": {
+                "BlockPublicAcls": True,
+                "BlockPublicPolicy": True,
+                "IgnorePublicAcls": True,
+                "RestrictPublicBuckets": True,
+            },
+        },
+    )
+
+
+def test_data_bucket_retained_on_delete(app_and_vpc, neptune_config):
+    """Data bucket must have RETAIN removal policy to protect data."""
+    app, vpc = app_and_vpc
+    stack = NeptuneStack(
+        app, "TestNeptuneBucketRetain", vpc=vpc, neptune_config=neptune_config
+    )
+    template = Template.from_stack(stack)
+
+    buckets = template.find_resources(
+        "AWS::S3::Bucket",
+        {"DeletionPolicy": "Retain"},
+    )
+    assert len(buckets) == 1, "Data bucket must have DeletionPolicy: Retain"
+
+
+def test_neptune_load_role_trusted_by_rds(app_and_vpc, neptune_config):
+    """Neptune load role must be assumable by rds.amazonaws.com."""
+    app, vpc = app_and_vpc
+    stack = NeptuneStack(
+        app, "TestNeptuneLoadRole", vpc=vpc, neptune_config=neptune_config
+    )
+    template = Template.from_stack(stack)
+
+    template.has_resource_properties(
+        "AWS::IAM::Role",
+        {
+            "AssumeRolePolicyDocument": {
+                "Statement": [
+                    {
+                        "Action": "sts:AssumeRole",
+                        "Effect": "Allow",
+                        "Principal": {"Service": "rds.amazonaws.com"},
+                    }
+                ]
+            }
+        },
+    )
+
+
+def test_neptune_cluster_has_associated_load_role(app_and_vpc, neptune_config):
+    """Neptune cluster must have the load role associated for bulk loading."""
+    app, vpc = app_and_vpc
+    stack = NeptuneStack(
+        app, "TestNeptuneAssocRole", vpc=vpc, neptune_config=neptune_config
+    )
+    template = Template.from_stack(stack)
+
+    template.has_resource_properties(
+        "AWS::Neptune::DBCluster",
+        {
+            "AssociatedRoles": Match.array_with(
+                [Match.object_like({"RoleArn": Match.any_value()})]
+            )
+        },
+    )
+
+
+def test_neptune_sg_allows_https_egress(app_and_vpc, neptune_config):
+    """Neptune SG must allow HTTPS egress for bulk loader to reach S3."""
+    app, vpc = app_and_vpc
+    stack = NeptuneStack(
+        app, "TestNeptuneSGEgress", vpc=vpc, neptune_config=neptune_config
+    )
+    template = Template.from_stack(stack)
+
+    template.has_resource_properties(
+        "AWS::EC2::SecurityGroup",
+        {
+            "GroupDescription": "Security group for Neptune cluster",
+            "SecurityGroupEgress": Match.array_with(
+                [
+                    Match.object_like(
+                        {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443}
+                    )
+                ]
+            ),
+        },
     )
 
 

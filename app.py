@@ -44,6 +44,7 @@ neptune_sagemaker_stack = NeptuneSageMakerStack(
     neptune_security_group=neptune_stack.neptune_security_group,
     neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
     sagemaker_config=config["NEPTUNE_SAGEMAKER"],
+    data_bucket=neptune_stack.data_bucket,
     env=env,
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies

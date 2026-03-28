@@ -1,6 +1,8 @@
 import aws_cdk as cdk
 from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_neptune as neptune
+from aws_cdk import aws_s3 as s3
 from constructs import Construct
 
 
@@ -30,8 +32,58 @@ class NeptuneStack(cdk.Stack):
             allow_all_outbound=False,
         )
 
-        # No broad ingress rules here. Each consumer stack (bastion, Lambda, etc.)
+        # No broad ingress rules here. Each consumer stack (Lambda, SageMaker, etc.)
         # adds a targeted SG-to-SG rule on port 8182 for least-privilege access.
+
+        # Neptune bulk loader initiates outbound HTTPS to S3 to read data files.
+        self.neptune_security_group.add_egress_rule(
+            peer=ec2.Peer.any_ipv4(),
+            connection=ec2.Port.tcp(443),
+            description="HTTPS outbound for Neptune bulk loader (S3 access)",
+        )
+
+        # -------------------
+        # S3 Bucket for Neptune Data
+        # -------------------
+        self.data_bucket = s3.Bucket(
+            self,
+            "NeptuneDataBucket",
+            versioned=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            enforce_ssl=True,
+            removal_policy=cdk.RemovalPolicy.RETAIN,
+        )
+
+        # Any principal authenticated to this AWS account can read/write the bucket.
+        # Access is still subject to IAM identity policies — this just removes the
+        # bucket-policy barrier for account members.
+        self.data_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                principals=[iam.AccountPrincipal(self.account)],
+                actions=["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+                resources=[self.data_bucket.arn_for_objects("*")],
+            )
+        )
+        self.data_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                principals=[iam.AccountPrincipal(self.account)],
+                actions=["s3:ListBucket"],
+                resources=[self.data_bucket.bucket_arn],
+            )
+        )
+
+        # -------------------
+        # IAM Role for Neptune Bulk Loader (Neptune → S3)
+        # -------------------
+        # Neptune assumes this role when executing a bulk load job to read data from S3.
+        self.neptune_load_role = iam.Role(
+            self,
+            "NeptuneLoadRole",
+            assumed_by=iam.ServicePrincipal("rds.amazonaws.com"),
+            description="Allows Neptune bulk loader to read data from S3",
+        )
+        self.data_bucket.grant_read(self.neptune_load_role)
 
         # -------------------
         # Neptune Subnet Group
@@ -93,6 +145,12 @@ class NeptuneStack(cdk.Stack):
                 if neptune_config.get("create_parameter_group", False)
                 else None
             ),
+            # Associate the load role so Neptune can assume it for bulk load jobs
+            associated_roles=[
+                neptune.CfnDBCluster.DBClusterRoleProperty(
+                    role_arn=self.neptune_load_role.role_arn
+                )
+            ],
             tags=[
                 cdk.CfnTag(key="Name", value=f"{construct_id}-cluster"),
             ],
@@ -153,4 +211,18 @@ class NeptuneStack(cdk.Stack):
             "NeptuneSecurityGroupId",
             value=self.neptune_security_group.security_group_id,
             description="Neptune security group ID",
+        )
+
+        cdk.CfnOutput(
+            self,
+            "NeptuneDataBucketName",
+            value=self.data_bucket.bucket_name,
+            description="S3 bucket for Neptune bulk data loading",
+        )
+
+        cdk.CfnOutput(
+            self,
+            "NeptuneLoadRoleArn",
+            value=self.neptune_load_role.role_arn,
+            description="IAM role ARN for Neptune bulk loader (pass to /loader API)",
         )

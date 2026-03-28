@@ -1,7 +1,7 @@
 
 # sage-brain-infra
 
-AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a public read-only SPARQL API and a secure bastion host for development access.
+AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a public read-only SPARQL API and SageMaker Studio for team data access.
 
 ## Features
 
@@ -133,7 +133,7 @@ curl -X POST <API_URL> \
 
 The endpoint returns `application/sparql-results+json`. Queries are limited to 8000 characters and throttled to 50 requests/second (burst: 100).
 
-## Accessing Neptune via SageMaker Studio
+## Accessing and Loading Data via SageMaker Studio
 
 Team members can load and query the knowledge graph directly from JupyterLab in the AWS Console — no SSH or EC2 required.
 
@@ -141,39 +141,64 @@ Team members can load and query the knowledge graph directly from JupyterLab in 
 
 Go to **AWS Console → SageMaker → Studio**, select your user profile, and launch a JupyterLab space.
 
-### 2. Get the Neptune endpoint
+### 2. Upload data to S3
+
+Data is stored in a date-partitioned layout that preserves a historical data lake. Each contribution goes under its own date prefix:
+
+```
+s3://<NeptuneDataBucketName>/
+  YYYY-MM-DD/
+    schema/       ← ontology / schema TTL files
+    data/
+      rdf/        ← data TTL files
+```
+
+Get the bucket name from CloudFormation:
 
 ```console
 aws --profile sagebrain cloudformation describe-stacks \
   --stack-name app-dev-neptune \
-  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
   --output text
 ```
 
-### 3. Query Neptune from a notebook
+Then upload via the AWS Console S3 UI, or from the Studio terminal:
 
-Authentication is handled automatically via the Studio execution role (SigV4 signed). Install dependencies once per space:
+```console
+aws s3 cp ./schema/ s3://<NeptuneDataBucketName>/2026-02-20/schema/ --recursive
+aws s3 cp ./data/rdf/ s3://<NeptuneDataBucketName>/2026-02-20/data/rdf/ --recursive
+```
+
+### 3. Load into Neptune
+
+Read the required values from CloudFormation outputs, then run `tools/load_kg.py`:
 
 ```console
 pip install requests aws-requests-auth
-```
 
-```python
-from aws_requests_auth.boto_utils import BotoAWSRequestsAuth
-import requests
+export NEPTUNE_ENDPOINT=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
+  --output text)
 
-ENDPOINT = "<NEPTUNE_CLUSTER_ENDPOINT>"
-auth = BotoAWSRequestsAuth(aws_host=f"{ENDPOINT}:8182", aws_region="us-east-1", aws_service="neptune-db")
+export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
+  --output text)
 
-resp = requests.get(f"https://{ENDPOINT}:8182/status", auth=auth, timeout=10)
-print(resp.json())
+export NEPTUNE_LOAD_ROLE=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneLoadRoleArn'].OutputValue" \
+  --output text)
+
+python tools/load_kg.py --prefix 2026-02-20 --stats
 ```
 
 > [!NOTE]
 > Neptune has IAM auth enabled. All requests must be SigV4-signed — plain `curl` will return `AccessDeniedException`. Use `aws-requests-auth` or `awscurl`.
 
 > [!NOTE]
-> For detailed usage including bulk data loading, see [docs/neptune.md](docs/neptune.md).
+> For detailed usage including SPARQL querying, see [docs/neptune.md](docs/neptune.md).
 
 ## Secrets
 
@@ -186,13 +211,13 @@ To pass secrets to a container set the secrets manager `container_secrets`
 In this repository, the infrastructure does not define application-specific helpers such as `ServiceProps` or `ServiceSecret`. Instead, it assumes that:
 
 - Sensitive values (for example, Neptune credentials or application API keys) are stored in **AWS Secrets Manager** or **SSM Parameter Store**.
-- Client applications that connect to Neptune (typically through the bastion host or from other trusted workloads in the VPC) are responsible for retrieving those secrets and exposing them to their own runtime (for example, as environment variables or in their own configuration layer).
+- Client applications that connect to Neptune (from SageMaker Studio or other trusted workloads in the VPC) are responsible for retrieving those secrets and exposing them to their own runtime (for example, as environment variables or in their own configuration layer).
 
 A typical pattern is:
 
 1. Store connection details (host, port, user, password, etc.) in a secret in AWS Secrets Manager.
 2. Grant IAM permissions for that secret to:
-   - Developers or automation that need to connect via the bastion host, and/or
+   - Developers or automation that need to connect via SageMaker Studio, and/or
    - Application workloads that will access Neptune from within the VPC.
 3. Have those clients retrieve the secret at runtime and use it to construct the Neptune endpoint/connection string.
 

@@ -1,6 +1,7 @@
 import aws_cdk as cdk
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
+from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_sagemaker as sagemaker
 from constructs import Construct
 
@@ -9,9 +10,9 @@ class NeptuneSageMakerStack(cdk.Stack):
     """
     SageMaker Studio domain for team access to the Neptune knowledge graph.
 
-    Replaces the EC2 bastion host with a managed Jupyter environment accessible
-    via the AWS Console. Team members can load data and run SPARQL queries
-    without needing to SSH into an EC2 instance.
+    SageMaker Studio domain for team access to the Neptune knowledge graph.
+    Team members can load data and run SPARQL queries via JupyterLab in the
+    AWS Console.
     """
 
     def __init__(
@@ -22,6 +23,7 @@ class NeptuneSageMakerStack(cdk.Stack):
         neptune_security_group: ec2.SecurityGroup,
         neptune_cluster_resource_id: str,
         sagemaker_config: dict,
+        data_bucket: s3.Bucket,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -79,7 +81,7 @@ class NeptuneSageMakerStack(cdk.Stack):
             ],
         )
 
-        # Full Neptune access (read + write + delete) scoped to this cluster
+        # Full Neptune access (read + write + delete + bulk load) scoped to this cluster
         self.execution_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -91,12 +93,19 @@ class NeptuneSageMakerStack(cdk.Stack):
                     "neptune-db:GetQueryStatus",
                     "neptune-db:CancelQuery",
                     "neptune-db:ResetDatabase",
+                    "neptune-db:StartLoaderJob",
+                    "neptune-db:GetLoaderJobStatus",
+                    "neptune-db:ListLoaderJobs",
+                    "neptune-db:CancelLoaderJob",
                 ],
                 resources=[
                     f"arn:{self.partition}:neptune-db:{self.region}:{self.account}:{neptune_cluster_resource_id}/*"
                 ],
             )
         )
+
+        # S3 read/write access for uploading and reading Neptune bulk load data
+        data_bucket.grant_read_write(self.execution_role)
 
         # -------------------
         # SageMaker Studio Domain
