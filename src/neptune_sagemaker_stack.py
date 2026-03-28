@@ -10,9 +10,9 @@ class NeptuneSageMakerStack(cdk.Stack):
     """
     SageMaker Studio domain for team access to the Neptune knowledge graph.
 
-    Replaces the EC2 bastion host with a managed Jupyter environment accessible
-    via the AWS Console. Team members can load data and run SPARQL queries
-    without needing to SSH into an EC2 instance.
+    SageMaker Studio domain for team access to the Neptune knowledge graph.
+    Team members can load data and run SPARQL queries via JupyterLab in the
+    AWS Console.
     """
 
     def __init__(

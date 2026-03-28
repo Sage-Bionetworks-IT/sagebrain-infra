@@ -32,7 +32,7 @@ class NeptuneStack(cdk.Stack):
             allow_all_outbound=False,
         )
 
-        # No broad ingress rules here. Each consumer stack (bastion, Lambda, etc.)
+        # No broad ingress rules here. Each consumer stack (Lambda, SageMaker, etc.)
         # adds a targeted SG-to-SG rule on port 8182 for least-privilege access.
 
         # Neptune bulk loader initiates outbound HTTPS to S3 to read data files.

@@ -1,7 +1,7 @@
 
 # sage-brain-infra
 
-AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a public read-only SPARQL API and a secure bastion host for development access.
+AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a public read-only SPARQL API and SageMaker Studio for team data access.
 
 ## Features
 
@@ -191,13 +191,13 @@ To pass secrets to a container set the secrets manager `container_secrets`
 In this repository, the infrastructure does not define application-specific helpers such as `ServiceProps` or `ServiceSecret`. Instead, it assumes that:
 
 - Sensitive values (for example, Neptune credentials or application API keys) are stored in **AWS Secrets Manager** or **SSM Parameter Store**.
-- Client applications that connect to Neptune (typically through the bastion host or from other trusted workloads in the VPC) are responsible for retrieving those secrets and exposing them to their own runtime (for example, as environment variables or in their own configuration layer).
+- Client applications that connect to Neptune (from SageMaker Studio or other trusted workloads in the VPC) are responsible for retrieving those secrets and exposing them to their own runtime (for example, as environment variables or in their own configuration layer).
 
 A typical pattern is:
 
 1. Store connection details (host, port, user, password, etc.) in a secret in AWS Secrets Manager.
 2. Grant IAM permissions for that secret to:
-   - Developers or automation that need to connect via the bastion host, and/or
+   - Developers or automation that need to connect via SageMaker Studio, and/or
    - Application workloads that will access Neptune from within the VPC.
 3. Have those clients retrieve the secret at runtime and use it to construct the Neptune endpoint/connection string.
 
