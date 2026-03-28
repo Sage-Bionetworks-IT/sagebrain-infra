@@ -48,7 +48,7 @@ print("connected")
 import requests
 from aws_requests_auth.boto_utils import BotoAWSRequestsAuth
 
-ENDPOINT = "YOUR_NEPTUNE_CLUSTER_ENDPOINT"
+ENDPOINT = "<NeptuneClusterEndpoint>"  # from app-dev-neptune CloudFormation outputs
 auth = BotoAWSRequestsAuth(
     aws_host=f"{ENDPOINT}:8182",
     aws_region="us-east-1",
@@ -89,11 +89,20 @@ Data is loaded via the Neptune S3 bulk loader. Each data release is uploaded to 
 ### S3 Layout (Hive-style partitioning)
 
 ```
-s3://app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf/
+s3://<NeptuneDataBucketName>/
   YYYY-MM-DD/
     schema/       ← ontology / schema TTL files
     data/
       rdf/        ← data TTL files (one or more .ttl files)
+```
+
+Get the bucket name from CloudFormation:
+
+```bash
+aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
+  --output text
 ```
 
 Each date prefix is a self-contained snapshot. Old prefixes are retained in S3 — they are not loaded into Neptune but are available for reference or rollback.
@@ -106,8 +115,13 @@ Each date prefix is a self-contained snapshot. Old prefixes are retained in S3 �
 From a Studio terminal or any machine with the `sagebrain` AWS profile:
 
 ```bash
-aws s3 cp ./schema/ s3://app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf/2026-02-20/schema/ --recursive
-aws s3 cp ./data/rdf/ s3://app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf/2026-02-20/data/rdf/ --recursive
+export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
+  --output text)
+
+aws s3 cp ./schema/ s3://$NEPTUNE_BUCKET/2026-02-20/schema/ --recursive
+aws s3 cp ./data/rdf/ s3://$NEPTUNE_BUCKET/2026-02-20/data/rdf/ --recursive
 ```
 
 ### Running the loader
@@ -117,9 +131,18 @@ Run `tools/load_kg.py` from a JupyterLab terminal in Studio. It performs a full 
 ```bash
 pip install requests aws-requests-auth
 
-export NEPTUNE_ENDPOINT=neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com
-export NEPTUNE_BUCKET=app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf
-export NEPTUNE_LOAD_ROLE=arn:aws:iam::620117233256:role/app-dev-neptune-NeptuneLoadRole6C006CFE-Q9xhaXQNFYGw
+export NEPTUNE_ENDPOINT=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
+  --output text)
+export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
+  --output text)
+export NEPTUNE_LOAD_ROLE=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneLoadRoleArn'].OutputValue" \
+  --output text)
 
 # Full reset + load
 python tools/load_kg.py --prefix 2026-02-20 --stats

@@ -146,30 +146,50 @@ Go to **AWS Console → SageMaker → Studio**, select your user profile, and la
 Data is stored in a date-partitioned layout that preserves a historical data lake. Each contribution goes under its own date prefix:
 
 ```
-s3://app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf/
+s3://<NeptuneDataBucketName>/
   YYYY-MM-DD/
     schema/       ← ontology / schema TTL files
     data/
       rdf/        ← data TTL files
 ```
 
-Upload via the AWS Console S3 UI, or from the Studio terminal:
+Get the bucket name from CloudFormation:
 
 ```console
-aws s3 cp ./schema/ s3://app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf/2026-02-20/schema/ --recursive
-aws s3 cp ./data/rdf/ s3://app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf/2026-02-20/data/rdf/ --recursive
+aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
+  --output text
+```
+
+Then upload via the AWS Console S3 UI, or from the Studio terminal:
+
+```console
+aws s3 cp ./schema/ s3://<NeptuneDataBucketName>/2026-02-20/schema/ --recursive
+aws s3 cp ./data/rdf/ s3://<NeptuneDataBucketName>/2026-02-20/data/rdf/ --recursive
 ```
 
 ### 3. Load into Neptune
 
-Run `tools/load_kg.py` from a Studio terminal. It resets Neptune, loads schema first, then data:
+Read the required values from CloudFormation outputs, then run `tools/load_kg.py`:
 
 ```console
 pip install requests aws-requests-auth
 
-export NEPTUNE_ENDPOINT=neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com
-export NEPTUNE_BUCKET=app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf
-export NEPTUNE_LOAD_ROLE=arn:aws:iam::620117233256:role/app-dev-neptune-NeptuneLoadRole6C006CFE-Q9xhaXQNFYGw
+export NEPTUNE_ENDPOINT=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
+  --output text)
+
+export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
+  --output text)
+
+export NEPTUNE_LOAD_ROLE=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneLoadRoleArn'].OutputValue" \
+  --output text)
 
 python tools/load_kg.py --prefix 2026-02-20 --stats
 ```

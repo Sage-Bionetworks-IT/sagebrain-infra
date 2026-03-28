@@ -24,23 +24,32 @@ aws --profile sagebrain sso login
 Data is stored in a date-partitioned (Hive-style) layout — each contribution is a snapshot under its own date prefix, preserving a historical data lake:
 
 ```
-s3://app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf/
+s3://<NeptuneDataBucketName>/
   YYYY-MM-DD/
     schema/       ← ontology / schema TTL files
     data/
       rdf/        ← data TTL files
 ```
 
-Any principal authenticated to the AWS account can upload to the bucket. The Neptune load role ARN (needed for bulk loading) is in the `app-dev-neptune` CloudFormation outputs as `NeptuneLoadRoleArn`.
+Any principal authenticated to the AWS account can upload to the bucket. Bucket name, cluster endpoint, and load role ARN are all in the `app-dev-neptune` CloudFormation outputs (`NeptuneDataBucketName`, `NeptuneClusterEndpoint`, `NeptuneLoadRoleArn`).
 
 ## Loading Data
 
-Run `tools/load_kg.py` from a SageMaker Studio terminal. It resets Neptune, loads schema first, then data:
+Run `tools/load_kg.py` from a SageMaker Studio terminal. Read values from CloudFormation outputs:
 
 ```bash
-export NEPTUNE_ENDPOINT=neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com
-export NEPTUNE_BUCKET=app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf
-export NEPTUNE_LOAD_ROLE=arn:aws:iam::620117233256:role/app-dev-neptune-NeptuneLoadRole6C006CFE-Q9xhaXQNFYGw
+export NEPTUNE_ENDPOINT=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
+  --output text)
+export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
+  --output text)
+export NEPTUNE_LOAD_ROLE=$(aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
+  --query "Stacks[0].Outputs[?OutputKey=='NeptuneLoadRoleArn'].OutputValue" \
+  --output text)
 
 python tools/load_kg.py --prefix 2026-02-20 --stats
 ```
@@ -71,11 +80,17 @@ Handles SPARQL queries against Neptune via `POST /query` with a JSON body `{"que
 - CORS headers (`Access-Control-Allow-Origin: *`) on all responses including errors
 - Only has `ReadDataViaQuery`, `GetEngineStatus`, `GetQueryStatus` IAM permissions
 
-Live endpoint: `https://ewdwpljfla.execute-api.us-east-1.amazonaws.com/prod/query`
+Get the live endpoint from CloudFormation:
+```bash
+aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune-api \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+  --output text
+```
 
 Test with curl:
 ```bash
-curl -X POST https://ewdwpljfla.execute-api.us-east-1.amazonaws.com/prod/query \
+curl -X POST <ApiUrl> \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 5"}'
 ```
