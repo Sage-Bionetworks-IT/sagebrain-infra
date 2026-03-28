@@ -173,3 +173,5 @@ node_modules/
 
 # AWS CDK
 cdk.out
+
+kgdata

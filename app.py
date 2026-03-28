@@ -2,7 +2,7 @@ import aws_cdk as cdk
 
 from src.network_stack import NetworkStack
 from src.neptune_api_stack import NeptuneApiStack
-from src.neptune_bastion_stack import NeptuneBastionStack
+from src.neptune_sagemaker_stack import NeptuneSageMakerStack
 from src.neptune_stack import NeptuneStack
 from src.utils import load_context_config
 
@@ -36,16 +36,17 @@ neptune_stack = NeptuneStack(
 )
 neptune_stack.add_dependency(network_stack)
 
-# Neptune bastion host for local development access
-neptune_bastion_stack = NeptuneBastionStack(
+# SageMaker Studio for team access to Neptune
+neptune_sagemaker_stack = NeptuneSageMakerStack(
     scope=cdk_app,
-    construct_id=f"{STACK_NAME_PREFIX}-neptune-bastion",
+    construct_id=f"{STACK_NAME_PREFIX}-neptune-sagemaker",
     vpc=network_stack.vpc,
     neptune_security_group=neptune_stack.neptune_security_group,
-    bastion_config=config["NEPTUNE_BASTION"],
+    neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
+    sagemaker_config=config["NEPTUNE_SAGEMAKER"],
     env=env,
 )
-# Note: No explicit dependency needed as the security group reference creates the implicit dependency
+# Note: No explicit dependency needed as the direct references create implicit dependencies
 
 # Public read-only API for Neptune
 neptune_api_stack = NeptuneApiStack(
