@@ -52,13 +52,11 @@ neptune_api_stack = NeptuneApiStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-neptune-api",
     vpc=network_stack.vpc,
-    neptune_read_endpoint=cdk.Fn.import_value(
-        f"{STACK_NAME_PREFIX}-neptune-read-endpoint"
-    ),
+    neptune_read_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
     neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
     neptune_security_group=neptune_stack.neptune_security_group,
     env=env,
 )
-neptune_api_stack.add_dependency(neptune_stack)
+# Note: No explicit dependency needed as the direct references create implicit dependencies
 
 cdk_app.synth()
