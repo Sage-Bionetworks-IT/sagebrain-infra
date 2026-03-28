@@ -12,3 +12,5 @@ NEPTUNE:
 NEPTUNE_SAGEMAKER:
   user_profiles:
     - thomas-yu  # SageMaker profile names: alphanumeric + hyphens only, no dots
+    - avu
+    - obanks
