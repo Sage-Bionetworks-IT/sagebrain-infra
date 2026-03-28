@@ -1,12 +1,13 @@
 
 # sage-brain-infra
 
-AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a secure bastion host for development access.
+AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a public read-only SPARQL API and a secure bastion host for development access.
 
 ## Features
 
 - **VPC Networking**: Isolated network environment with public and private subnets
 - **Amazon Neptune**: Managed graph database for knowledge graphs
+- **Public SPARQL API**: Read-only API Gateway + Lambda endpoint for querying Neptune over HTTPS
 - **Bastion Host**: Secure remote access for Neptune development via SSM
 
 ## Prerequisites
@@ -108,6 +109,29 @@ To deploy a specific stack:
 ```console
 AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-bastion --context env=dev
 ```
+
+## Querying Neptune via the Public API
+
+A read-only SPARQL endpoint is available over HTTPS — no authentication required.
+
+Get the API URL from CDK outputs after deployment:
+
+```console
+aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune-api \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+  --output text
+```
+
+Send a `POST` request with a JSON body containing your SPARQL query:
+
+```console
+curl -X POST <API_URL> \
+  -H "Content-Type: application/json" \
+  -d '{"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 10"}'
+```
+
+The endpoint returns `application/sparql-results+json`. Queries are limited to 8000 characters and throttled to 50 requests/second (burst: 100).
 
 ## Connecting to the Neptune Bastion Host
 

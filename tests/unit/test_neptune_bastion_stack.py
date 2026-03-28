@@ -105,6 +105,59 @@ def test_bastion_no_proxy_port_exposed():
             ), "Neptune proxy port 8182 should not be exposed on the bastion SG"
 
 
+def test_bastion_in_public_subnet():
+    """Test that bastion instance is placed in a public subnet"""
+    template = make_stack({"instance_type": "t3.micro"})
+
+    instances = template.find_resources("AWS::EC2::Instance")
+    assert len(instances) == 1
+    instance = list(instances.values())[0]
+    # CDK sets SubnetId directly on the instance; the exported name includes "Public"
+    subnet_id = instance["Properties"].get("SubnetId", {})
+    import_value = subnet_id.get("Fn::ImportValue", "")
+    assert "Public" in import_value, f"Expected a public subnet, got: {import_value}"
+
+
+def test_bastion_ebs_volume_encrypted():
+    """Test that the root EBS volume is encrypted"""
+    template = make_stack({"instance_type": "t3.micro"})
+
+    template.has_resource_properties(
+        "AWS::EC2::Instance",
+        {
+            "BlockDeviceMappings": [
+                {
+                    "DeviceName": "/dev/xvda",
+                    "Ebs": {"Encrypted": True, "VolumeType": "gp3"},
+                }
+            ]
+        },
+    )
+
+
+def test_bastion_imdsv2_required():
+    """Test that IMDSv2 is enforced on the bastion instance"""
+    template = make_stack({"instance_type": "t3.micro"})
+
+    # CDK sets require_imdsv2 via a LaunchTemplate, not directly on the instance
+    template.has_resource_properties(
+        "AWS::EC2::LaunchTemplate",
+        {
+            "LaunchTemplateData": {
+                "MetadataOptions": {"HttpTokens": "required"},
+            }
+        },
+    )
+
+
+def test_bastion_outputs_exist():
+    """Test that BastionInstanceId and SSMCommand outputs are present"""
+    template = make_stack({"instance_type": "t3.micro"})
+
+    template.has_output("BastionInstanceId", {})
+    template.has_output("SSMCommand", {})
+
+
 def test_bastion_iam_permissions():
     """Test that bastion has correct IAM permissions for Neptune"""
     template = make_stack({"instance_type": "t3.micro"})
