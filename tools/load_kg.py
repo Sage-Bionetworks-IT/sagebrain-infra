@@ -1,39 +1,40 @@
 #!/usr/bin/env python3
 """
-Load NF-OSI KG Turtle files into Amazon Neptune via SPARQL UPDATE.
+Load NF-OSI KG data into Amazon Neptune via the S3 bulk loader.
 
-Run this from the bastion host where Neptune is accessible.
+Run from a SageMaker Studio terminal or notebook where Neptune is accessible
+via the VPC. Credentials are picked up automatically from the instance role.
 
 Requirements:
-    pip3 install rdflib requests aws-requests-auth boto3
+    pip install requests aws-requests-auth
 
 Usage:
-    # Load all files (ontology first, then data):
-    python3 load_kg.py --endpoint <neptune-cluster-endpoint>
+    # Reset database and load schema + data for a given date:
+    python tools/load_kg.py --endpoint <neptune-endpoint> --bucket <bucket> --prefix 2026-02-20
 
-    # Load a single file:
-    python3 load_kg.py --endpoint <neptune-cluster-endpoint> --file kgdata/data/rdf/studies.ttl
+    # Load without clearing (append mode):
+    python tools/load_kg.py --endpoint <neptune-endpoint> --bucket <bucket> --prefix 2026-02-20 --no-reset
 
-    # Dry-run (parse only, no upload):
-    python3 load_kg.py --endpoint <neptune-cluster-endpoint> --dry-run
+    # Dry-run (print what would happen, no changes):
+    python tools/load_kg.py --endpoint <neptune-endpoint> --bucket <bucket> --prefix 2026-02-20 --dry-run
 
-    # Clear all data first:
-    python3 load_kg.py --endpoint <neptune-cluster-endpoint> --clear-first
+    # Print triple count after loading:
+    python tools/load_kg.py ... --stats
 
-Environment variables (override --endpoint / --region):
-    NEPTUNE_ENDPOINT   Neptune cluster endpoint hostname
-    AWS_DEFAULT_REGION AWS region (default: us-east-1)
+Environment variables (override CLI flags):
+    NEPTUNE_ENDPOINT    Neptune cluster endpoint hostname
+    NEPTUNE_LOAD_ROLE   IAM role ARN for the Neptune bulk loader
+    NEPTUNE_BUCKET      S3 bucket name
+    AWS_DEFAULT_REGION  AWS region (default: us-east-1)
 """
 
 import argparse
 import os
 import sys
 import time
-from pathlib import Path
 
 import requests
 from aws_requests_auth.boto_utils import BotoAWSRequestsAuth
-from rdflib import Graph
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -41,40 +42,16 @@ from rdflib import Graph
 
 DEFAULT_REGION = "us-east-1"
 NEPTUNE_PORT = 8182
-BATCH_SIZE = 500  # triples per INSERT DATA request
-RETRY_LIMIT = 3
-RETRY_BACKOFF = 5  # seconds between retries
-
-# Ordered list: ontology first so type info is present when data loads
-LOAD_ORDER = [
-    "kgdata/schema/ontology.ttl",
-    "kgdata/data/rdf/funders.ttl",
-    "kgdata/data/rdf/investigators.ttl",
-    "kgdata/data/rdf/studies.ttl",
-    "kgdata/data/rdf/mutations.ttl",
-    "kgdata/data/rdf/mutation_model.ttl",
-    "kgdata/data/rdf/animal_models.ttl",
-    "kgdata/data/rdf/cell_lines.ttl",
-    "kgdata/data/rdf/antibodies.ttl",
-    "kgdata/data/rdf/genetic_reagents.ttl",
-    "kgdata/data/rdf/donor_tool.ttl",
-    "kgdata/data/rdf/donors.ttl",
-    "kgdata/data/rdf/biobanks.ttl",
-    "kgdata/data/rdf/development.ttl",
-    "kgdata/data/rdf/resources.ttl",
-    "kgdata/data/rdf/publications.ttl",
-    "kgdata/data/rdf/observations.ttl",
-    "kgdata/data/rdf/files.ttl",  # largest — loaded last
-]
+POLL_INTERVAL = 5  # seconds between load status checks
+RESTART_TIMEOUT = 120  # seconds to wait for Neptune after a reset
 
 
 # ---------------------------------------------------------------------------
-# Neptune SPARQL helpers
+# Auth
 # ---------------------------------------------------------------------------
 
 
 def make_auth(endpoint: str, region: str) -> BotoAWSRequestsAuth:
-    # aws_host must include port so it matches the Host header Neptune receives
     return BotoAWSRequestsAuth(
         aws_host=f"{endpoint}:{NEPTUNE_PORT}",
         aws_region=region,
@@ -82,130 +59,136 @@ def make_auth(endpoint: str, region: str) -> BotoAWSRequestsAuth:
     )
 
 
-def sparql_update(endpoint: str, auth, update: str, dry_run: bool = False) -> bool:
-    """Send a SPARQL UPDATE to Neptune. Returns True on success."""
-    if dry_run:
-        return True
+# ---------------------------------------------------------------------------
+# Neptune helpers
+# ---------------------------------------------------------------------------
 
-    url = f"https://{endpoint}:{NEPTUNE_PORT}/sparql"
-    for attempt in range(1, RETRY_LIMIT + 1):
+
+def wait_for_neptune(endpoint: str, auth, timeout: int = RESTART_TIMEOUT):
+    """Poll /status until Neptune responds — needed after a database reset."""
+    print("Waiting for Neptune to be ready...")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
         try:
-            resp = requests.post(
-                url,
-                data={"update": update},
+            resp = requests.get(
+                f"https://{endpoint}:{NEPTUNE_PORT}/status",
                 auth=auth,
-                timeout=120,
+                timeout=5,
             )
             if resp.status_code == 200:
-                return True
-            print(f"    HTTP {resp.status_code}: {resp.text[:200]}", file=sys.stderr)
-        except requests.RequestException as exc:
-            print(f"    Request error (attempt {attempt}): {exc}", file=sys.stderr)
-
-        if attempt < RETRY_LIMIT:
-            time.sleep(RETRY_BACKOFF)
-
-    return False
+                print("  Neptune is ready.")
+                return
+        except Exception:
+            pass
+        time.sleep(POLL_INTERVAL)
+    raise TimeoutError(f"Neptune did not become ready within {timeout}s")
 
 
-def sparql_query(endpoint: str, auth, query: str) -> dict:
-    """Send a SPARQL SELECT query and return the JSON response."""
-    url = f"https://{endpoint}:{NEPTUNE_PORT}/sparql"
+def reset_database(endpoint: str, auth, dry_run: bool = False):
+    """
+    Full database wipe using the Neptune system reset endpoint.
+    Faster and more reliable than SPARQL DROP ALL.
+    """
+    print("Resetting database...")
+    if dry_run:
+        print("  [dry-run] skipped.")
+        return
+
+    # Step 1: get confirmation token
     resp = requests.post(
-        url,
-        data={"query": query},
+        f"https://{endpoint}:{NEPTUNE_PORT}/system",
+        data={"action": "initiateDatabaseReset"},
+        auth=auth,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    token = resp.json()["payload"]["token"]
+
+    # Step 2: confirm reset
+    resp = requests.post(
+        f"https://{endpoint}:{NEPTUNE_PORT}/system",
+        data={"action": "performDatabaseReset", "token": token},
+        auth=auth,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    print("  Reset initiated — waiting for Neptune to restart...")
+    time.sleep(5)  # brief pause before polling
+    wait_for_neptune(endpoint, auth)
+
+
+def bulk_load(
+    endpoint: str,
+    auth,
+    s3_source: str,
+    load_role_arn: str,
+    region: str,
+    fmt: str = "turtle",
+    dry_run: bool = False,
+) -> bool:
+    """
+    Submit an S3 bulk load job and poll until complete.
+    Returns True on success, False on failure.
+    Non-RDF files (e.g. README.md) are skipped automatically via failOnError=FALSE.
+    """
+    print(f"  source : {s3_source}")
+    if dry_run:
+        print("  [dry-run] skipped.")
+        return True
+
+    resp = requests.post(
+        f"https://{endpoint}:{NEPTUNE_PORT}/loader",
+        json={
+            "source": s3_source,
+            "format": fmt,
+            "iamRoleArn": load_role_arn,
+            "region": region,
+            "failOnError": "FALSE",  # skip non-RDF files (e.g. README.md)
+        },
+        auth=auth,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    load_id = resp.json()["payload"]["loadId"]
+    print(f"  load_id: {load_id}")
+
+    while True:
+        status_resp = requests.get(
+            f"https://{endpoint}:{NEPTUNE_PORT}/loader/{load_id}",
+            auth=auth,
+            timeout=30,
+        )
+        status_resp.raise_for_status()
+        payload = status_resp.json()["payload"]["overallStatus"]
+        state = payload["status"]
+        print(f"  status : {state}")
+
+        if state == "LOAD_COMPLETED":
+            print(
+                f"  records: {payload['totalRecords']:,}  "
+                f"dupes: {payload['totalDuplicates']:,}  "
+                f"parse_errors: {payload['parsingErrors']}  "
+                f"time: {payload['totalTimeSpent']}s"
+            )
+            return True
+
+        if state in ("LOAD_FAILED", "LOAD_CANCELLED"):
+            print(f"  FAILED: {payload}", file=sys.stderr)
+            return False
+
+        time.sleep(POLL_INTERVAL)
+
+
+def triple_count(endpoint: str, auth) -> int:
+    resp = requests.post(
+        f"https://{endpoint}:{NEPTUNE_PORT}/sparql",
+        data={"query": "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"},
         auth=auth,
         headers={"Accept": "application/sparql-results+json"},
         timeout=60,
     )
     resp.raise_for_status()
-    return resp.json()
-
-
-def clear_all(endpoint: str, auth, dry_run: bool = False):
-    print("Clearing all named graphs (CLEAR ALL)...")
-    ok = sparql_update(endpoint, auth, "CLEAR ALL", dry_run)
-    if ok:
-        print("  Done." if not dry_run else "  [dry-run] skipped.")
-    else:
-        print("  FAILED — aborting.", file=sys.stderr)
-        sys.exit(1)
-
-
-# ---------------------------------------------------------------------------
-# Core loader
-# ---------------------------------------------------------------------------
-
-
-def named_graph_uri(ttl_path: Path) -> str:
-    """Derive a stable named graph URI from the file path."""
-    # e.g. kgdata/data/rdf/studies.ttl  ->  http://nf-osi.github.com/graphs/studies
-    stem = ttl_path.stem  # filename without extension
-    return f"http://nf-osi.github.com/graphs/{stem}"
-
-
-def triples_to_ntriples_lines(graph: Graph) -> list[str]:
-    """Serialize all triples as N-Triples strings (one per line)."""
-    nt = graph.serialize(format="nt")
-    return [
-        line for line in nt.splitlines() if line.strip() and not line.startswith("#")
-    ]
-
-
-def build_insert_data(graph_uri: str, nt_lines: list[str]) -> str:
-    triples = "\n".join(nt_lines)
-    return f"INSERT DATA {{ GRAPH <{graph_uri}> {{ {triples} }} }}"
-
-
-def load_file(
-    ttl_path: Path,
-    endpoint: str,
-    auth,
-    batch_size: int = BATCH_SIZE,
-    dry_run: bool = False,
-) -> tuple[int, int]:
-    """
-    Parse a Turtle file and upload in batches.
-    Returns (triples_loaded, batches_sent).
-    """
-    print(f"\nLoading: {ttl_path}")
-
-    graph = Graph()
-    try:
-        graph.parse(ttl_path, format="turtle")
-    except Exception as exc:
-        print(f"  Parse error: {exc}", file=sys.stderr)
-        return 0, 0
-
-    total = len(graph)
-    graph_uri = named_graph_uri(ttl_path)
-    print(f"  Triples parsed : {total:,}")
-    print(f"  Named graph    : {graph_uri}")
-    print(f"  Batch size     : {batch_size}")
-
-    nt_lines = triples_to_ntriples_lines(graph)
-    batches_ok = 0
-    failed = 0
-
-    for i in range(0, len(nt_lines), batch_size):
-        chunk = nt_lines[i : i + batch_size]
-        update = build_insert_data(graph_uri, chunk)
-        batch_num = i // batch_size + 1
-        total_batches = (len(nt_lines) + batch_size - 1) // batch_size
-
-        ok = sparql_update(endpoint, auth, update, dry_run)
-        if ok:
-            batches_ok += 1
-            print(
-                f"  Batch {batch_num}/{total_batches}: {len(chunk)} triples  ✓",
-                end="\r",
-            )
-        else:
-            failed += 1
-            print(f"  Batch {batch_num}/{total_batches}: FAILED", file=sys.stderr)
-
-    print(f"  Batches: {batches_ok} ok, {failed} failed       ")
-    return total, batches_ok
+    return int(resp.json()["results"]["bindings"][0]["n"]["value"])
 
 
 # ---------------------------------------------------------------------------
@@ -215,14 +198,29 @@ def load_file(
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Load NF-OSI KG Turtle files into Amazon Neptune.",
+        description="Load NF-OSI KG data into Neptune via the S3 bulk loader.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument(
         "--endpoint",
         default=os.environ.get("NEPTUNE_ENDPOINT"),
-        help="Neptune cluster endpoint hostname (or set NEPTUNE_ENDPOINT env var)",
+        help="Neptune cluster endpoint hostname",
+    )
+    parser.add_argument(
+        "--bucket",
+        default=os.environ.get("NEPTUNE_BUCKET"),
+        help="S3 bucket name",
+    )
+    parser.add_argument(
+        "--prefix",
+        required=True,
+        help="S3 date prefix, e.g. 2026-02-20",
+    )
+    parser.add_argument(
+        "--load-role",
+        default=os.environ.get("NEPTUNE_LOAD_ROLE"),
+        help="IAM role ARN for the Neptune bulk loader",
     )
     parser.add_argument(
         "--region",
@@ -230,30 +228,24 @@ def parse_args():
         help=f"AWS region (default: {DEFAULT_REGION})",
     )
     parser.add_argument(
-        "--file",
-        metavar="PATH",
-        help="Load a single TTL file instead of the full dataset",
+        "--format",
+        default="turtle",
+        help="RDF format for both schema and data (default: turtle)",
     )
     parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=BATCH_SIZE,
-        help=f"Triples per INSERT DATA request (default: {BATCH_SIZE})",
-    )
-    parser.add_argument(
-        "--clear-first",
+        "--no-reset",
         action="store_true",
-        help="Run CLEAR ALL before loading (destructive!)",
+        help="Skip database reset and append to existing data",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Parse files but do not send to Neptune",
+        help="Print what would happen without making any changes",
     )
     parser.add_argument(
         "--stats",
         action="store_true",
-        help="Print triple-count stats from Neptune after loading",
+        help="Print total triple count after loading",
     )
     return parser.parse_args()
 
@@ -261,47 +253,76 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if not args.endpoint:
-        print("Error: --endpoint or NEPTUNE_ENDPOINT is required.", file=sys.stderr)
+    missing = [
+        f
+        for f, v in [
+            ("--endpoint", args.endpoint),
+            ("--bucket", args.bucket),
+            ("--load-role", args.load_role),
+        ]
+        if not v
+    ]
+    if missing:
+        print(
+            f"Error: missing required arguments: {', '.join(missing)}", file=sys.stderr
+        )
         sys.exit(1)
 
     auth = make_auth(args.endpoint, args.region)
 
-    if args.clear_first:
-        clear_all(args.endpoint, auth, args.dry_run)
+    prefix = args.prefix.rstrip("/")
+    schema_source = f"s3://{args.bucket}/{prefix}/schema"
+    data_source = f"s3://{args.bucket}/{prefix}/data/rdf"
 
-    # Resolve files to load
-    if args.file:
-        files = [Path(args.file)]
-    else:
-        repo_root = Path(__file__).parent.parent
-        files = [repo_root / p for p in LOAD_ORDER]
+    print(
+        f"{'[DRY-RUN] ' if args.dry_run else ''}Starting load from s3://{args.bucket}/{prefix}/"
+    )
+    print(f"  schema : {schema_source}")
+    print(f"  data   : {data_source}")
+    print()
 
-    # Load
-    grand_total = 0
     t0 = time.time()
-    for ttl_path in files:
-        if not ttl_path.exists():
-            print(f"  Skipping (not found): {ttl_path}", file=sys.stderr)
-            continue
-        triples, _ = load_file(
-            ttl_path, args.endpoint, auth, args.batch_size, args.dry_run
-        )
-        grand_total += triples
+
+    if not args.no_reset:
+        reset_database(args.endpoint, auth, args.dry_run)
+        print()
+
+    print("Loading schema...")
+    ok = bulk_load(
+        args.endpoint,
+        auth,
+        schema_source,
+        args.load_role,
+        args.region,
+        fmt=args.format,
+        dry_run=args.dry_run,
+    )
+    if not ok:
+        print("Schema load failed — aborting.", file=sys.stderr)
+        sys.exit(1)
+    print()
+
+    print("Loading data...")
+    ok = bulk_load(
+        args.endpoint,
+        auth,
+        data_source,
+        args.load_role,
+        args.region,
+        fmt=args.format,
+        dry_run=args.dry_run,
+    )
+    if not ok:
+        print("Data load failed.", file=sys.stderr)
+        sys.exit(1)
+    print()
 
     elapsed = time.time() - t0
-    print(
-        f"\n{'[DRY-RUN] ' if args.dry_run else ''}Done. {grand_total:,} triples in {elapsed:.1f}s"
-    )
+    print(f"{'[DRY-RUN] ' if args.dry_run else ''}Done in {elapsed:.1f}s")
 
     if args.stats and not args.dry_run:
-        result = sparql_query(
-            args.endpoint,
-            auth,
-            "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }",
-        )
-        count = result["results"]["bindings"][0]["n"]["value"]
-        print(f"Neptune total triples now: {count}")
+        count = triple_count(args.endpoint, auth)
+        print(f"Total triples in Neptune: {count:,}")
 
 
 if __name__ == "__main__":

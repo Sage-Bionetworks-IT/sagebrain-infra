@@ -1,6 +1,6 @@
 # sage-brain-infra
 
-AWS CDK (Python) infrastructure for the Sage Brain project. Deploys an Amazon Neptune graph database with a public read-only API (API Gateway + Lambda) and a bastion host for dev access.
+AWS CDK (Python) infrastructure for the Sage Brain project. Deploys an Amazon Neptune graph database with a public read-only API (API Gateway + Lambda) and SageMaker Studio for team data loading.
 
 ## AWS Profile
 
@@ -14,10 +14,36 @@ aws --profile sagebrain sso login
 
 | Stack | Name | Purpose |
 |---|---|---|
-| NetworkStack | `app-dev-network` | VPC, subnets |
-| NeptuneStack | `app-dev-neptune` | Neptune cluster |
-| NeptuneBastionStack | `app-dev-neptune-bastion` | EC2 bastion for dev access via SSM |
+| NetworkStack | `app-dev-network` | VPC, subnets, VPC endpoints |
+| NeptuneStack | `app-dev-neptune` | Neptune cluster + S3 data bucket + load role |
+| NeptuneSageMakerStack | `app-dev-neptune-sagemaker` | SageMaker Studio for team data loading |
 | NeptuneApiStack | `app-dev-neptune-api` | API Gateway + Lambda read-only SPARQL API |
+
+## S3 Data Bucket
+
+Data is stored in a date-partitioned (Hive-style) layout — each contribution is a snapshot under its own date prefix, preserving a historical data lake:
+
+```
+s3://app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf/
+  YYYY-MM-DD/
+    schema/       ← ontology / schema TTL files
+    data/
+      rdf/        ← data TTL files
+```
+
+Any principal authenticated to the AWS account can upload to the bucket. The Neptune load role ARN (needed for bulk loading) is in the `app-dev-neptune` CloudFormation outputs as `NeptuneLoadRoleArn`.
+
+## Loading Data
+
+Run `tools/load_kg.py` from a SageMaker Studio terminal. It resets Neptune, loads schema first, then data:
+
+```bash
+export NEPTUNE_ENDPOINT=neptunedbcluster-mwltugp7vgl4.cluster-cwbs4mqme6zz.us-east-1.neptune.amazonaws.com
+export NEPTUNE_BUCKET=app-dev-neptune-neptunedatabucketb8719d9a-7a8slykvpqaf
+export NEPTUNE_LOAD_ROLE=arn:aws:iam::620117233256:role/app-dev-neptune-NeptuneLoadRole6C006CFE-Q9xhaXQNFYGw
+
+python tools/load_kg.py --prefix 2026-02-20 --stats
+```
 
 ## Deployment
 
@@ -85,8 +111,10 @@ Tests live in `tests/unit/`. Lambda handler tests import from `src/lambda/` via 
 ## Key Design Decisions
 
 - Neptune has **IAM auth enabled** — all requests must be SigV4-signed. Plain `curl` returns `AccessDeniedException`.
-- Neptune security group has **no broad ingress rules**. Each consumer stack (Lambda, bastion) adds a targeted SG-to-SG `CfnSecurityGroupIngress` rule on port 8182 to avoid cross-stack cyclic references.
+- Neptune security group has **no broad ingress rules**. Each consumer stack (Lambda, SageMaker) adds a targeted SG-to-SG `CfnSecurityGroupIngress` rule on port 8182 to avoid cross-stack cyclic references.
 - The API Lambda uses the **read endpoint** only, scoped to read-only IAM actions.
 - The API is **POST only** — GET was removed to avoid URL length limits for complex SPARQL queries.
 - **No auth planned** — the API is intentionally public; throttling and read-only IAM are the mitigations.
-- IMDSv2 is enforced on the bastion via a `LaunchTemplate` (CDK sets `require_imdsv2=True` this way, not directly on the instance).
+- **S3 bulk loader** is used for all data loading — not SPARQL INSERT batches. Neptune assumes `NeptuneLoadRole` (trusted by `rds.amazonaws.com`) to read from S3.
+- **Date-partitioned S3 layout** (`YYYY-MM-DD/schema/` and `YYYY-MM-DD/data/rdf/`) preserves a historical data lake. Each load is a full reset + reload from a chosen prefix.
+- **SageMaker Studio** runs in `VpcOnly` mode so notebook kernels can reach Neptune. Requires VPC interface endpoints for `sagemaker.api` and `sts` (in NetworkStack).

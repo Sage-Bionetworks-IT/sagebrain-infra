@@ -6,7 +6,7 @@ VPC_CIDR: 10.254.172.0/24
 
 NEPTUNE:
   instance_count: 1
-  instance_class: "db.t3.medium"
+  instance_class: "db.r6g.large"
   deletion_protection: false  # Allow easier cleanup in dev
 
 NEPTUNE_SAGEMAKER:

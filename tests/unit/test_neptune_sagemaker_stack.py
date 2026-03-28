@@ -1,6 +1,7 @@
 import aws_cdk as cdk
 import pytest
 from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_s3 as s3
 from aws_cdk.assertions import Match, Template
 
 from src.neptune_sagemaker_stack import NeptuneSageMakerStack
@@ -20,6 +21,9 @@ def template():
         sg_stack, "TestNeptuneSG", vpc=vpc, description="Test Neptune SG"
     )
 
+    bucket_stack = cdk.Stack(app, "TestBucketStack")
+    data_bucket = s3.Bucket(bucket_stack, "TestDataBucket")
+
     stack = NeptuneSageMakerStack(
         app,
         "TestSageMakerStack",
@@ -27,6 +31,7 @@ def template():
         neptune_security_group=neptune_sg,
         neptune_cluster_resource_id=CLUSTER_RESOURCE_ID,
         sagemaker_config={"domain_name": "test-studio"},
+        data_bucket=data_bucket,
     )
     return Template.from_stack(stack)
 
@@ -145,6 +150,54 @@ def test_neptune_write_actions_granted(template):
                                         "neptune-db:DeleteDataViaQuery",
                                     ]
                                 ),
+                            }
+                        )
+                    ]
+                )
+            }
+        },
+    )
+
+
+def test_neptune_loader_actions_granted(template):
+    template.has_resource_properties(
+        "AWS::IAM::Policy",
+        {
+            "PolicyDocument": {
+                "Statement": Match.array_with(
+                    [
+                        Match.object_like(
+                            {
+                                "Effect": "Allow",
+                                "Action": Match.array_with(
+                                    [
+                                        "neptune-db:StartLoaderJob",
+                                        "neptune-db:GetLoaderJobStatus",
+                                        "neptune-db:ListLoaderJobs",
+                                        "neptune-db:CancelLoaderJob",
+                                    ]
+                                ),
+                            }
+                        )
+                    ]
+                )
+            }
+        },
+    )
+
+
+def test_s3_read_write_granted_to_execution_role(template):
+    """Execution role must have S3 PutObject (write) on the data bucket."""
+    template.has_resource_properties(
+        "AWS::IAM::Policy",
+        {
+            "PolicyDocument": {
+                "Statement": Match.array_with(
+                    [
+                        Match.object_like(
+                            {
+                                "Effect": "Allow",
+                                "Action": Match.array_with(["s3:PutObject"]),
                             }
                         )
                     ]
