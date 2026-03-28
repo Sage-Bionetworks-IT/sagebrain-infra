@@ -1,0 +1,2 @@
+# RDF/Turtle data files — large and not relevant to infrastructure code
+**/*.ttl
