@@ -9,10 +9,6 @@ NEPTUNE:
   instance_class: "db.t3.medium"
   deletion_protection: false  # Allow easier cleanup in dev
 
-NEPTUNE_BASTION:
-  instance_type: "t3.medium"
-  root_volume_size_gb: 500
-
 NEPTUNE_SAGEMAKER:
   user_profiles:
     - thomas-yu  # SageMaker profile names: alphanumeric + hyphens only, no dots

@@ -8,7 +8,7 @@ AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune g
 - **VPC Networking**: Isolated network environment with public and private subnets
 - **Amazon Neptune**: Managed graph database for knowledge graphs
 - **Public SPARQL API**: Read-only API Gateway + Lambda endpoint for querying Neptune over HTTPS
-- **Bastion Host**: Secure remote access for Neptune development via SSM
+- **SageMaker Studio**: Team JupyterLab environment for loading and querying the knowledge graph
 
 ## Prerequisites
 
@@ -107,7 +107,7 @@ AWS_PROFILE=sagebrain cdk deploy --context env=dev --all
 To deploy a specific stack:
 
 ```console
-AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-bastion --context env=dev
+AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-sagemaker --context env=dev
 ```
 
 ## Querying Neptune via the Public API
@@ -133,91 +133,47 @@ curl -X POST <API_URL> \
 
 The endpoint returns `application/sparql-results+json`. Queries are limited to 8000 characters and throttled to 50 requests/second (burst: 100).
 
-## Connecting to the Neptune Bastion Host
+## Accessing Neptune via SageMaker Studio
 
-### 1. Connect via SSM
+Team members can load and query the knowledge graph directly from JupyterLab in the AWS Console — no SSH or EC2 required.
 
-No SSH key required — the bastion has the SSM agent installed.
+### 1. Open Studio
 
-```console
-aws --profile sagebrain ssm start-session --target <BASTION_INSTANCE_ID>
-```
+Go to **AWS Console → SageMaker → Studio**, select your user profile, and launch a JupyterLab space.
 
-> [!NOTE]
-> Get the latest instance ID from CDK outputs if the instance has been replaced:
-> ```console
-> aws --profile sagebrain cloudformation describe-stacks \
->   --stack-name app-dev-neptune-bastion \
->   --query "Stacks[0].Outputs[?OutputKey=='BastionInstanceId'].OutputValue" \
->   --output text
-> ```
-
-### 2. Query Neptune from the Bastion
-
-Once connected via SSM, activate the Neptune environment (`awscurl` is pre-installed):
+### 2. Get the Neptune endpoint
 
 ```console
-cd
-source ~/.bashrc
-conda activate neptune
-```
-
-Before calling Neptune, set an environment variable for the cluster endpoint. For example, using the CloudFormation output:
-
-```console
-export NEPTUNE_ENDPOINT=$(aws cloudformation describe-stacks \
-  --stack-name <YOUR_STACK_NAME> \
+aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune \
   --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
-  --output text)
+  --output text
 ```
 
-Replace `<YOUR_STACK_NAME>` with the name of the deployed CDK stack. Alternatively, set `NEPTUNE_ENDPOINT` manually to your cluster's writer endpoint (without protocol or port).
+### 3. Query Neptune from a notebook
 
-Use `awscurl` to interact with Neptune. Requests are automatically signed using the EC2 instance's IAM role.
-
-**Check cluster status:**
+Authentication is handled automatically via the Studio execution role (SigV4 signed). Install dependencies once per space:
 
 ```console
-awscurl --service neptune-db --region us-east-1 \
-  "https://$NEPTUNE_ENDPOINT:8182/status"
+pip install requests aws-requests-auth
 ```
 
-**Insert RDF data (SPARQL UPDATE):**
+```python
+from aws_requests_auth.boto_utils import BotoAWSRequestsAuth
+import requests
 
-```console
-awscurl --service neptune-db --region us-east-1 \
-  -X POST \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  --data "update=PREFIX+ex%3A+%3Chttp%3A%2F%2Fexample.org%2F%3E+INSERT+DATA+%7B+ex%3AAlice+a+ex%3APerson+%3B+ex%3Aname+%22Alice%22+%3B+ex%3Aknows+ex%3ABob+.+ex%3ABob+a+ex%3APerson+%3B+ex%3Aname+%22Bob%22+.+%7D" \
-  "https://$NEPTUNE_ENDPOINT:8182/sparql"
+ENDPOINT = "<NEPTUNE_CLUSTER_ENDPOINT>"
+auth = BotoAWSRequestsAuth(aws_host=f"{ENDPOINT}:8182", aws_region="us-east-1", aws_service="neptune-db")
+
+resp = requests.get(f"https://{ENDPOINT}:8182/status", auth=auth, timeout=10)
+print(resp.json())
 ```
-
-**Query data (SPARQL SELECT):**
-
-```console
-awscurl --service neptune-db --region us-east-1 \
-  -X POST \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -H "Accept: application/sparql-results+json" \
-  --data "query=SELECT+%2A+WHERE+%7B+%3Fs+%3Fp+%3Fo+%7D+LIMIT+10" \
-  "https://$NEPTUNE_ENDPOINT:8182/sparql"
-```
-
-**Delete all data:**
-
-```console
-awscurl --service neptune-db --region us-east-1 \
-  -X POST \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  --data "update=CLEAR+ALL" \
-  "https://$NEPTUNE_ENDPOINT:8182/sparql"
-```
-
-> [!WARNING]
-> `CLEAR ALL` permanently deletes every triple in the database. To delete a specific named graph only: `CLEAR GRAPH <http://example.org/>`.
 
 > [!NOTE]
-> Neptune has IAM auth enabled. All requests must be signed — plain `curl` will return `AccessDeniedException`. Use `awscurl` or the Python `aws-requests-auth` library.
+> Neptune has IAM auth enabled. All requests must be SigV4-signed — plain `curl` will return `AccessDeniedException`. Use `aws-requests-auth` or `awscurl`.
+
+> [!NOTE]
+> For detailed usage including bulk data loading, see [docs/neptune.md](docs/neptune.md).
 
 ## Secrets
 

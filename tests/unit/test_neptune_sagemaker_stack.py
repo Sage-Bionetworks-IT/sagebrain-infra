@@ -203,7 +203,7 @@ def test_studio_domain_in_private_subnet(template):
 def test_studio_domain_network_access_type(template):
     template.has_resource_properties(
         "AWS::SageMaker::Domain",
-        {"AppNetworkAccessType": "PublicInternetOnly"},
+        {"AppNetworkAccessType": "VpcOnly"},
     )
 
 

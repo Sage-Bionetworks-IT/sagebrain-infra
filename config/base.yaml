@@ -16,8 +16,5 @@ NEPTUNE:
   create_parameter_group: false
   parameter_group_parameters: {}
 
-NEPTUNE_BASTION:
-  instance_type: "t3.micro"
-
 NEPTUNE_SAGEMAKER:
   domain_name: "sage-brain-studio"
