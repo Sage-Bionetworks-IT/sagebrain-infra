@@ -1,5 +1,6 @@
 import aws_cdk as cdk
 
+from src.neptune_agent_stack import NeptuneAgentStack
 from src.network_stack import NetworkStack
 from src.neptune_api_stack import NeptuneApiStack
 from src.neptune_sagemaker_stack import NeptuneSageMakerStack
@@ -60,5 +61,16 @@ neptune_api_stack = NeptuneApiStack(
     env=env,
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies
+
+# Bedrock Strands AI agent: POST /ask with NL-to-SPARQL
+neptune_agent_stack = NeptuneAgentStack(
+    scope=cdk_app,
+    construct_id=f"{STACK_NAME_PREFIX}-neptune-agent",
+    vpc=network_stack.vpc,
+    neptune_read_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
+    neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
+    neptune_security_group=neptune_stack.neptune_security_group,
+    env=env,
+)
 
 cdk_app.synth()
