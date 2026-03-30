@@ -62,12 +62,13 @@ neptune_api_stack = NeptuneApiStack(
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies
 
-# Bedrock Strands AI agent: POST /ask with NL-to-SPARQL
+# Bedrock Strands AI agent: async POST /ask + GET /ask/{job_id}
 neptune_agent_stack = NeptuneAgentStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-neptune-agent",
     vpc=network_stack.vpc,
     neptune_query_url=f"{neptune_api_stack.api.url}query",
+    neptune_query_status_url=f"{neptune_api_stack.api.url}query",
     env=env,
 )
 

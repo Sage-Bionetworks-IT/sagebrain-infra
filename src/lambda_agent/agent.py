@@ -1,18 +1,25 @@
 import json
 import os
 import time
+from decimal import Decimal
 
+import boto3
 import requests
 from strands import Agent, tool
 from strands.models.bedrock import BedrockModel
 
 NEPTUNE_QUERY_URL = os.environ["NEPTUNE_QUERY_URL"]
+# Base URL for polling: GET {NEPTUNE_QUERY_STATUS_URL}/{job_id}
+# Derived from NEPTUNE_QUERY_URL if not explicitly set (same API, different path)
+NEPTUNE_QUERY_STATUS_URL = os.environ.get("NEPTUNE_QUERY_STATUS_URL", NEPTUNE_QUERY_URL)
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
+DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 
-CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-}
+QUERY_POLL_INTERVAL = 3  # seconds between polls
+QUERY_POLL_TIMEOUT = 80  # seconds before giving up (within 90s Lambda timeout)
+
+_dynamodb = boto3.resource("dynamodb")
 
 SYSTEM_PROMPT = """You are a biomedical knowledge graph assistant for the Sage Brain project.
 You have access to a Neptune RDF graph containing biomedical data about genes, diseases,
@@ -38,70 +45,74 @@ def query_neptune(sparql: str) -> str:
     Use standard SPARQL 1.1 syntax with PREFIX declarations."""
     _steps.append({"type": "tool_call", "tool": "query_neptune", "sparql": sparql})
 
-    response = requests.post(
+    # Submit job
+    submit_response = requests.post(
         NEPTUNE_QUERY_URL,
         json={"query": sparql},
         headers={"X-Source": "agent"},
-        timeout=25,
+        timeout=10,
     )
-    response.raise_for_status()
+    submit_response.raise_for_status()
+    job_id = submit_response.json()["job_id"]
 
-    result_text = response.text
-    _steps.append(
-        {
-            "type": "tool_result",
-            "tool": "query_neptune",
-            "preview": result_text[:500],
-        }
-    )
-    return result_text
-
-
-def _log_invocation(
-    question: str, event: dict, status: str, duration_ms: float, step_count: int
-):
-    source_ip = (
-        event.get("requestContext", {}).get("identity", {}).get("sourceIp", "unknown")
-    )
-    user_agent = (event.get("headers") or {}).get("User-Agent", "unknown")
-    print(
-        json.dumps(
-            {
-                "event": "agent_invocation",
-                "question": question,
-                "question_length": len(question),
-                "status": status,
-                "step_count": step_count,
-                "duration_ms": round(duration_ms, 2),
-                "source_ip": source_ip,
-                "user_agent": user_agent,
-                "timestamp": time.time(),
-            }
+    # Poll until complete or timeout
+    deadline = time.time() + QUERY_POLL_TIMEOUT
+    while time.time() < deadline:
+        time.sleep(QUERY_POLL_INTERVAL)
+        poll = requests.get(
+            f"{NEPTUNE_QUERY_STATUS_URL}/{job_id}",
+            timeout=10,
         )
+        poll.raise_for_status()
+        data = poll.json()
+        status = data["status"]
+
+        if status == "complete":
+            result_text = data.get("results", "")
+            _steps.append(
+                {
+                    "type": "tool_result",
+                    "tool": "query_neptune",
+                    "preview": result_text[:500],
+                }
+            )
+            return result_text
+
+        if status == "error":
+            error_msg = data.get("error", "Unknown query error")
+            _steps.append(
+                {"type": "tool_result", "tool": "query_neptune", "error": error_msg}
+            )
+            raise RuntimeError(f"SPARQL query failed: {error_msg}")
+
+    raise TimeoutError(
+        f"SPARQL query job {job_id} did not complete within {QUERY_POLL_TIMEOUT}s"
     )
 
 
-def handler(event, context):
+def _update_job(job_id: str, **fields):
+    table = _dynamodb.Table(DYNAMODB_TABLE)
+    update_expr = "SET " + ", ".join(f"#{k} = :{k}" for k in fields)
+    expr_names = {f"#{k}": k for k in fields}
+    # DynamoDB doesn't support float — convert to Decimal
+    expr_values = {
+        f":{k}": Decimal(str(v)) if isinstance(v, float) else v
+        for k, v in fields.items()
+    }
+    table.update_item(
+        Key={"job_id": job_id},
+        UpdateExpression=update_expr,
+        ExpressionAttributeNames=expr_names,
+        ExpressionAttributeValues=expr_values,
+    )
+
+
+def _process_job(job_id: str, question: str):
     global _steps
     _steps = []
     start = time.time()
 
-    try:
-        body = json.loads(event.get("body") or "{}")
-        question = body.get("question", "").strip()
-    except json.JSONDecodeError:
-        return {
-            "statusCode": 400,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps({"error": "Request body must be valid JSON"}),
-        }
-
-    if not question:
-        return {
-            "statusCode": 400,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps({"error": "Missing 'question' field"}),
-        }
+    _update_job(job_id, status="running")
 
     model = BedrockModel(model_id=BEDROCK_MODEL_ID, region_name=REGION)
     agent = Agent(
@@ -113,22 +124,50 @@ def handler(event, context):
     try:
         result = agent(question)
         duration = (time.time() - start) * 1000
-        _log_invocation(question, event, "success", duration, len(_steps))
-        return {
-            "statusCode": 200,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps(
+        _update_job(
+            job_id,
+            status="complete",
+            answer=str(result),
+            steps=_steps,
+            duration_ms=round(duration, 2),
+        )
+        print(
+            json.dumps(
                 {
-                    "answer": str(result),
-                    "steps": _steps,
+                    "event": "agent_invocation",
+                    "job_id": job_id,
+                    "question": question,
+                    "status": "success",
+                    "step_count": len(_steps),
+                    "duration_ms": round(duration, 2),
+                    "timestamp": time.time(),
                 }
-            ),
-        }
+            )
+        )
     except Exception as e:
         duration = (time.time() - start) * 1000
-        _log_invocation(question, event, "error", duration, len(_steps))
-        return {
-            "statusCode": 500,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps({"error": str(e), "steps": _steps}),
-        }
+        _update_job(job_id, status="error", error=str(e), steps=_steps)
+        print(
+            json.dumps(
+                {
+                    "event": "agent_invocation",
+                    "job_id": job_id,
+                    "question": question,
+                    "status": "error",
+                    "error": str(e),
+                    "step_count": len(_steps),
+                    "duration_ms": round(duration, 2),
+                    "timestamp": time.time(),
+                }
+            )
+        )
+        raise  # re-raise so SQS can retry via DLQ
+
+
+def handler(event, context):
+    """SQS-triggered worker. Each record is one job."""
+    for record in event["Records"]:
+        body = json.loads(record["body"])
+        job_id = body["job_id"]
+        question = body["question"]
+        _process_job(job_id, question)
