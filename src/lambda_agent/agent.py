@@ -36,8 +36,15 @@ When a user asks a question:
 Always explain what you found and how confident you are in the answer.
 """
 
-# Module-level list reset per invocation to capture tool calls for the response.
+# Module-level state reset per invocation.
 _steps: list = []
+_current_job_id: str = ""
+
+
+def _flush_steps():
+    """Write current steps to DynamoDB so the polling client sees live progress."""
+    if _current_job_id:
+        _update_job(_current_job_id, steps=_steps)
 
 
 @tool
@@ -46,6 +53,7 @@ def query_neptune(sparql: str) -> str:
     Returns results as a JSON string with 'results.bindings' containing the rows.
     Use standard SPARQL 1.1 syntax with PREFIX declarations."""
     _steps.append({"type": "tool_call", "tool": "query_neptune", "sparql": sparql})
+    _flush_steps()
 
     # Submit job
     submit_response = requests.post(
@@ -78,6 +86,7 @@ def query_neptune(sparql: str) -> str:
                     "preview": result_text[:500],
                 }
             )
+            _flush_steps()
             return result_text
 
         if status == "error":
@@ -85,6 +94,7 @@ def query_neptune(sparql: str) -> str:
             _steps.append(
                 {"type": "tool_result", "tool": "query_neptune", "error": error_msg}
             )
+            _flush_steps()
             raise RuntimeError(f"SPARQL query failed: {error_msg}")
 
     raise TimeoutError(
@@ -109,9 +119,44 @@ def _update_job(job_id: str, **fields):
     )
 
 
+def _invoke_agent_with_retry(agent, question: str, job_id: str):
+    """
+    Call the Strands agent, retrying on transient Bedrock capacity errors.
+    Wait 30s between attempts; 2 retries fit within the 300s Lambda budget.
+    """
+    MAX_ATTEMPTS = 3
+    RETRY_WAIT = 30
+
+    for attempt in range(MAX_ATTEMPTS):
+        # Reset steps so a retry shows a clean trace
+        global _steps
+        _steps = []
+        _flush_steps()
+        try:
+            return agent(question)
+        except Exception as e:
+            is_transient = "ServiceUnavailableException" in str(e)
+            if is_transient and attempt < MAX_ATTEMPTS - 1:
+                print(
+                    json.dumps(
+                        {
+                            "event": "bedrock_retry",
+                            "job_id": job_id,
+                            "attempt": attempt + 1,
+                            "wait_s": RETRY_WAIT,
+                            "error": str(e)[:200],
+                        }
+                    )
+                )
+                time.sleep(RETRY_WAIT)
+            else:
+                raise
+
+
 def _process_job(job_id: str, question: str):
-    global _steps
+    global _steps, _current_job_id
     _steps = []
+    _current_job_id = job_id
     start = time.time()
 
     _update_job(job_id, status="running")
@@ -124,7 +169,7 @@ def _process_job(job_id: str, question: str):
     )
 
     try:
-        result = agent(question)
+        result = _invoke_agent_with_retry(agent, question, job_id)
         duration = (time.time() - start) * 1000
         _update_job(
             job_id,
