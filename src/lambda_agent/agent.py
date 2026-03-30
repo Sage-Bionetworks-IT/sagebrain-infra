@@ -41,6 +41,7 @@ def query_neptune(sparql: str) -> str:
     response = requests.post(
         NEPTUNE_QUERY_URL,
         json={"query": sparql},
+        headers={"X-Source": "agent"},
         timeout=25,
     )
     response.raise_for_status()

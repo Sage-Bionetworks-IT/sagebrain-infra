@@ -19,18 +19,19 @@ MAX_QUERY_LENGTH = 8000
 
 
 def _log_query(query: str, event: dict, status_code: int, duration_ms: float):
+    headers = event.get("headers") or {}
     source_ip = (
         event.get("requestContext", {}).get("identity", {}).get("sourceIp", "unknown")
     )
-    user_agent = (event.get("headers") or {}).get("User-Agent", "unknown")
     print(
         json.dumps(
             {
                 "event": "sparql_query",
                 "query": query,
                 "query_length": len(query),
+                "source": headers.get("X-Source", "direct"),
                 "source_ip": source_ip,
-                "user_agent": user_agent,
+                "user_agent": headers.get("User-Agent", "unknown"),
                 "status_code": status_code,
                 "duration_ms": round(duration_ms, 2),
                 "timestamp": time.time(),
