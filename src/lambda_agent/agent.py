@@ -1,15 +1,12 @@
 import json
 import os
-from urllib.parse import urlencode
+import time
 
-import botocore.session
 import requests
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
 from strands import Agent, tool
 from strands.models.bedrock import BedrockModel
 
-NEPTUNE_ENDPOINT = os.environ["NEPTUNE_ENDPOINT"]
+NEPTUNE_QUERY_URL = os.environ["NEPTUNE_QUERY_URL"]
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 
@@ -41,22 +38,9 @@ def query_neptune(sparql: str) -> str:
     Use standard SPARQL 1.1 syntax with PREFIX declarations."""
     _steps.append({"type": "tool_call", "tool": "query_neptune", "sparql": sparql})
 
-    url = f"https://{NEPTUNE_ENDPOINT}:8182/sparql"
-    body = urlencode({"query": sparql})
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "application/sparql-results+json",
-    }
-
-    session = botocore.session.Session()
-    credentials = session.get_credentials()
-    aws_request = AWSRequest(method="POST", url=url, data=body, headers=headers)
-    SigV4Auth(credentials, "neptune-db", REGION).add_auth(aws_request)
-
     response = requests.post(
-        url,
-        data=body,
-        headers=dict(aws_request.headers),
+        NEPTUNE_QUERY_URL,
+        json={"query": sparql},
         timeout=25,
     )
     response.raise_for_status()
@@ -72,9 +56,34 @@ def query_neptune(sparql: str) -> str:
     return result_text
 
 
+def _log_invocation(
+    question: str, event: dict, status: str, duration_ms: float, step_count: int
+):
+    source_ip = (
+        event.get("requestContext", {}).get("identity", {}).get("sourceIp", "unknown")
+    )
+    user_agent = (event.get("headers") or {}).get("User-Agent", "unknown")
+    print(
+        json.dumps(
+            {
+                "event": "agent_invocation",
+                "question": question,
+                "question_length": len(question),
+                "status": status,
+                "step_count": step_count,
+                "duration_ms": round(duration_ms, 2),
+                "source_ip": source_ip,
+                "user_agent": user_agent,
+                "timestamp": time.time(),
+            }
+        )
+    )
+
+
 def handler(event, context):
     global _steps
     _steps = []
+    start = time.time()
 
     try:
         body = json.loads(event.get("body") or "{}")
@@ -102,6 +111,8 @@ def handler(event, context):
 
     try:
         result = agent(question)
+        duration = (time.time() - start) * 1000
+        _log_invocation(question, event, "success", duration, len(_steps))
         return {
             "statusCode": 200,
             "headers": {"Content-Type": "application/json", **CORS_HEADERS},
@@ -113,6 +124,8 @@ def handler(event, context):
             ),
         }
     except Exception as e:
+        duration = (time.time() - start) * 1000
+        _log_invocation(question, event, "error", duration, len(_steps))
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "application/json", **CORS_HEADERS},

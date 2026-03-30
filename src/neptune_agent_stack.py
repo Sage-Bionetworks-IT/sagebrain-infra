@@ -24,9 +24,7 @@ class NeptuneAgentStack(cdk.Stack):
         scope: Construct,
         construct_id: str,
         vpc: ec2.Vpc,
-        neptune_read_endpoint: str,
-        neptune_cluster_resource_id: str,
-        neptune_security_group: ec2.SecurityGroup,
+        neptune_query_url: str,
         bedrock_model_id: str = "us.anthropic.claude-sonnet-4-6",
         **kwargs,
     ) -> None:
@@ -70,29 +68,13 @@ class NeptuneAgentStack(cdk.Stack):
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
             ),
             environment={
-                "NEPTUNE_ENDPOINT": neptune_read_endpoint,
+                "NEPTUNE_QUERY_URL": neptune_query_url,
                 "BEDROCK_MODEL_ID": bedrock_model_id,
             },
             # 60s to allow headroom beyond the API Gateway 29s limit
             # (useful if this Lambda is later invoked directly or via Function URL)
             timeout=cdk.Duration.seconds(60),
             memory_size=512,
-        )
-
-        # -------------------
-        # IAM: read-only Neptune access
-        # -------------------
-        self.agent_fn.add_to_role_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                actions=[
-                    "neptune-db:ReadDataViaQuery",
-                    "neptune-db:GetEngineStatus",
-                ],
-                resources=[
-                    f"arn:{self.partition}:neptune-db:{self.region}:{self.account}:{neptune_cluster_resource_id}/*"
-                ],
-            )
         )
 
         # -------------------
@@ -112,17 +94,6 @@ class NeptuneAgentStack(cdk.Stack):
                     f"arn:aws:bedrock:{self.region}:{self.account}:inference-profile/us.anthropic.claude-*",
                 ],
             )
-        )
-
-        # Allow agent Lambda to reach Neptune on port 8182
-        ec2.CfnSecurityGroupIngress(
-            self,
-            "AgentLambdaToNeptuneIngress",
-            group_id=neptune_security_group.security_group_id,
-            ip_protocol="tcp",
-            from_port=8182,
-            to_port=8182,
-            source_security_group_id=self.agent_sg.security_group_id,
         )
 
         # -------------------

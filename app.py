@@ -67,9 +67,7 @@ neptune_agent_stack = NeptuneAgentStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-neptune-agent",
     vpc=network_stack.vpc,
-    neptune_read_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
-    neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
-    neptune_security_group=neptune_stack.neptune_security_group,
+    neptune_query_url=f"{neptune_api_stack.api.url}query",
     env=env,
 )
 
