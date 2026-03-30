@@ -72,7 +72,7 @@ class NeptuneAgentStack(cdk.Stack):
         self.job_queue = sqs.Queue(
             self,
             "AgentJobQueue",
-            visibility_timeout=cdk.Duration.seconds(120),  # > worker Lambda timeout
+            visibility_timeout=cdk.Duration.seconds(360),  # > worker Lambda timeout
             dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=2, queue=dlq),
         )
 
@@ -161,7 +161,9 @@ class NeptuneAgentStack(cdk.Stack):
                 "BEDROCK_MODEL_ID": bedrock_model_id,
                 "JOB_TABLE_NAME": self.job_table.table_name,
             },
-            timeout=cdk.Duration.seconds(90),  # agent loops can be slow
+            timeout=cdk.Duration.seconds(
+                300
+            ),  # up to 3 Neptune queries × 80s poll each + Bedrock overhead
             memory_size=512,
             # Cap concurrency to avoid overwhelming Bedrock/Neptune under burst traffic
             reserved_concurrent_executions=10,

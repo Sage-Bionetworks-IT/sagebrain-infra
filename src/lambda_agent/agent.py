@@ -17,7 +17,9 @@ REGION = os.environ.get("AWS_REGION", "us-east-1")
 DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 
 QUERY_POLL_INTERVAL = 3  # seconds between polls
-QUERY_POLL_TIMEOUT = 80  # seconds before giving up (within 90s Lambda timeout)
+QUERY_POLL_TIMEOUT = (
+    70  # seconds before giving up; Neptune query worker has 75s timeout
+)
 
 _dynamodb = boto3.resource("dynamodb")
 
