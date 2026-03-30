@@ -8,7 +8,9 @@ AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune g
 - **VPC Networking**: Isolated network environment with public and private subnets
 - **Amazon Neptune**: Managed graph database for knowledge graphs
 - **Public SPARQL API**: Read-only API Gateway + Lambda endpoint for querying Neptune over HTTPS
+- **AI Agent API**: Natural-language query interface powered by Bedrock Strands (Claude Sonnet 4.6) — converts plain-language questions to SPARQL and returns answers with full reasoning trace
 - **SageMaker Studio**: Team JupyterLab environment for loading and querying the knowledge graph
+- **Query Audit Logging**: All SPARQL queries logged to CloudWatch with source tracking (direct vs. agent)
 
 ## Prerequisites
 
@@ -112,6 +114,8 @@ AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-sagemaker --context env=dev
 
 ## Querying Neptune via the Public API
 
+### Direct SPARQL (`POST /query`)
+
 A read-only SPARQL endpoint is available over HTTPS — no authentication required.
 
 Get the API URL from CDK outputs after deployment:
@@ -132,6 +136,42 @@ curl -X POST <API_URL> \
 ```
 
 The endpoint returns `application/sparql-results+json`. Queries are limited to 8000 characters and throttled to 50 requests/second (burst: 100).
+
+### Natural Language Agent (`POST /ask`)
+
+Ask questions in plain English. The agent (Bedrock Strands + Claude Sonnet 4.6) translates your question into SPARQL, queries Neptune, and returns a plain-language answer with the full reasoning trace.
+
+Get the agent URL from CDK outputs:
+
+```console
+aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune-agent \
+  --query "Stacks[0].Outputs[?OutputKey=='AgentApiUrl'].OutputValue" \
+  --output text
+```
+
+Send a `POST` request with a `question` field:
+
+```console
+curl -X POST <AGENT_URL> \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What types of biological entities are in this knowledge graph?"}'
+```
+
+Response includes the answer and the SPARQL steps taken:
+
+```json
+{
+  "answer": "The graph contains 408,644 files, 1,332 cell lines, 734 donors...",
+  "steps": [
+    {"type": "tool_call", "tool": "query_neptune", "sparql": "SELECT ?type (COUNT(?e) AS ?count) ..."},
+    {"type": "tool_result", "tool": "query_neptune", "preview": "..."}
+  ]
+}
+```
+
+> [!NOTE]
+> Requires Claude Sonnet 4.6 model access to be enabled in **AWS Console → Bedrock → Model access**. This is a one-time account-level setup.
 
 ## Accessing and Loading Data via SageMaker Studio
 
