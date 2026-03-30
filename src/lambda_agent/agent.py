@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import time
 from decimal import Decimal
 
@@ -54,6 +55,11 @@ def query_neptune(sparql: str) -> str:
     Use standard SPARQL 1.1 syntax with PREFIX declarations."""
     _steps.append({"type": "tool_call", "tool": "query_neptune", "sparql": sparql})
     _flush_steps()
+    if _current_job_id:
+        _update_job(
+            _current_job_id,
+            status_detail=f"Executing SPARQL query (step {len(_steps)})...",
+        )
 
     # Submit job
     submit_response = requests.post(
@@ -97,9 +103,14 @@ def query_neptune(sparql: str) -> str:
             _flush_steps()
             raise RuntimeError(f"SPARQL query failed: {error_msg}")
 
-    raise TimeoutError(
+    timeout_msg = (
         f"SPARQL query job {job_id} did not complete within {QUERY_POLL_TIMEOUT}s"
     )
+    _steps.append(
+        {"type": "tool_result", "tool": "query_neptune", "error": timeout_msg}
+    )
+    _flush_steps()
+    raise TimeoutError(timeout_msg)
 
 
 def _update_job(job_id: str, **fields):
@@ -132,23 +143,33 @@ def _invoke_agent_with_retry(agent, question: str, job_id: str):
         global _steps
         _steps = []
         _flush_steps()
+        _update_job(
+            job_id,
+            status_detail=f"Generating SPARQL query (attempt {attempt + 1}/{MAX_ATTEMPTS})...",
+        )
         try:
             return agent(question)
         except Exception as e:
             is_transient = "ServiceUnavailableException" in str(e)
             if is_transient and attempt < MAX_ATTEMPTS - 1:
+                _update_job(
+                    job_id,
+                    status_detail=f"Model temporarily unavailable, retrying ({attempt + 2}/{MAX_ATTEMPTS})...",
+                )
+                jitter = random.uniform(0, 10)
+                wait = RETRY_WAIT + jitter
                 print(
                     json.dumps(
                         {
                             "event": "bedrock_retry",
                             "job_id": job_id,
                             "attempt": attempt + 1,
-                            "wait_s": RETRY_WAIT,
+                            "wait_s": round(wait, 1),
                             "error": str(e)[:200],
                         }
                     )
                 )
-                time.sleep(RETRY_WAIT)
+                time.sleep(wait)
             else:
                 raise
 

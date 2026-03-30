@@ -35,12 +35,17 @@ def handler(event, context):
     status = item["status"]
     result = {"job_id": job_id, "status": status}
 
+    if "status_detail" in item:
+        result["status_detail"] = item["status_detail"]
+
+    # Always return steps so callers can see in-progress SPARQL queries
+    if item.get("steps"):
+        result["steps"] = item["steps"]
+
     if status == "complete":
         result["answer"] = item.get("answer", "")
-        result["steps"] = item.get("steps", [])
     elif status == "error":
         result["error"] = item.get("error", "Unknown error")
-        result["steps"] = item.get("steps", [])
 
     return {
         "statusCode": 200,
