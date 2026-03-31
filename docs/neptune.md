@@ -8,7 +8,7 @@ Amazon Neptune cluster for the Sage Brain knowledge graph.
 - **Security Groups**: No broad ingress — each consumer stack adds a targeted SG-to-SG rule on port 8182
 - **SageMaker Studio**: Team access for loading and querying data via JupyterLab (VpcOnly mode, routes through VPC)
 - **Public SPARQL API** (`app-dev-neptune-api`): Read-only `POST /query` endpoint via API Gateway + Lambda. All queries logged to CloudWatch with source, IP, duration, and query text.
-- **AI Agent API** (`app-dev-neptune-agent`): Natural-language `POST /ask` endpoint. Bedrock Strands (Claude Sonnet 4.6) translates questions to SPARQL, calls `/query` internally, and returns a plain-language answer with the full reasoning trace.
+- **AI Agent API** (`app-dev-neptune-agent`): Natural-language `POST /ask` endpoint. Bedrock Strands (Claude Sonnet 4.6) translates questions to SPARQL, calls `/query` internally, and returns a plain-language answer with an execution trace of SPARQL tool calls and result previews.
 - **Backup & Monitoring**: Automated backups and CloudWatch audit/slow-query logging
 
 ## Accessing Neptune
