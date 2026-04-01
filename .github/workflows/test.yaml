@@ -36,4 +36,4 @@ jobs:
         with:
           platforms: arm64
       - name: Generate cloudformation
-        run: cdk synth --context env=${{ inputs.environment }} --debug --output ./cdk.out
+        run: cdk synth --context env=${{ inputs.environment }} --no-lookups --debug --output ./cdk.out
