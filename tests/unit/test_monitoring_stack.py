@@ -106,7 +106,7 @@ def test_query_dlq_alarm_threshold_is_one(template):
     template.has_resource_properties(
         "AWS::CloudWatch::Alarm",
         {
-            "AlarmDescription": "Query jobs landing in DLQ — all 3 attempts failed",
+            "AlarmDescription": "Query jobs landing in DLQ — all 2 attempts failed",
             "Threshold": 1,
             "EvaluationPeriods": 1,
             "ComparisonOperator": "GreaterThanOrEqualToThreshold",
@@ -119,7 +119,7 @@ def test_agent_dlq_alarm_threshold_is_one(template):
     template.has_resource_properties(
         "AWS::CloudWatch::Alarm",
         {
-            "AlarmDescription": "Agent jobs landing in DLQ — all 3 attempts failed",
+            "AlarmDescription": "Agent jobs landing in DLQ — all 2 attempts failed",
             "Threshold": 1,
             "EvaluationPeriods": 1,
             "ComparisonOperator": "GreaterThanOrEqualToThreshold",

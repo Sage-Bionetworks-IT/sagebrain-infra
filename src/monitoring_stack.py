@@ -182,7 +182,7 @@ class MonitoringStack(cdk.Stack):
             threshold=1,
             evaluation_periods=1,
             comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-            alarm_description="Query jobs landing in DLQ — all 3 attempts failed",
+            alarm_description="Query jobs landing in DLQ — all 2 attempts failed",
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
         )
         dashboard.add_widgets(
@@ -344,7 +344,7 @@ class MonitoringStack(cdk.Stack):
             threshold=1,
             evaluation_periods=1,
             comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-            alarm_description="Agent jobs landing in DLQ — all 3 attempts failed",
+            alarm_description="Agent jobs landing in DLQ — all 2 attempts failed",
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
         )
         dashboard.add_widgets(
