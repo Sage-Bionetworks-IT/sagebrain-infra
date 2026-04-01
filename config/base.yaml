@@ -17,4 +17,5 @@ NEPTUNE:
   parameter_group_parameters: {}
 
 NEPTUNE_SAGEMAKER:
+  enabled: true
   domain_name: "sage-brain-studio"

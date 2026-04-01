@@ -38,18 +38,18 @@ neptune_stack = NeptuneStack(
 )
 neptune_stack.add_dependency(network_stack)
 
-# SageMaker Studio for team access to Neptune
-neptune_sagemaker_stack = NeptuneSageMakerStack(
-    scope=cdk_app,
-    construct_id=f"{STACK_NAME_PREFIX}-neptune-sagemaker",
-    vpc=network_stack.vpc,
-    neptune_security_group=neptune_stack.neptune_security_group,
-    neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
-    sagemaker_config=config["NEPTUNE_SAGEMAKER"],
-    data_bucket=neptune_stack.data_bucket,
-    env=env,
-)
-# Note: No explicit dependency needed as the direct references create implicit dependencies
+# SageMaker Studio for team access to Neptune (skipped in envs where enabled=false)
+if config["NEPTUNE_SAGEMAKER"].get("enabled", True):
+    NeptuneSageMakerStack(
+        scope=cdk_app,
+        construct_id=f"{STACK_NAME_PREFIX}-neptune-sagemaker",
+        vpc=network_stack.vpc,
+        neptune_security_group=neptune_stack.neptune_security_group,
+        neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
+        sagemaker_config=config["NEPTUNE_SAGEMAKER"],
+        data_bucket=neptune_stack.data_bucket,
+        env=env,
+    )
 
 # Public read-only API for Neptune
 neptune_api_stack = NeptuneApiStack(

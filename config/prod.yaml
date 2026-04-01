@@ -9,3 +9,6 @@ NEPTUNE:
   instance_class: "db.r5.large"
   deletion_protection: true
   backup_retention_days: 30  # Longer retention for production
+
+NEPTUNE_SAGEMAKER:
+  enabled: false  # Data loading in prod is done via GitHub Actions, not SageMaker
