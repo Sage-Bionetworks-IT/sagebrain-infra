@@ -36,7 +36,7 @@ def handler(event, context):
     result = {"job_id": job_id, "status": status}
 
     if status == "complete":
-        result["results"] = item.get("results", {})
+        result["results"] = item.get("results", "")
         result["content_type"] = item.get(
             "content_type", "application/sparql-results+json"
         )
