@@ -7,7 +7,8 @@ Amazon Neptune cluster for the Sage Brain knowledge graph.
 - **Neptune Cluster**: Managed graph database in private subnets, IAM auth enabled
 - **Security Groups**: No broad ingress — each consumer stack adds a targeted SG-to-SG rule on port 8182
 - **SageMaker Studio**: Team access for loading and querying data via JupyterLab (VpcOnly mode, routes through VPC)
-- **Public API**: Read-only SPARQL endpoint via API Gateway + Lambda (see [README](../README.md))
+- **Public SPARQL API** (`app-dev-neptune-api`): Read-only `POST /query` endpoint via API Gateway + Lambda. All queries logged to CloudWatch with source, IP, duration, and query text.
+- **AI Agent API** (`app-dev-neptune-agent`): Natural-language `POST /ask` endpoint. Bedrock Strands (Claude Sonnet 4.6) translates questions to SPARQL, calls `/query` internally, and returns a plain-language answer with an execution trace of SPARQL tool calls and result previews.
 - **Backup & Monitoring**: Automated backups and CloudWatch audit/slow-query logging
 
 ## Accessing Neptune
@@ -78,9 +79,65 @@ rows = sparql("""
 pd.DataFrame(rows)
 ```
 
-### From the Public API (read-only, no auth)
+### From the Public SPARQL API (read-only, no auth)
 
 A read-only SPARQL endpoint is available over HTTPS. See the [README](../README.md) for the URL and usage.
+
+### From the AI Agent API (natural language)
+
+Ask questions in plain English at `POST /ask`. See the [README](../README.md) for the URL and usage.
+
+The agent routes all SPARQL through `/query`, so every agent-generated query appears in the query audit log with `"source": "agent"`.
+
+## Query Audit Logging
+
+Every SPARQL query through `/query` is logged to CloudWatch as structured JSON:
+
+```json
+{
+  "event": "sparql_query",
+  "query": "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }",
+  "query_length": 42,
+  "source": "direct",
+  "source_ip": "1.2.3.4",
+  "user_agent": "curl/8.7.1",
+  "status_code": 200,
+  "duration_ms": 719.0,
+  "timestamp": 1774890587.4
+}
+```
+
+`source` is `"agent"` when called by the Bedrock agent, `"direct"` for all other callers.
+
+**Query logs in CloudWatch Insights:**
+
+```
+fields @timestamp, source, query, duration_ms, status_code
+| filter event = "sparql_query"
+| sort @timestamp desc
+```
+
+**Filter to agent queries only:**
+
+```
+fields @timestamp, query, duration_ms
+| filter event = "sparql_query" and source = "agent"
+| sort @timestamp desc
+```
+
+Agent invocations (question asked, answer status, total duration, step count) are logged separately in the agent Lambda log group:
+
+```json
+{
+  "event": "agent_invocation",
+  "question": "What genes are linked to NF1?",
+  "status": "success",
+  "step_count": 2,
+  "duration_ms": 7224.65,
+  "source_ip": "1.2.3.4",
+  "timestamp": 1774890237.1
+}
+```
 
 ## Loading Data
 
@@ -212,5 +269,8 @@ CloudWatch logs enabled for:
 | Symptom | Likely cause |
 |---|---|
 | `ConnectTimeout` from Studio | Space wasn't restarted after SG/network change — stop and restart the space |
-| `AccessDeniedException` | Request not SigV4-signed, or IAM role missing Neptune permissions |
+| `AccessDeniedException` on Neptune | Request not SigV4-signed, or IAM role missing Neptune permissions |
 | `TimeoutError` on port 8182 | Security group rule missing, or VPC routing issue |
+| `Endpoint request timed out` from `/ask` | Agent ran >29s (multi-hop query) — API Gateway hard limit. Simplify the question or migrate to WebSocket (Phase 2) |
+| `AccessDeniedException` on Bedrock | Claude Sonnet 4.6 model access not enabled — go to **AWS Console → Bedrock → Model access** and request access |
+| Agent answers but no query logs | Agent is calling `/query` correctly — check the query Lambda log group, not the agent log group |
