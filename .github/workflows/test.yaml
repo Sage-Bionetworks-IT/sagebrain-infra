@@ -31,5 +31,9 @@ jobs:
         run: npm install -g aws-cdk
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Set up QEMU for ARM64 Docker builds
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
       - name: Generate cloudformation
         run: cdk synth --context env=${{ inputs.environment }} --debug --output ./cdk.out
