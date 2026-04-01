@@ -5,6 +5,7 @@ from src.network_stack import NetworkStack
 from src.neptune_api_stack import NeptuneApiStack
 from src.neptune_sagemaker_stack import NeptuneSageMakerStack
 from src.neptune_stack import NeptuneStack
+from src.monitoring_stack import MonitoringStack
 from src.utils import load_context_config
 
 cdk_app = cdk.App()
@@ -62,12 +63,34 @@ neptune_api_stack = NeptuneApiStack(
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies
 
-# Bedrock Strands AI agent: POST /ask with NL-to-SPARQL
+# Bedrock Strands AI agent: async POST /ask + GET /ask/{job_id}
 neptune_agent_stack = NeptuneAgentStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-neptune-agent",
     vpc=network_stack.vpc,
     neptune_query_url=f"{neptune_api_stack.api.url}query",
+    neptune_query_status_url=f"{neptune_api_stack.api.url}query",
+    env=env,
+)
+
+monitoring_stack = MonitoringStack(
+    scope=cdk_app,
+    construct_id=f"{STACK_NAME_PREFIX}-monitoring",
+    query_api=neptune_api_stack.api,
+    query_submit_fn=neptune_api_stack.submit_fn,
+    query_status_fn=neptune_api_stack.status_fn,
+    query_worker_fn=neptune_api_stack.query_fn,
+    query_job_queue=neptune_api_stack.job_queue,
+    query_dlq=neptune_api_stack.dlq,
+    query_job_table=neptune_api_stack.job_table,
+    agent_api=neptune_agent_stack.api,
+    agent_submit_fn=neptune_agent_stack.submit_fn,
+    agent_status_fn=neptune_agent_stack.status_fn,
+    agent_worker_fn=neptune_agent_stack.agent_fn,
+    agent_job_queue=neptune_agent_stack.job_queue,
+    agent_dlq=neptune_agent_stack.dlq,
+    agent_job_table=neptune_agent_stack.job_table,
+    neptune_cluster_id=neptune_stack.neptune_cluster.ref,
     env=env,
 )
 

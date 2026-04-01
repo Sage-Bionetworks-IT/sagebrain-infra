@@ -18,7 +18,7 @@ aws --profile sagebrain sso login
 | NeptuneStack | `app-dev-neptune` | Neptune cluster + S3 data bucket + load role |
 | NeptuneSageMakerStack | `app-dev-neptune-sagemaker` | SageMaker Studio for team data loading |
 | NeptuneApiStack | `app-dev-neptune-api` | API Gateway + Lambda read-only SPARQL API |
-| NeptuneAgentStack | `app-dev-neptune-agent` | Bedrock Strands AI agent — NL-to-SPARQL via `POST /ask` |
+| NeptuneAgentStack | `app-dev-neptune-agent` | Bedrock Strands AI agent — async NL-to-SPARQL via `POST /ask` + `GET /ask/{job_id}` |
 
 ## S3 Data Bucket
 
@@ -72,71 +72,109 @@ cdk deploy app-dev-neptune-agent --profile sagebrain --require-approval never
 
 Use `--hotswap` only for Lambda code changes. API Gateway method/stage/IAM changes need a full deploy — hotswap will silently skip them.
 
-## Lambda: src/lambda/query.py
+## Query API: src/lambda/ (async job pattern)
 
-Handles SPARQL queries against Neptune via `POST /query` with a JSON body `{"query": "<SPARQL>"}`.
+Three Lambdas + SQS + DynamoDB — mirrors the agent's async pattern.
 
-- Accepts POST only (no GET) — avoids URL length limits for complex queries
-- Query length capped at 8000 characters (DoS/cost guard)
+### submit.py — POST /query
+- Validates query (max 8000 chars), writes `status=pending` to DynamoDB, enqueues to SQS
+- Returns `202 {"job_id": "...", "status": "pending"}` immediately
+- Captures caller metadata (IP, user agent, X-Source) and passes it in the SQS message for audit logging
+
+### status.py — GET /query/{job_id}
+- Reads job from DynamoDB
+- `complete` → `results` (raw SPARQL JSON string) + `content_type`; `error` → `error` message
+
+### query.py — SQS worker
+- SQS-triggered (batch size 1), runs in VPC to reach Neptune
 - Signs requests with SigV4 (`neptune-db` service)
-- Forwards Neptune's `Content-Type` header (typically `application/sparql-results+json`)
-- CORS headers (`Access-Control-Allow-Origin: *`) on all responses including errors
+- **60s Neptune timeout** — handles 40s+ complex queries on the 2.27M-triple graph
 - Only has `ReadDataViaQuery`, `GetEngineStatus`, `GetQueryStatus` IAM permissions
-- **Logs every query** to CloudWatch as structured JSON including `source` (`"direct"` or `"agent"`), IP, user agent, duration, and status code
+- **Logs every query** to CloudWatch as structured JSON: `job_id`, `source`, IP, user agent, duration, status
 
-Get the live endpoint from CloudFormation:
+Get endpoints from CloudFormation:
 ```bash
 aws --profile sagebrain cloudformation describe-stacks \
   --stack-name app-dev-neptune-api \
-  --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
-  --output text
+  --query "Stacks[0].Outputs" --output table
 ```
 
 Test with curl:
 ```bash
-curl -X POST <ApiUrl> \
+# Submit
+JOB=$(curl -s -X POST <ApiUrl> \
   -H "Content-Type: application/json" \
-  -d '{"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 5"}'
+  -d '{"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 5"}')
+JOB_ID=$(echo $JOB | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
+
+# Poll
+curl <ApiUrl>/$JOB_ID
 ```
 
-## Lambda: src/lambda_agent/agent.py
+## Agent API: src/lambda_agent/ (async job pattern)
 
-Handles natural-language questions via `POST /ask` with a JSON body `{"question": "<question>"}`.
+Three Lambdas + SQS + DynamoDB implement a fire-and-poll pattern that eliminates the 29s API Gateway timeout.
 
-- Uses [Strands Agents SDK](https://strandsagents.com) with a `query_neptune` tool
+### Flow
+```
+POST /ask  →  submit.py  →  SQS  →  agent.py (worker)  →  DynamoDB
+GET /ask/{job_id}  →  status.py  →  DynamoDB
+```
+
+### submit.py — POST /ask
+- Generates a UUID `job_id`, writes `status=pending` to DynamoDB, enqueues to SQS
+- Returns `202 {"job_id": "...", "status": "pending"}` immediately (no Bedrock/Neptune calls)
+
+### status.py — GET /ask/{job_id}
+- Reads job from DynamoDB and returns current state
+- `pending` / `running` → poll again; `complete` → `answer` + `steps`; `error` → `error` + `steps`
+
+### agent.py — SQS worker
+- SQS-triggered (batch size 1). Uses [Strands Agents SDK](https://strandsagents.com) with a `query_neptune` tool
 - Model: `us.anthropic.claude-sonnet-4-6` (cross-region inference profile)
-- Calls `POST /query` internally — does NOT sign directly to Neptune. This keeps all query traffic through the single audit-logged chokepoint.
-- Returns `{"answer": "...", "steps": [...]}` — `steps` contains each tool call and result for UI transparency
-- **Logs every invocation** to CloudWatch: question, status, step count, duration
+- Calls `POST /query` internally — keeps all query traffic through the single audit-logged chokepoint
+- Writes `status=complete` (with `answer`/`steps`) or `status=error` to DynamoDB when done
+- **Logs every invocation** to CloudWatch: `job_id`, question, status, step count, duration
+- Concurrency capped at 10 — prevents Bedrock/Neptune overload under burst traffic
+- Failed jobs retry twice then land in the DLQ
 - Requires **Bedrock model access** enabled in AWS Console → Bedrock → Model access (one-time account setup)
 
-Get the live endpoint from CloudFormation:
+### DynamoDB job items
+- TTL: 24 hours after creation
+- `status`: `pending` → `running` → `complete` | `error`
+
+Get endpoints from CloudFormation:
 ```bash
 aws --profile sagebrain cloudformation describe-stacks \
   --stack-name app-dev-neptune-agent \
-  --query "Stacks[0].Outputs[?OutputKey=='AgentApiUrl'].OutputValue" \
-  --output text
+  --query "Stacks[0].Outputs" --output table
 ```
 
 Test with curl:
 ```bash
-curl -X POST <AgentApiUrl> \
+# Submit
+JOB=$(curl -s -X POST <AgentApiUrl> \
   -H "Content-Type: application/json" \
-  -d '{"question": "What types of biological entities are in this knowledge graph?"}'
+  -d '{"question": "What types of biological entities are in this knowledge graph?"}')
+JOB_ID=$(echo $JOB | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
+
+# Poll
+curl <AgentApiUrl>/$JOB_ID
 ```
 
 ## API Gateway
 
-### app-dev-neptune-api (`POST /query`)
-- **Throttling**: 50 RPS steady-state, 100 burst
+### app-dev-neptune-api (`POST /query`, `GET /query/{job_id}`)
+- **Throttling**: 50 RPS steady-state, 100 burst (lightweight — no Neptune calls inline)
+- **Timeout**: 10s integration timeout (submit/status are fast; SPARQL runs async in worker)
 - **Access logs**: CloudWatch log group with 1-month retention (every request, structured JSON)
 - **Execution logs**: ERROR level only
 - **CloudWatch role**: set via `cloud_watch_role=True` on `RestApi`
 - No authentication — intentionally public read-only; throttling + IAM read-only scope are the mitigations
 
-### app-dev-neptune-agent (`POST /ask`)
-- **Throttling**: 10 RPS steady-state, 20 burst (agent calls are slower and more expensive)
-- **Timeout**: 29s hard limit (API Gateway constraint) — typical agent responses complete in 10-20s
+### app-dev-neptune-agent (`POST /ask`, `GET /ask/{job_id}`)
+- **Throttling**: 50 RPS steady-state, 100 burst (lightweight — no Bedrock/Neptune calls inline)
+- **Timeout**: 10s integration timeout (submit/status are fast; agent runs async in worker)
 - **Access logs**: CloudWatch log group with 1-month retention
 - No authentication — same public posture as `/query`
 
@@ -188,5 +226,7 @@ Tests live in `tests/unit/`. Lambda handler tests import from `src/lambda/` via 
 - **S3 bulk loader** is used for all data loading — not SPARQL INSERT batches. Neptune assumes `NeptuneLoadRole` (trusted by `rds.amazonaws.com`) to read from S3.
 - **Date-partitioned S3 layout** (`YYYY-MM-DD/schema/` and `YYYY-MM-DD/data/rdf/`) preserves a historical data lake. Each load is a full reset + reload from a chosen prefix.
 - **SageMaker Studio** runs in `VpcOnly` mode so notebook kernels can reach Neptune. Requires VPC interface endpoints for `sagemaker.api` and `sts` (in NetworkStack).
-- **Agent routes through `/query`** rather than calling Neptune directly. This keeps `/query` as the single access control chokepoint — when node/edge-level filtering or caller-based ACLs are added, the agent inherits them for free.
+- **Both APIs are async (submit + poll)** — Neptune SPARQL on the 2.27M-triple graph takes 4–40s; synchronous API Gateway has a hard 29s limit. SQS + DynamoDB decouples HTTP from execution for both `/query` and `/ask`.
+- **Agent routes through `/query`** rather than calling Neptune directly. The `query_neptune` tool submits to `/query` and polls `/query/{job_id}` — keeps all query traffic through the single audit-logged chokepoint, and the agent inherits future ACLs for free.
+- **Worker concurrency is capped** — query worker uncapped (SPARQL is read-only); agent worker capped at 10 concurrent invocations to prevent Bedrock rate-limit errors under burst traffic.
 - **Agent Lambda is ARM_64** — bundled with `platform=linux/arm64` to match compiled dependencies on Apple Silicon dev machines.

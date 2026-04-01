@@ -7,8 +7,8 @@ Amazon Neptune cluster for the Sage Brain knowledge graph.
 - **Neptune Cluster**: Managed graph database in private subnets, IAM auth enabled
 - **Security Groups**: No broad ingress — each consumer stack adds a targeted SG-to-SG rule on port 8182
 - **SageMaker Studio**: Team access for loading and querying data via JupyterLab (VpcOnly mode, routes through VPC)
-- **Public SPARQL API** (`app-dev-neptune-api`): Read-only `POST /query` endpoint via API Gateway + Lambda. All queries logged to CloudWatch with source, IP, duration, and query text.
-- **AI Agent API** (`app-dev-neptune-agent`): Natural-language `POST /ask` endpoint. Bedrock Strands (Claude Sonnet 4.6) translates questions to SPARQL, calls `/query` internally, and returns a plain-language answer with an execution trace of SPARQL tool calls and result previews.
+- **Public SPARQL API** (`app-dev-neptune-api`): Async read-only SPARQL interface. `POST /query` submits a job and returns a `job_id`. A worker Lambda executes the SPARQL against Neptune and writes results to DynamoDB. Callers poll `GET /query/{job_id}`. All queries logged to CloudWatch with source, IP, duration, and query text.
+- **AI Agent API** (`app-dev-neptune-agent`): Async natural-language interface. `POST /ask` enqueues a job and returns a `job_id` immediately. A worker Lambda (Bedrock Strands / Claude Sonnet 4.6) processes the job via SQS, writes the result to DynamoDB, and the caller polls `GET /ask/{job_id}` for the answer.
 - **Backup & Monitoring**: Automated backups and CloudWatch audit/slow-query logging
 
 ## Accessing Neptune
@@ -81,11 +81,37 @@ pd.DataFrame(rows)
 
 ### From the Public SPARQL API (read-only, no auth)
 
-A read-only SPARQL endpoint is available over HTTPS. See the [README](../README.md) for the URL and usage.
+SPARQL queries use the same async job pattern as `/ask`:
+
+```bash
+# 1. Submit query — returns immediately with a job_id
+curl -X POST <ApiUrl> \
+  -H "Content-Type: application/json" \
+  -d '{"query": "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }"}'
+# → {"job_id": "abc-123", "status": "pending"}
+
+# 2. Poll until status is "complete" or "error"
+curl <ApiUrl>/abc-123
+# → {"job_id": "abc-123", "status": "complete", "results": "{...sparql-results+json...}", "content_type": "..."}
+```
+
+Complex queries on the 2.27M-triple graph can take 25–40s — the async pattern means they complete successfully rather than hitting a 504.
 
 ### From the AI Agent API (natural language)
 
-Ask questions in plain English at `POST /ask`. See the [README](../README.md) for the URL and usage.
+Ask questions in plain English using the async job pattern:
+
+```bash
+# 1. Submit a question — returns immediately with a job_id
+curl -X POST <AgentApiUrl> \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What genes are linked to NF1?"}'
+# → {"job_id": "abc-123", "status": "pending"}
+
+# 2. Poll until status is "complete" or "error"
+curl <AgentApiUrl>/abc-123
+# → {"job_id": "abc-123", "status": "complete", "answer": "...", "steps": [...]}
+```
 
 The agent routes all SPARQL through `/query`, so every agent-generated query appears in the query audit log with `"source": "agent"`.
 
@@ -271,6 +297,8 @@ CloudWatch logs enabled for:
 | `ConnectTimeout` from Studio | Space wasn't restarted after SG/network change — stop and restart the space |
 | `AccessDeniedException` on Neptune | Request not SigV4-signed, or IAM role missing Neptune permissions |
 | `TimeoutError` on port 8182 | Security group rule missing, or VPC routing issue |
-| `Endpoint request timed out` from `/ask` | Agent ran >29s (multi-hop query) — API Gateway hard limit. Simplify the question or migrate to WebSocket (Phase 2) |
+| `POST /ask` returns 504 | Should not happen — submit Lambda only enqueues. Check if the stack was redeployed with the new async stack. |
+| `GET /ask/{job_id}` returns `{"status": "pending"}` indefinitely | Worker Lambda may have errored — check the worker log group (`NeptuneAgentWorkerFunction`). Failed jobs land in the DLQ after 2 retries. |
+| `GET /ask/{job_id}` returns `{"status": "error"}` | Agent error (Bedrock timeout, bad SPARQL, etc.) — `"error"` field has the message; `"steps"` shows how far it got. |
 | `AccessDeniedException` on Bedrock | Claude Sonnet 4.6 model access not enabled — go to **AWS Console → Bedrock → Model access** and request access |
 | Agent answers but no query logs | Agent is calling `/query` correctly — check the query Lambda log group, not the agent log group |
