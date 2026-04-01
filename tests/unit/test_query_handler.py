@@ -217,6 +217,40 @@ def test_sigv4_auth_applied(mock_session, mock_sigv4, mock_post, handler, mock_t
     mock_sigv4.return_value.add_auth.assert_called_once()
 
 
+@patch("query.requests.post")
+@patch("query.SigV4Auth")
+@patch("query.botocore.session.Session")
+def test_neptune_url_uses_endpoint_env_var(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
+):
+    mock_post.return_value = sparql_response({"results": {"bindings": []}})
+
+    handler(make_sqs_event(default_job()), {})
+
+    called_url = mock_post.call_args.kwargs.get("url") or mock_post.call_args[0][0]
+    assert "test-neptune.cluster.us-east-1.neptune.amazonaws.com" in called_url
+    assert called_url.endswith("/sparql")
+
+
+@patch("query.requests.post")
+@patch("query.SigV4Auth")
+@patch("query.botocore.session.Session")
+def test_duration_ms_stored_as_decimal(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
+):
+    """DynamoDB rejects plain floats — _update_job must convert them to Decimal."""
+    from decimal import Decimal
+
+    mock_post.return_value = sparql_response({"results": {"bindings": []}})
+
+    handler(make_sqs_event(default_job()), {})
+
+    final_values = mock_table.update_item.call_args_list[-1].kwargs[
+        "ExpressionAttributeValues"
+    ]
+    assert isinstance(final_values[":duration_ms"], Decimal)
+
+
 # ---------------------------------------------------------------------------
 # Optional SQS message fields default correctly
 # ---------------------------------------------------------------------------
