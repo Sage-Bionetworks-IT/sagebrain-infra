@@ -228,8 +228,10 @@ def test_neptune_url_uses_endpoint_env_var(
     handler(make_sqs_event(default_job()), {})
 
     called_url = mock_post.call_args.kwargs.get("url") or mock_post.call_args[0][0]
-    assert "test-neptune.cluster.us-east-1.neptune.amazonaws.com" in called_url
-    assert called_url.endswith("/sparql")
+    assert (
+        called_url
+        == "https://test-neptune.cluster.us-east-1.neptune.amazonaws.com:8182/sparql"
+    )
 
 
 @patch("query.requests.post")
