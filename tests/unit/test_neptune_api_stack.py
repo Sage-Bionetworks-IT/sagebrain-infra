@@ -44,10 +44,21 @@ def test_lambda_function_created(template):
     )
 
 
-def test_lambda_timeout_is_30s(template):
+def test_query_worker_lambda_timeout_is_75s(template):
     template.has_resource_properties(
         "AWS::Lambda::Function",
-        {"Timeout": 30},
+        {"Handler": "query.handler", "Timeout": 75},
+    )
+
+
+def test_submit_and_status_lambda_timeout_is_10s(template):
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"Handler": "submit.handler", "Timeout": 10},
+    )
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"Handler": "status.handler", "Timeout": 10},
     )
 
 
@@ -146,12 +157,12 @@ def test_post_method_exists(template):
     )
 
 
-def test_no_get_method_exists(template):
-    methods = template.find_resources(
+def test_get_method_exists_for_status_polling(template):
+    # GET /query/{job_id} is required for async status polling
+    template.has_resource_properties(
         "AWS::ApiGateway::Method",
-        {"Properties": {"HttpMethod": "GET"}},
+        {"HttpMethod": "GET"},
     )
-    assert len(methods) == 0, "GET method should not exist — only POST is supported"
 
 
 def test_options_method_exists_for_cors(template):
