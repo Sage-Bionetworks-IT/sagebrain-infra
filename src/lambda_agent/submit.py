@@ -15,6 +15,7 @@ CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
 }
 
+MAX_QUESTION_LENGTH = 2000
 JOB_TTL_SECONDS = 86400  # 24 hours
 
 
@@ -34,6 +35,17 @@ def handler(event, context):
             "statusCode": 400,
             "headers": {"Content-Type": "application/json", **CORS_HEADERS},
             "body": json.dumps({"error": "Missing 'question' field"}),
+        }
+
+    if len(question) > MAX_QUESTION_LENGTH:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+            "body": json.dumps(
+                {
+                    "error": f"Question exceeds maximum length of {MAX_QUESTION_LENGTH} characters"
+                }
+            ),
         }
 
     job_id = str(uuid.uuid4())
