@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 LAMBDA_DIR = str(Path(__file__).parents[2] / "src" / "lambda")
 if LAMBDA_DIR not in sys.path:
@@ -17,14 +18,24 @@ def set_env(monkeypatch):
         "NEPTUNE_ENDPOINT", "test-neptune.cluster.us-east-1.neptune.amazonaws.com"
     )
     monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("JOB_TABLE_NAME", "test-job-table")
 
 
 @pytest.fixture
-def handler():
+def mock_table():
+    table = MagicMock()
+    with patch("boto3.resource") as mock_resource:
+        mock_resource.return_value.Table.return_value = table
+        yield table
+
+
+@pytest.fixture
+def handler(mock_table):
     sys.modules.pop("query", None)
     import query as q
 
     importlib.reload(q)
+    q._dynamodb.Table.return_value = mock_table
     return q.handler
 
 
@@ -37,195 +48,219 @@ def sparql_response(body: dict, status: int = 200):
     return mock
 
 
-def make_event(body: dict | None = None):
-    return {"body": json.dumps(body) if body is not None else None}
+def make_sqs_event(*jobs):
+    """Build a minimal SQS event with one record per job dict."""
+    return {"Records": [{"body": json.dumps(job)} for job in jobs]}
+
+
+def default_job(**overrides):
+    base = {
+        "job_id": "abc-123",
+        "query": "SELECT * WHERE { ?s ?p ?o } LIMIT 5",
+        "source": "direct",
+        "source_ip": "1.2.3.4",
+        "user_agent": "test-agent",
+    }
+    base.update(overrides)
+    return base
 
 
 # ---------------------------------------------------------------------------
-# Success path
+# Status transitions — pending → running → complete
 # ---------------------------------------------------------------------------
 
 
 @patch("query.requests.post")
 @patch("query.SigV4Auth")
 @patch("query.botocore.session.Session")
-def test_success_returns_200(mock_session, mock_sigv4, mock_post, handler):
-    mock_post.return_value = sparql_response({"results": {"bindings": []}})
-
-    response = handler(make_event({"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"}), {})
-
-    assert response["statusCode"] == 200
-
-
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
-def test_success_forwards_neptune_content_type(
-    mock_session, mock_sigv4, mock_post, handler
+def test_sets_running_before_neptune_call(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
     mock_post.return_value = sparql_response({"results": {"bindings": []}})
 
-    response = handler(make_event({"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"}), {})
+    handler(make_sqs_event(default_job()), {})
 
-    assert response["headers"]["Content-Type"] == "application/sparql-results+json"
-
-
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
-def test_success_includes_cors_header(mock_session, mock_sigv4, mock_post, handler):
-    mock_post.return_value = sparql_response({"results": {"bindings": []}})
-
-    response = handler(make_event({"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"}), {})
-
-    assert response["headers"]["Access-Control-Allow-Origin"] == "*"
+    calls = mock_table.update_item.call_args_list
+    # First update must be status=running
+    first_values = calls[0].kwargs["ExpressionAttributeValues"]
+    assert first_values[":status"] == "running"
 
 
 @patch("query.requests.post")
 @patch("query.SigV4Auth")
 @patch("query.botocore.session.Session")
-def test_default_query_used_when_none_provided(
-    mock_session, mock_sigv4, mock_post, handler
+def test_sets_complete_with_results_on_success(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
+):
+    result_body = {"results": {"bindings": [{"s": {"value": "x"}}]}}
+    mock_post.return_value = sparql_response(result_body)
+
+    handler(make_sqs_event(default_job()), {})
+
+    calls = mock_table.update_item.call_args_list
+    final_values = calls[-1].kwargs["ExpressionAttributeValues"]
+    assert final_values[":status"] == "complete"
+    assert json.loads(final_values[":results"]) == result_body
+
+
+@patch("query.requests.post")
+@patch("query.SigV4Auth")
+@patch("query.botocore.session.Session")
+def test_sets_complete_with_content_type(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
     mock_post.return_value = sparql_response({"results": {"bindings": []}})
 
-    response = handler(make_event({}), {})
+    handler(make_sqs_event(default_job()), {})
 
-    assert response["statusCode"] == 200
-    called_body = (
-        mock_post.call_args.kwargs.get("data") or mock_post.call_args.args[1]
-        if mock_post.call_args.args
-        else mock_post.call_args.kwargs["data"]
+    final_values = mock_table.update_item.call_args_list[-1].kwargs[
+        "ExpressionAttributeValues"
+    ]
+    assert final_values[":content_type"] == "application/sparql-results+json"
+
+
+@patch("query.requests.post")
+@patch("query.SigV4Auth")
+@patch("query.botocore.session.Session")
+def test_sets_error_on_neptune_http_error(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
+):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 400
+    mock_resp.headers = {}
+    mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        "bad request", response=mock_resp
     )
-    assert "SELECT" in called_body
+    mock_post.return_value = mock_resp
+
+    with pytest.raises(requests.exceptions.HTTPError):  # noqa: F821
+        handler(make_sqs_event(default_job()), {})
+
+    final_values = mock_table.update_item.call_args_list[-1].kwargs[
+        "ExpressionAttributeValues"
+    ]
+    assert final_values[":status"] == "error"
+    assert "bad request" in final_values[":error"]
 
 
 @patch("query.requests.post")
 @patch("query.SigV4Auth")
 @patch("query.botocore.session.Session")
-def test_null_body_uses_default_query(mock_session, mock_sigv4, mock_post, handler):
-    mock_post.return_value = sparql_response({"results": {"bindings": []}})
+def test_sets_error_on_unexpected_exception(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
+):
+    mock_post.side_effect = Exception("connection refused")
 
-    response = handler({"body": None}, {})
+    with pytest.raises(Exception, match="connection refused"):
+        handler(make_sqs_event(default_job()), {})
 
-    assert response["statusCode"] == 200
-
-
-# ---------------------------------------------------------------------------
-# Query length guard
-# ---------------------------------------------------------------------------
-
-
-def test_query_exceeding_max_length_returns_400(handler):
-    response = handler(make_event({"query": "S" * 8001}), {})
-
-    assert response["statusCode"] == 400
-    assert "exceeds maximum length" in json.loads(response["body"])["error"]
-
-
-def test_query_exceeding_max_length_includes_cors(handler):
-    response = handler(make_event({"query": "S" * 8001}), {})
-
-    assert response["headers"]["Access-Control-Allow-Origin"] == "*"
-
-
-def test_query_at_exact_max_length_is_accepted(handler):
-    with patch("query.requests.post") as mock_post, patch("query.SigV4Auth"), patch(
-        "query.botocore.session.Session"
-    ):
-        mock_post.return_value = sparql_response({"results": {"bindings": []}})
-        response = handler(make_event({"query": "S" * 8000}), {})
-
-    assert response["statusCode"] == 200
+    final_values = mock_table.update_item.call_args_list[-1].kwargs[
+        "ExpressionAttributeValues"
+    ]
+    assert final_values[":status"] == "error"
+    assert "connection refused" in final_values[":error"]
 
 
 # ---------------------------------------------------------------------------
-# Request construction
+# DynamoDB key — job_id is threaded through correctly
 # ---------------------------------------------------------------------------
 
 
 @patch("query.requests.post")
 @patch("query.SigV4Auth")
 @patch("query.botocore.session.Session")
-def test_neptune_called_with_post(mock_session, mock_sigv4, mock_post, handler):
+def test_update_item_uses_correct_job_id(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
+):
     mock_post.return_value = sparql_response({"results": {"bindings": []}})
 
-    handler(make_event({"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"}), {})
+    handler(make_sqs_event(default_job(job_id="job-xyz")), {})
+
+    for c in mock_table.update_item.call_args_list:
+        assert c.kwargs["Key"] == {"job_id": "job-xyz"}
+
+
+# ---------------------------------------------------------------------------
+# Neptune request construction
+# ---------------------------------------------------------------------------
+
+
+@patch("query.requests.post")
+@patch("query.SigV4Auth")
+@patch("query.botocore.session.Session")
+def test_neptune_called_with_sparql_query(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
+):
+    mock_post.return_value = sparql_response({"results": {"bindings": []}})
+    query_str = "SELECT * WHERE { ?s ?p ?o } LIMIT 5"
+
+    handler(make_sqs_event(default_job(query=query_str)), {})
+
+    from urllib.parse import unquote_plus
 
     mock_post.assert_called_once()
-    # requests.post is the only HTTP method used — assert no other method called
-    assert mock_post.call_count == 1
+    sent_body = mock_post.call_args.kwargs.get("data") or mock_post.call_args[1].get(
+        "data"
+    )
+    assert query_str in unquote_plus(sent_body)
 
 
 @patch("query.requests.post")
 @patch("query.SigV4Auth")
 @patch("query.botocore.session.Session")
-def test_sigv4_auth_is_applied(mock_session, mock_sigv4, mock_post, handler):
+def test_sigv4_auth_applied(mock_session, mock_sigv4, mock_post, handler, mock_table):
     mock_post.return_value = sparql_response({"results": {"bindings": []}})
 
-    handler(make_event({"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"}), {})
+    handler(make_sqs_event(default_job()), {})
 
     mock_sigv4.assert_called_once()
     mock_sigv4.return_value.add_auth.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
-# Invalid JSON body
-# ---------------------------------------------------------------------------
-
-
-def test_invalid_json_body_returns_400(handler):
-    response = handler({"body": "not valid json"}, {})
-
-    assert response["statusCode"] == 400
-    assert "valid JSON" in json.loads(response["body"])["error"]
-
-
-def test_invalid_json_includes_cors(handler):
-    response = handler({"body": "not valid json"}, {})
-
-    assert response["headers"]["Access-Control-Allow-Origin"] == "*"
-
-
-# ---------------------------------------------------------------------------
-# Neptune HTTP error
+# Optional SQS message fields default correctly
 # ---------------------------------------------------------------------------
 
 
 @patch("query.requests.post")
 @patch("query.SigV4Auth")
 @patch("query.botocore.session.Session")
-def test_neptune_http_error_returns_upstream_status(
-    mock_session, mock_sigv4, mock_post, handler
+def test_missing_optional_fields_default(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
-    import requests
+    """source/source_ip/user_agent are optional in the SQS message."""
+    mock_post.return_value = sparql_response({"results": {"bindings": []}})
+    minimal_job = {"job_id": "min-1", "query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"}
 
-    mock_resp = MagicMock()
-    mock_resp.status_code = 400
-    mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError(
-        "bad request", response=mock_resp
-    )
-    mock_post.return_value = mock_resp
+    # Should not raise
+    handler(make_sqs_event(minimal_job), {})
 
-    response = handler(make_event({"query": "SELECT * WHERE { ?s ?p ?o }"}), {})
-
-    assert response["statusCode"] == 400
-    assert response["headers"]["Access-Control-Allow-Origin"] == "*"
+    final_values = mock_table.update_item.call_args_list[-1].kwargs[
+        "ExpressionAttributeValues"
+    ]
+    assert final_values[":status"] == "complete"
 
 
 # ---------------------------------------------------------------------------
-# Unexpected exception
+# Batch: multiple SQS records processed in one invocation
 # ---------------------------------------------------------------------------
 
 
 @patch("query.requests.post")
 @patch("query.SigV4Auth")
 @patch("query.botocore.session.Session")
-def test_unexpected_exception_returns_500(mock_session, mock_sigv4, mock_post, handler):
-    mock_post.side_effect = Exception("connection refused")
+def test_processes_multiple_records(
+    mock_session, mock_sigv4, mock_post, handler, mock_table
+):
+    mock_post.return_value = sparql_response({"results": {"bindings": []}})
+    job_a = default_job(job_id="job-a")
+    job_b = default_job(job_id="job-b")
 
-    response = handler(make_event({"query": "SELECT * WHERE { ?s ?p ?o }"}), {})
+    handler(make_sqs_event(job_a, job_b), {})
 
-    assert response["statusCode"] == 500
-    assert "connection refused" in json.loads(response["body"])["error"]
-    assert response["headers"]["Access-Control-Allow-Origin"] == "*"
+    assert mock_post.call_count == 2
+    job_ids_written = [
+        c.kwargs["Key"]["job_id"] for c in mock_table.update_item.call_args_list
+    ]
+    assert "job-a" in job_ids_written
+    assert "job-b" in job_ids_written
