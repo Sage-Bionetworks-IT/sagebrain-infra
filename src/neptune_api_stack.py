@@ -61,7 +61,7 @@ class NeptuneApiStack(cdk.Stack):
         # -------------------
         # SQS — query job queue + DLQ
         # -------------------
-        dlq = sqs.Queue(
+        self.dlq = sqs.Queue(
             self,
             "QueryJobDLQ",
             retention_period=cdk.Duration.days(14),
@@ -70,7 +70,7 @@ class NeptuneApiStack(cdk.Stack):
             self,
             "QueryJobQueue",
             visibility_timeout=cdk.Duration.seconds(90),  # > worker Lambda timeout
-            dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=2, queue=dlq),
+            dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=2, queue=self.dlq),
         )
 
         # -------------------

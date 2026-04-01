@@ -64,7 +64,7 @@ class NeptuneAgentStack(cdk.Stack):
         # -------------------
         # SQS — job queue + DLQ
         # -------------------
-        dlq = sqs.Queue(
+        self.dlq = sqs.Queue(
             self,
             "AgentJobDLQ",
             retention_period=cdk.Duration.days(14),
@@ -73,7 +73,7 @@ class NeptuneAgentStack(cdk.Stack):
             self,
             "AgentJobQueue",
             visibility_timeout=cdk.Duration.seconds(360),  # > worker Lambda timeout
-            dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=2, queue=dlq),
+            dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=2, queue=self.dlq),
         )
 
         # -------------------
