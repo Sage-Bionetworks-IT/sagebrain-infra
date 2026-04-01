@@ -92,6 +92,9 @@ def _execute_query(
         )
         duration = (time.time() - start) * 1000
         _log_query(job_id, query, source, source_ip, user_agent, 200, duration)
+        # TODO: response.text is stored raw in DynamoDB; large result sets can exceed
+        # the 400KB item size limit, causing this update to fail even though Neptune
+        # succeeded. Consider truncating at ~300KB or offloading results to S3.
         _update_job(
             job_id,
             status="complete",

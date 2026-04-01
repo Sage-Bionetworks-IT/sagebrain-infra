@@ -44,6 +44,8 @@ _current_job_id: str = ""
 
 def _flush_steps():
     """Write current steps to DynamoDB so the polling client sees live progress."""
+    # TODO: steps grow with each tool call; a long-running agent can accumulate enough
+    # steps to push the item over DynamoDB's 400KB limit before the job even completes.
     if _current_job_id:
         _update_job(_current_job_id, steps=_steps)
 
@@ -192,6 +194,9 @@ def _process_job(job_id: str, question: str):
     try:
         result = _invoke_agent_with_retry(agent, question, job_id)
         duration = (time.time() - start) * 1000
+        # TODO: answer + steps are stored in a single DynamoDB item; a verbose agent
+        # response with many steps can exceed the 400KB item size limit.
+        # Consider truncating steps or offloading large payloads to S3.
         _update_job(
             job_id,
             status="complete",
@@ -214,6 +219,7 @@ def _process_job(job_id: str, question: str):
         )
     except Exception as e:
         duration = (time.time() - start) * 1000
+        # TODO: steps written on error path can also exceed 400KB if the agent ran many iterations.
         _update_job(job_id, status="error", error=str(e), steps=_steps)
         print(
             json.dumps(
