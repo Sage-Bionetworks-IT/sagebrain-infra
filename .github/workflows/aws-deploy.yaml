@@ -49,5 +49,9 @@ jobs:
           role-to-assume: ${{ inputs.role-to-assume }}
           role-session-name: ${{ inputs.role-session-name }}
           role-duration-seconds: ${{ inputs.role-duration-seconds }}
+      - name: Set up QEMU for ARM64 Docker builds
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
       - name: CDK deploy
         run: cdk deploy --context env=${{ inputs.environment }} --all --debug --concurrency 5 --require-approval never
