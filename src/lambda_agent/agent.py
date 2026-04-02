@@ -29,10 +29,11 @@ You have access to a Neptune RDF graph containing biomedical data about genes, d
 pathways, and their relationships, described using standard ontologies (e.g. RDF/OWL, SPARQL).
 
 When a user asks a question:
-1. Formulate a SPARQL SELECT query to answer it.
-2. Call the query_neptune tool with that query.
-3. Interpret the results and answer in plain language.
-4. If the first query returns no results or needs refinement, try an alternative query.
+1. Call get_schema to discover available classes and properties if you are unsure of the graph structure.
+2. Formulate a SPARQL SELECT query to answer the question.
+3. Call the query_neptune tool with that query.
+4. Interpret the results and answer in plain language.
+5. If the first query returns no results or needs refinement, try an alternative query.
 
 Always explain what you found and how confident you are in the answer.
 """
@@ -115,6 +116,40 @@ def query_neptune(sparql: str) -> str:
     raise TimeoutError(timeout_msg)
 
 
+_SCHEMA_SPARQL = """\
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?term ?kind ?label ?comment ?domain ?range WHERE {
+    {
+        ?term a owl:Class .
+        BIND("Class" AS ?kind)
+    } UNION {
+        ?term a owl:ObjectProperty .
+        BIND("ObjectProperty" AS ?kind)
+    } UNION {
+        ?term a owl:DatatypeProperty .
+        BIND("DatatypeProperty" AS ?kind)
+    }
+    OPTIONAL { ?term rdfs:label ?label }
+    OPTIONAL { ?term rdfs:comment ?comment }
+    OPTIONAL { ?term rdfs:domain ?domain }
+    OPTIONAL { ?term rdfs:range ?range }
+} ORDER BY ?kind ?term"""
+
+
+@tool
+def get_schema() -> str:
+    """Return all classes and properties defined in the knowledge graph ontology.
+
+    Use this to discover the graph structure (available types and predicates)
+    before writing SPARQL queries.
+    Returns a JSON string with 'results.bindings' rows containing term, kind,
+    label, comment, domain, and range fields.
+    """
+    return query_neptune(_SCHEMA_SPARQL)
+
+
 def _update_job(job_id: str, **fields):
     table = _dynamodb.Table(DYNAMODB_TABLE)
     update_expr = "SET " + ", ".join(f"#{k} = :{k}" for k in fields)
@@ -188,7 +223,7 @@ def _process_job(job_id: str, question: str):
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
-        tools=[query_neptune],
+        tools=[query_neptune, get_schema],
     )
 
     try:
