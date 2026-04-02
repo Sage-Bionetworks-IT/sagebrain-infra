@@ -26,10 +26,12 @@ _dynamodb = boto3.resource("dynamodb")
 
 SYSTEM_PROMPT = """You are a biomedical knowledge graph assistant for the Sage Brain project.
 You have access to a Neptune RDF graph containing biomedical data about genes, diseases,
-pathways, and their relationships, described using standard ontologies (e.g. RDF/OWL, SPARQL).
+pathways, and their relationships. The primary ontology namespace is
+<http://nf-osi.github.com/terms#> (prefix: nf:).
 
 When a user asks a question:
 1. Call get_schema to discover available classes and properties if you are unsure of the graph structure.
+   Pass a namespace_prefix to scope results to a specific ontology.
 2. Formulate a SPARQL SELECT query to answer the question.
 3. Call the query_neptune tool with that query.
 4. Interpret the results and answer in plain language.
@@ -116,38 +118,50 @@ def query_neptune(sparql: str) -> str:
     raise TimeoutError(timeout_msg)
 
 
-_SCHEMA_SPARQL = """\
+_SCHEMA_SPARQL_BASE = """\
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-SELECT ?term ?kind ?label ?comment ?domain ?range WHERE {
-    {
+SELECT ?term ?kind ?label ?comment ?domain ?range WHERE {{
+    {{
         ?term a owl:Class .
         BIND("Class" AS ?kind)
-    } UNION {
+    }} UNION {{
         ?term a owl:ObjectProperty .
         BIND("ObjectProperty" AS ?kind)
-    } UNION {
+    }} UNION {{
         ?term a owl:DatatypeProperty .
         BIND("DatatypeProperty" AS ?kind)
-    }
-    OPTIONAL { ?term rdfs:label ?label }
-    OPTIONAL { ?term rdfs:comment ?comment }
-    OPTIONAL { ?term rdfs:domain ?domain }
-    OPTIONAL { ?term rdfs:range ?range }
-} ORDER BY ?kind ?term"""
+    }}
+    OPTIONAL {{ ?term rdfs:label ?label }}
+    OPTIONAL {{ ?term rdfs:comment ?comment }}
+    OPTIONAL {{ ?term rdfs:domain ?domain }}
+    OPTIONAL {{ ?term rdfs:range ?range }}
+    {filter}
+}} ORDER BY ?kind ?term"""
 
 
 @tool
-def get_schema() -> str:
+def get_schema(namespace_prefix: str = "") -> str:
     """Return all classes and properties defined in the knowledge graph ontology.
 
     Use this to discover the graph structure (available types and predicates)
     before writing SPARQL queries.
+
+    Args:
+        namespace_prefix: Optional IRI prefix to filter results to a specific
+            ontology (e.g. "http://nf-osi.github.com/terms#"). Leave empty
+            to return terms from all loaded ontologies.
+
     Returns a JSON string with 'results.bindings' rows containing term, kind,
     label, comment, domain, and range fields.
     """
-    return query_neptune(_SCHEMA_SPARQL)
+    if namespace_prefix:
+        filter_clause = f'FILTER(STRSTARTS(STR(?term), "{namespace_prefix}"))'
+    else:
+        filter_clause = ""
+    sparql = _SCHEMA_SPARQL_BASE.format(filter=filter_clause)
+    return query_neptune(sparql)
 
 
 def _update_job(job_id: str, **fields):
