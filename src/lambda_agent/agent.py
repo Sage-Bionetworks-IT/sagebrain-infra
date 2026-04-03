@@ -119,12 +119,16 @@ def query_neptune(sparql: str) -> str:
 
 
 _SCHEMA_SPARQL_BASE = """\
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-SELECT ?term ?kind ?label ?comment ?domain ?range WHERE {{
+SELECT DISTINCT ?term ?kind ?label ?comment ?domain ?range WHERE {{
     {{
         ?term a owl:Class .
+        BIND("Class" AS ?kind)
+    }} UNION {{
+        ?term a rdfs:Class .
         BIND("Class" AS ?kind)
     }} UNION {{
         ?term a owl:ObjectProperty .
@@ -132,7 +136,11 @@ SELECT ?term ?kind ?label ?comment ?domain ?range WHERE {{
     }} UNION {{
         ?term a owl:DatatypeProperty .
         BIND("DatatypeProperty" AS ?kind)
+    }} UNION {{
+        ?term a rdf:Property .
+        BIND("Property" AS ?kind)
     }}
+    FILTER(isIRI(?term))
     OPTIONAL {{ ?term rdfs:label ?label }}
     OPTIONAL {{ ?term rdfs:comment ?comment }}
     OPTIONAL {{ ?term rdfs:domain ?domain }}
@@ -157,7 +165,12 @@ def get_schema(namespace_prefix: str = "") -> str:
     label, comment, domain, and range fields.
     """
     if namespace_prefix:
-        filter_clause = f'FILTER(STRSTARTS(STR(?term), "{namespace_prefix}"))'
+        if not namespace_prefix.startswith(("http://", "https://")):
+            raise ValueError(
+                f"namespace_prefix must be an HTTP(S) IRI, got: {namespace_prefix!r}"
+            )
+        safe_prefix = namespace_prefix.replace("\\", "").replace('"', "")
+        filter_clause = f'FILTER(STRSTARTS(STR(?term), "{safe_prefix}"))'
     else:
         filter_clause = ""
     sparql = _SCHEMA_SPARQL_BASE.format(filter=filter_clause)
