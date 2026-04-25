@@ -19,3 +19,6 @@ NEPTUNE:
 NEPTUNE_SAGEMAKER:
   enabled: true
   domain_name: "sage-brain-studio"
+
+AUTH:
+  synapse_team_id: "273957"

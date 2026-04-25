@@ -41,6 +41,7 @@ class NeptuneAgentStack(cdk.Stack):
         vpc: ec2.Vpc,
         neptune_query_url: str,
         neptune_query_status_url: str,
+        synapse_team_id: str,
         bedrock_model_id: str = "us.anthropic.claude-sonnet-4-6",
         **kwargs,
     ) -> None:
@@ -192,6 +193,27 @@ class NeptuneAgentStack(cdk.Stack):
         )
 
         # -------------------
+        # Synapse token authorizer Lambda (no VPC — calls Synapse public API)
+        # -------------------
+        authorizer_fn = lambda_.Function(
+            self,
+            "SynapseAuthorizerFunction",
+            runtime=lambda_.Runtime.PYTHON_3_11,
+            handler="authorizer.handler",
+            code=lambda_.Code.from_asset("src/lambda_authorizer"),
+            environment={"SYNAPSE_TEAM_ID": synapse_team_id},
+            timeout=cdk.Duration.seconds(10),
+            memory_size=256,
+        )
+
+        token_authorizer = apigw.TokenAuthorizer(
+            self,
+            "SynapseTokenAuthorizer",
+            handler=authorizer_fn,
+            results_cache_ttl=cdk.Duration.minutes(5),
+        )
+
+        # -------------------
         # API Gateway
         # -------------------
         access_log_group = logs.LogGroup(
@@ -209,6 +231,7 @@ class NeptuneAgentStack(cdk.Stack):
             default_cors_preflight_options=apigw.CorsOptions(
                 allow_origins=apigw.Cors.ALL_ORIGINS,
                 allow_methods=["POST", "GET", "OPTIONS"],
+                allow_headers=["Content-Type", "Authorization", "X-Source"],
             ),
             deploy_options=apigw.StageOptions(
                 access_log_destination=apigw.LogGroupLogDestination(access_log_group),
@@ -234,12 +257,14 @@ class NeptuneAgentStack(cdk.Stack):
         ask_resource.add_method(
             "POST",
             apigw.LambdaIntegration(self.submit_fn, timeout=cdk.Duration.seconds(10)),
+            authorizer=token_authorizer,
         )
 
         ask_job_resource = ask_resource.add_resource("{job_id}")
         ask_job_resource.add_method(
             "GET",
             apigw.LambdaIntegration(self.status_fn, timeout=cdk.Duration.seconds(10)),
+            authorizer=token_authorizer,
         )
 
         # -------------------

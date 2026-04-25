@@ -25,6 +25,7 @@ def template():
         neptune_read_endpoint="test-neptune.cluster-ro.us-east-1.neptune.amazonaws.com",
         neptune_cluster_resource_id="cluster-ABCDEFGHIJKLMNOP",
         neptune_security_group=neptune_sg,
+        synapse_team_id="273957",
     )
     return Template.from_stack(stack)
 

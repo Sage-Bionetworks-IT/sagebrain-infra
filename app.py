@@ -59,6 +59,7 @@ neptune_api_stack = NeptuneApiStack(
     neptune_read_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
     neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
     neptune_security_group=neptune_stack.neptune_security_group,
+    synapse_team_id=config["AUTH"]["synapse_team_id"],
     env=env,
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies
@@ -70,6 +71,7 @@ neptune_agent_stack = NeptuneAgentStack(
     vpc=network_stack.vpc,
     neptune_query_url=f"{neptune_api_stack.api.url}query",
     neptune_query_status_url=f"{neptune_api_stack.api.url}query",
+    synapse_team_id=config["AUTH"]["synapse_team_id"],
     env=env,
 )
 
