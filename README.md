@@ -7,7 +7,7 @@ AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune g
 
 - **VPC Networking**: Isolated network environment with public and private subnets
 - **Amazon Neptune**: Managed graph database for knowledge graphs
-- **Public SPARQL API**: Read-only API Gateway + Lambda endpoint for querying Neptune over HTTPS
+- **SPARQL API**: Read-only API Gateway + Lambda endpoint for querying Neptune over HTTPS (Synapse team-gated)
 - **AI Agent API**: Natural-language query interface powered by Bedrock Strands (Claude Sonnet 4.6) — converts plain-language questions to SPARQL and returns answers with full reasoning trace
 - **SageMaker Studio**: Team JupyterLab environment for loading and querying the knowledge graph
 - **Query Audit Logging**: All SPARQL queries logged to CloudWatch with source tracking (direct vs. agent)
@@ -116,7 +116,7 @@ AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-sagemaker --context env=dev
 
 ### Direct SPARQL (`POST /query`)
 
-A read-only SPARQL endpoint is available over HTTPS — no authentication required.
+A read-only SPARQL endpoint is available over HTTPS. Requests must include a Synapse Personal Access Token (PAT) and the caller must be a member of Synapse team [273957](https://www.synapse.org/Team:273957).
 
 Get the API URL from CDK outputs after deployment:
 
@@ -132,6 +132,7 @@ Send a `POST` request with a JSON body containing your SPARQL query:
 ```console
 curl -X POST <API_URL> \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-synapse-pat>" \
   -d '{"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 10"}'
 ```
 
@@ -155,6 +156,7 @@ Send a `POST` request with a `question` field:
 ```console
 curl -X POST <AGENT_URL> \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-synapse-pat>" \
   -d '{"question": "What types of biological entities are in this knowledge graph?"}'
 ```
 
