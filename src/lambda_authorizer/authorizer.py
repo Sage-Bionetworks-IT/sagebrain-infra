@@ -10,9 +10,7 @@ log.setLevel(logging.INFO)
 SYNAPSE_API = "https://repo-prod.prod.sagebase.org/repo/v1"
 TEAM_ID = os.getenv("SYNAPSE_TEAM_ID")
 if not TEAM_ID:
-    raise RuntimeError(
-        "Missing required environment variable: SYNAPSE_TEAM_ID"
-    )
+    raise RuntimeError("Missing required environment variable: SYNAPSE_TEAM_ID")
 
 
 class _AuthDenied(Exception):
