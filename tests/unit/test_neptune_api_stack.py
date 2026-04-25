@@ -173,6 +173,64 @@ def test_options_method_exists_for_cors(template):
     )
 
 
+def test_post_method_has_custom_authorizer(template):
+    template.has_resource_properties(
+        "AWS::ApiGateway::Method",
+        {
+            "HttpMethod": "POST",
+            "AuthorizationType": "CUSTOM",
+            "AuthorizerId": Match.any_value(),
+        },
+    )
+
+
+def test_get_method_has_custom_authorizer(template):
+    template.has_resource_properties(
+        "AWS::ApiGateway::Method",
+        {
+            "HttpMethod": "GET",
+            "AuthorizationType": "CUSTOM",
+            "AuthorizerId": Match.any_value(),
+        },
+    )
+
+
+def test_options_method_has_no_authorizer(template):
+    # CORS preflight must not be gated — browsers can't send auth on OPTIONS
+    template.has_resource_properties(
+        "AWS::ApiGateway::Method",
+        {"HttpMethod": "OPTIONS", "AuthorizationType": "NONE"},
+    )
+
+
+def test_token_authorizer_created(template):
+    template.has_resource_properties(
+        "AWS::ApiGateway::Authorizer",
+        {
+            "Type": "TOKEN",
+            "AuthorizerResultTtlInSeconds": 300,
+            "IdentitySource": "method.request.header.Authorization",
+        },
+    )
+
+
+def test_authorizer_lambda_has_team_id_env(template):
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "Handler": "authorizer.handler",
+            "Environment": {"Variables": {"SYNAPSE_TEAM_ID": "273957"}},
+        },
+    )
+
+
+def test_gateway_response_remaps_access_denied_to_401(template):
+    template.has_resource_properties(
+        "AWS::ApiGateway::GatewayResponse",
+        {"ResponseType": "ACCESS_DENIED", "StatusCode": "401"},
+    )
+
+
 def test_stage_has_throttling(template):
     template.has_resource_properties(
         "AWS::ApiGateway::Stage",

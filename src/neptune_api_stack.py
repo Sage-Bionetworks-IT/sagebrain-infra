@@ -236,6 +236,16 @@ class NeptuneApiStack(cdk.Stack):
             ),
         )
 
+        # Remap 403 (Deny policy from token authorizer) → 401 so clients get a
+        # consistent Unauthorized response. CORS header included so browser
+        # clients can read the status code.
+        self.api.add_gateway_response(
+            "AccessDeniedAs401",
+            type=apigw.ResponseType.ACCESS_DENIED,
+            status_code="401",
+            response_headers={"Access-Control-Allow-Origin": "'*'"},
+        )
+
         query_resource = self.api.root.add_resource("query")
         query_resource.add_method(
             "POST",

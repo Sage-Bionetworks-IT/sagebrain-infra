@@ -1,24 +1,39 @@
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
 
+log = logging.getLogger()
+log.setLevel(logging.INFO)
+
 SYNAPSE_API = "https://repo-prod.prod.sagebase.org/repo/v1"
 TEAM_ID = os.environ["SYNAPSE_TEAM_ID"]
+
+
+class _AuthDenied(Exception):
+    """Expected auth failure — token invalid or user not in team.
+    Never include the token value in the message; it ends up in CloudWatch logs."""
 
 
 def handler(event, context):
     raw_token = event.get("authorizationToken", "")
     method_arn = event["methodArn"]
 
-    token = raw_token.removeprefix("Bearer ").removeprefix("bearer ")
-
     try:
+        if not raw_token.lower().startswith("bearer "):
+            raise _AuthDenied("missing or malformed Authorization header")
+        token = raw_token[7:]  # strip "Bearer " (case-insensitive, always 7 chars)
         user_id = _validate_token(token)
         _check_team_membership(token, user_id)
+        log.info(json.dumps({"event": "auth_allow", "user_id": user_id}))
         return _policy(user_id, "Allow", method_arn)
-    except Exception:
+    except _AuthDenied as e:
+        log.warning(json.dumps({"event": "auth_deny", "reason": str(e)}))
         return _policy("anonymous", "Deny", method_arn)
+    # Transient errors (Synapse timeout / 5xx / network) propagate uncaught.
+    # API Gateway treats a Lambda error as Unauthorized (401) and does NOT
+    # cache the result, so valid users aren't locked out for the cache TTL.
 
 
 def _validate_token(token):
@@ -26,24 +41,33 @@ def _validate_token(token):
         f"{SYNAPSE_API}/userProfile",
         headers={"Authorization": f"Bearer {token}"},
     )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        data = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise _AuthDenied("invalid token") from e
+        raise  # 5xx or unexpected — let it propagate
     # Synapse returns 200 + Anonymous profile for missing/invalid tokens
     if data.get("userName") == "anonymous":
-        raise ValueError("unauthenticated")
+        raise _AuthDenied("unauthenticated")
     return str(data["ownerId"])
 
 
 def _check_team_membership(token, user_id):
-    """Raises if user is not a member of the required Synapse team."""
     req = urllib.request.Request(
         f"{SYNAPSE_API}/team/{TEAM_ID}/member/{user_id}/membershipStatus",
         headers={"Authorization": f"Bearer {token}"},
     )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        data = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise _AuthDenied("invalid token on membership check") from e
+        raise
     if not data.get("isMember"):
-        raise ValueError("not a team member")
+        raise _AuthDenied("not a team member")
 
 
 def _policy(principal_id, effect, method_arn):
@@ -66,4 +90,7 @@ def _policy(principal_id, effect, method_arn):
                 }
             ],
         },
+        # Passed to downstream Lambdas as event["requestContext"]["authorizer"].
+        # Never include the token here — context is visible in X-Ray traces.
+        "context": {"user_id": principal_id},
     }
