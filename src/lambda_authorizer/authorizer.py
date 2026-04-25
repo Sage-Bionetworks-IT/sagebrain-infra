@@ -35,13 +35,15 @@ def _validate_token(token):
 
 
 def _check_team_membership(token, user_id):
-    """Raises on non-200 (e.g. 404 = not a team member, 401 = bad token)."""
+    """Raises if user is not a member of the required Synapse team."""
     req = urllib.request.Request(
-        f"{SYNAPSE_API}/teamMember/{TEAM_ID}/{user_id}",
+        f"{SYNAPSE_API}/team/{TEAM_ID}/member/{user_id}/membershipStatus",
         headers={"Authorization": f"Bearer {token}"},
     )
     with urllib.request.urlopen(req, timeout=5) as resp:
-        resp.read()
+        data = json.loads(resp.read())
+    if not data.get("isMember"):
+        raise ValueError("not a team member")
 
 
 def _policy(principal_id, effect, method_arn):
