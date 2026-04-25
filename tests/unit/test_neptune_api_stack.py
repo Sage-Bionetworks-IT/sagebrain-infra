@@ -231,6 +231,18 @@ def test_gateway_response_remaps_access_denied_to_401(template):
     )
 
 
+def test_gateway_response_unauthorized_has_cors_header(template):
+    template.has_resource_properties(
+        "AWS::ApiGateway::GatewayResponse",
+        {
+            "ResponseType": "UNAUTHORIZED",
+            "ResponseParameters": {
+                "gatewayresponse.header.Access-Control-Allow-Origin": "'*'"
+            },
+        },
+    )
+
+
 def test_stage_has_throttling(template):
     template.has_resource_properties(
         "AWS::ApiGateway::Stage",

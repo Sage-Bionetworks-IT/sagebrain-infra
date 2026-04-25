@@ -245,6 +245,14 @@ class NeptuneApiStack(cdk.Stack):
             status_code="401",
             response_headers={"Access-Control-Allow-Origin": "'*'"},
         )
+        # Missing/empty Authorization header → API GW returns UNAUTHORIZED before
+        # running the authorizer, which by default omits CORS headers. Browser
+        # clients need the header to read the 401 status.
+        self.api.add_gateway_response(
+            "UnauthorizedWithCors",
+            type=apigw.ResponseType.UNAUTHORIZED,
+            response_headers={"Access-Control-Allow-Origin": "'*'"},
+        )
 
         query_resource = self.api.root.add_resource("query")
         query_resource.add_method(
