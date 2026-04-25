@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 import time
 from decimal import Decimal
 
@@ -21,6 +22,22 @@ QUERY_POLL_INTERVAL = 3  # seconds between polls
 QUERY_POLL_TIMEOUT = (
     70  # seconds before giving up; Neptune query worker has 75s timeout
 )
+# After stripping PREFIX declarations, the query must begin with SELECT.
+_PREFIX_STRIP_RE = re.compile(
+    r"^\s*(PREFIX\s+\S+\s*<[^>]*>\s*)*",
+    re.IGNORECASE,
+)
+
+
+def _safe_sparql(sparql: str) -> str:
+    """Reject non-SELECT queries."""
+    clean = re.sub(r"#[^\n]*", "", sparql)  # strip line comments before keyword scan
+    body = _PREFIX_STRIP_RE.sub("", clean).lstrip()
+    if not body.upper().startswith("SELECT"):
+        first = body.split()[0] if body.split() else "(empty)"
+        raise ValueError(f"Only SPARQL SELECT queries are permitted; got {first!r}.")
+    return sparql
+
 
 _dynamodb = boto3.resource("dynamodb")
 
@@ -31,7 +48,7 @@ pathways, and their relationships. The primary ontology namespace is
 
 When a user asks a question:
 1. Call get_schema to discover available classes and properties if you are unsure of the graph structure.
-   Pass a namespace_prefix to scope results to a specific ontology.
+   Pass a namespace — one of "nf-osi", "obo", "efo", or "edam".
 2. Formulate a SPARQL SELECT query to answer the question.
 3. Call the query_neptune tool with that query.
 4. Interpret the results and answer in plain language.
@@ -58,6 +75,7 @@ def query_neptune(sparql: str) -> str:
     """Execute a SPARQL SELECT query against the Neptune biomedical knowledge graph.
     Returns results as a JSON string with 'results.bindings' containing the rows.
     Use standard SPARQL 1.1 syntax with PREFIX declarations."""
+    sparql = _safe_sparql(sparql)
     _steps.append({"type": "tool_call", "tool": "query_neptune", "sparql": sparql})
     _flush_steps()
     if _current_job_id:
@@ -148,31 +166,40 @@ SELECT DISTINCT ?term ?kind ?label ?comment ?domain ?range WHERE {{
     {filter}
 }} ORDER BY ?kind ?term"""
 
+# Allowed namespace prefixes surfaced to the agent as discrete choices.
+KNOWN_NAMESPACES = {
+    "nf-osi": "http://nf-osi.github.com/terms#",
+    "obo": "http://purl.obolibrary.org/obo/",
+    "efo": "http://www.ebi.ac.uk/efo/",
+    "edam": "http://edamontology.org/",
+}
+
 
 @tool
-def get_schema(namespace_prefix: str = "") -> str:
-    """Return all classes and properties defined in the knowledge graph ontology.
+def get_schema(namespace: str) -> str:
+    """Return all classes and properties defined in the knowledge graph ontology
+    for a specific namespace.
 
     Use this to discover the graph structure (available types and predicates)
     before writing SPARQL queries.
 
     Args:
-        namespace_prefix: Optional IRI prefix to filter results to a specific
-            ontology (e.g. "http://nf-osi.github.com/terms#"). Leave empty
-            to return terms from all loaded ontologies.
+        namespace: The ontology namespace to inspect. Must be one of:
+            - "nf-osi" → http://nf-osi.github.com/terms#
+            - "obo"    → http://purl.obolibrary.org/obo/
+            - "efo"    → http://www.ebi.ac.uk/efo/
+            - "edam"   → http://edamontology.org/
 
     Returns a JSON string with 'results.bindings' rows containing term, kind,
     label, comment, domain, and range fields.
     """
-    if namespace_prefix:
-        if not namespace_prefix.startswith(("http://", "https://")):
-            raise ValueError(
-                f"namespace_prefix must be an HTTP(S) IRI, got: {namespace_prefix!r}"
-            )
-        safe_prefix = namespace_prefix.replace("\\", "").replace('"', "")
-        filter_clause = f'FILTER(STRSTARTS(STR(?term), "{safe_prefix}"))'
-    else:
-        filter_clause = ""
+    if namespace not in KNOWN_NAMESPACES:
+        raise ValueError(
+            f"Unknown namespace {namespace!r}. "
+            f"Must be one of: {', '.join(sorted(KNOWN_NAMESPACES))}."
+        )
+    prefix_iri = KNOWN_NAMESPACES[namespace]
+    filter_clause = f'FILTER(STRSTARTS(STR(?term), "{prefix_iri}"))'
     sparql = _SCHEMA_SPARQL_BASE.format(filter=filter_clause)
     return query_neptune(sparql)
 
