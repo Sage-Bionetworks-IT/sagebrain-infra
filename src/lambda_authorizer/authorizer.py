@@ -28,6 +28,9 @@ def _validate_token(token):
     )
     with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read())
+    # Synapse returns 200 + Anonymous profile for missing/invalid tokens
+    if data.get("userName") == "anonymous":
+        raise ValueError("unauthenticated")
     return str(data["ownerId"])
 
 
