@@ -8,7 +8,7 @@ from src.neptune_api_stack import NeptuneApiStack
 
 @pytest.fixture(scope="module")
 def template():
-    app = cdk.App()
+    app = cdk.App(context={"@aws-cdk/core:bundlingStacks": []})
 
     vpc_stack = cdk.Stack(app, "TestVpcStack")
     vpc = ec2.Vpc(vpc_stack, "TestVpc", max_azs=2)

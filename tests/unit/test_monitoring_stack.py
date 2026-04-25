@@ -12,7 +12,7 @@ from src.monitoring_stack import MonitoringStack
 
 @pytest.fixture(scope="module")
 def template():
-    app = cdk.App()
+    app = cdk.App(context={"@aws-cdk/core:bundlingStacks": []})
 
     # VPC (shared across helper stacks)
     vpc_stack = cdk.Stack(app, "TestVpc")
