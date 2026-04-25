@@ -10,7 +10,7 @@ from aws_cdk.assertions import Template
 from src.monitoring_stack import MonitoringStack
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def template():
     app = cdk.App()
 

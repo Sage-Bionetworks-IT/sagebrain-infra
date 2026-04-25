@@ -6,7 +6,7 @@ from aws_cdk.assertions import Match, Template
 from src.neptune_api_stack import NeptuneApiStack
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def template():
     app = cdk.App()
 
