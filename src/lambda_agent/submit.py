@@ -69,9 +69,13 @@ def handler(event, context):
         }
     )
 
+    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    auth_header = headers.get("authorization", "")
     _sqs.send_message(
         QueueUrl=SQS_QUEUE_URL,
-        MessageBody=json.dumps({"job_id": job_id, "question": question}),
+        MessageBody=json.dumps(
+            {"job_id": job_id, "question": question, "authorization": auth_header}
+        ),
     )
 
     source_ip = (

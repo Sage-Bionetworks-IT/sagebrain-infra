@@ -86,15 +86,45 @@ def _validate_synapse_token(token: str) -> str:
         if time.monotonic() < expires_at:
             return principal_id
 
-    user_id = _userinfo(token)
-    _check_team_membership(token, user_id)
+    user_id = _get_synapse_user_id(token)
+    _check_team_membership(user_id)
 
     _token_cache[token] = (user_id, time.monotonic() + _CACHE_TTL)
     return user_id
 
 
-def _userinfo(token: str) -> str:
-    """Validate token via Synapse OIDC userinfo (accepts both PATs and OAuth JWTs)."""
+def _get_synapse_user_id(token: str) -> str:
+    """Return the numeric Synapse user ID for any valid token type.
+
+    Tries /userProfile first (PATs and OAuth tokens with the 'view' scope).
+    Falls back to OIDC userinfo for OAuth tokens that only carry 'openid' scope.
+    The OIDC 'sub' claim is pairwise-opaque per client and cannot be used for
+    team membership checks — only the 'userid' claim carries the numeric ID.
+    """
+    req = urllib.request.Request(
+        f"{SYNAPSE_REPO_API}/userProfile",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        user_id = data.get("ownerId")
+        if not user_id:
+            raise _AuthDenied("unauthenticated")
+        return str(user_id)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise _AuthDenied("invalid token") from e
+        if e.code == 403:
+            # OAuth token lacks the 'view' scope required by /userProfile.
+            # Fall back to OIDC userinfo which only needs 'openid'.
+            return _userinfo_oidc(token)
+        raise
+
+
+def _userinfo_oidc(token: str) -> str:
+    """Get numeric Synapse user ID via OIDC userinfo for OAuth-only tokens.
+    Uses the 'userid' claim — 'sub' is pairwise-opaque per client."""
     req = urllib.request.Request(
         f"{SYNAPSE_AUTH_API}/oauth2/userinfo",
         headers={"Authorization": f"Bearer {token}"},
@@ -106,23 +136,33 @@ def _userinfo(token: str) -> str:
         if e.code in (401, 403):
             raise _AuthDenied("invalid token") from e
         raise
-    user_id = data.get("sub") or data.get("userid")
+    user_id = data.get("userid")
+    log.info(
+        json.dumps(
+            {
+                "event": "oidc_userinfo",
+                "has_userid": user_id is not None,
+                "has_sub": data.get("sub") is not None,
+                "sub_preview": (data.get("sub") or "")[:8] or None,
+            }
+        )
+    )
     if not user_id:
         raise _AuthDenied("unauthenticated")
     return str(user_id)
 
 
-def _check_team_membership(token: str, user_id: str) -> None:
+def _check_team_membership(user_id: str) -> None:
+    # The membershipStatus endpoint is public — no auth required.
     req = urllib.request.Request(
         f"{SYNAPSE_REPO_API}/team/{TEAM_ID}/member/{user_id}/membershipStatus",
-        headers={"Authorization": f"Bearer {token}"},
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
-            raise _AuthDenied("invalid token on membership check") from e
+        if e.code in (400, 404):
+            raise _AuthDenied("not a team member") from e
         raise
     if not data.get("isMember"):
         raise _AuthDenied("not a team member")
