@@ -16,6 +16,12 @@ if LAMBDA_DIR not in sys.path:
 
 import authorizer as auth_module  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def clear_token_cache():
+    auth_module._token_cache.clear()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -44,11 +50,13 @@ def _urlopen_mock(*responses):
 
 
 def _event(token="Bearer real-token"):
-    return {"authorizationToken": token, "methodArn": METHOD_ARN}
+    # REQUEST authorizer: credentials arrive in event["headers"]
+    return {"headers": {"authorization": token}, "methodArn": METHOD_ARN}
 
 
-MEMBER_PROFILE = {"ownerId": "999", "userName": "testuser"}
-ANON_PROFILE = {"ownerId": "273950", "userName": "anonymous"}
+# Synapse /auth/v1/oauth2/userinfo response shapes
+MEMBER_USERINFO = {"sub": "999"}
+ANON_USERINFO = {}  # no sub/userid → treated as unauthenticated
 IS_MEMBER = {"isMember": True}
 NOT_MEMBER = {"isMember": False}
 
@@ -60,7 +68,7 @@ NOT_MEMBER = {"isMember": False}
 
 @patch("authorizer.urllib.request.urlopen")
 def test_valid_member_returns_allow(mock_urlopen):
-    mock_urlopen.side_effect = _urlopen_mock(MEMBER_PROFILE, IS_MEMBER)
+    mock_urlopen.side_effect = _urlopen_mock(MEMBER_USERINFO, IS_MEMBER)
 
     result = auth_module.handler(_event(), {})
 
@@ -70,7 +78,7 @@ def test_valid_member_returns_allow(mock_urlopen):
 
 @patch("authorizer.urllib.request.urlopen")
 def test_allow_policy_wildcards_api_resource(mock_urlopen):
-    mock_urlopen.side_effect = _urlopen_mock(MEMBER_PROFILE, IS_MEMBER)
+    mock_urlopen.side_effect = _urlopen_mock(MEMBER_USERINFO, IS_MEMBER)
 
     result = auth_module.handler(_event(), {})
 
@@ -79,7 +87,7 @@ def test_allow_policy_wildcards_api_resource(mock_urlopen):
 
 @patch("authorizer.urllib.request.urlopen")
 def test_allow_context_contains_user_id(mock_urlopen):
-    mock_urlopen.side_effect = _urlopen_mock(MEMBER_PROFILE, IS_MEMBER)
+    mock_urlopen.side_effect = _urlopen_mock(MEMBER_USERINFO, IS_MEMBER)
 
     result = auth_module.handler(_event(), {})
 
@@ -93,7 +101,7 @@ def test_allow_context_contains_user_id(mock_urlopen):
 
 @patch("authorizer.urllib.request.urlopen")
 def test_anonymous_profile_returns_deny(mock_urlopen):
-    mock_urlopen.side_effect = _urlopen_mock(ANON_PROFILE)
+    mock_urlopen.side_effect = _urlopen_mock(ANON_USERINFO)
 
     result = auth_module.handler(_event(), {})
 
@@ -102,7 +110,7 @@ def test_anonymous_profile_returns_deny(mock_urlopen):
 
 @patch("authorizer.urllib.request.urlopen")
 def test_non_member_returns_deny(mock_urlopen):
-    mock_urlopen.side_effect = _urlopen_mock(MEMBER_PROFILE, NOT_MEMBER)
+    mock_urlopen.side_effect = _urlopen_mock(MEMBER_USERINFO, NOT_MEMBER)
 
     result = auth_module.handler(_event(), {})
 
@@ -137,7 +145,7 @@ def test_synapse_401_on_profile_returns_deny(mock_urlopen):
 @patch("authorizer.urllib.request.urlopen")
 def test_synapse_401_on_membership_returns_deny(mock_urlopen):
     mock_urlopen.side_effect = _urlopen_mock(
-        MEMBER_PROFILE,
+        MEMBER_USERINFO,
         urllib.error.HTTPError(
             url=None, code=401, msg="Unauthorized", hdrs=None, fp=None
         ),
@@ -184,7 +192,7 @@ def test_network_error_propagates(mock_urlopen):
 def test_token_not_logged_on_deny(mock_urlopen, caplog):
     import logging
 
-    mock_urlopen.side_effect = _urlopen_mock(ANON_PROFILE)
+    mock_urlopen.side_effect = _urlopen_mock(ANON_USERINFO)
     secret_token = "super-secret-pat-value"
 
     with caplog.at_level(logging.WARNING, logger="root"):
@@ -198,7 +206,7 @@ def test_token_not_logged_on_deny(mock_urlopen, caplog):
 def test_token_not_logged_on_allow(mock_urlopen, caplog):
     import logging
 
-    mock_urlopen.side_effect = _urlopen_mock(MEMBER_PROFILE, IS_MEMBER)
+    mock_urlopen.side_effect = _urlopen_mock(MEMBER_USERINFO, IS_MEMBER)
     secret_token = "super-secret-pat-value"
 
     with caplog.at_level(logging.INFO, logger="root"):

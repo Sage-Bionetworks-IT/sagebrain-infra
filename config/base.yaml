@@ -22,3 +22,4 @@ NEPTUNE_SAGEMAKER:
 
 AUTH:
   synapse_team_id: "273957"
+  # machine_api_key: ""  # set in env-specific config (not committed); enables x-api-key auth

@@ -203,12 +203,12 @@ def test_options_method_has_no_authorizer(template):
     )
 
 
-def test_token_authorizer_created(template):
+def test_request_authorizer_created(template):
     template.has_resource_properties(
         "AWS::ApiGateway::Authorizer",
         {
-            "Type": "TOKEN",
-            "AuthorizerResultTtlInSeconds": 300,
+            "Type": "REQUEST",
+            "AuthorizerResultTtlInSeconds": 0,
             "IdentitySource": "method.request.header.Authorization",
         },
     )
