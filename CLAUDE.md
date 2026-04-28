@@ -1,6 +1,6 @@
 # sage-brain-infra
 
-AWS CDK (Python) infrastructure for the Sage Brain project. Deploys an Amazon Neptune graph database with a public read-only API (API Gateway + Lambda), a Bedrock Strands AI agent API, and SageMaker Studio for team data loading.
+AWS CDK (Python) infrastructure for the Sage Brain project. Deploys an Amazon Neptune graph database with a Synapse-authenticated read-only API (API Gateway + Lambda), a Bedrock Strands AI agent API, and SageMaker Studio for team data loading.
 
 ## AWS Profile
 
@@ -104,11 +104,12 @@ Test with curl:
 # Submit
 JOB=$(curl -s -X POST <ApiUrl> \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <synapse-pat>" \
   -d '{"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 5"}')
 JOB_ID=$(echo $JOB | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
 
 # Poll
-curl <ApiUrl>/$JOB_ID
+curl -H "Authorization: Bearer <synapse-pat>" <ApiUrl>/$JOB_ID
 ```
 
 ## Agent API: src/lambda_agent/ (async job pattern)
@@ -155,11 +156,12 @@ Test with curl:
 # Submit
 JOB=$(curl -s -X POST <AgentApiUrl> \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <synapse-pat>" \
   -d '{"question": "What types of biological entities are in this knowledge graph?"}')
 JOB_ID=$(echo $JOB | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
 
 # Poll
-curl <AgentApiUrl>/$JOB_ID
+curl -H "Authorization: Bearer <synapse-pat>" <AgentApiUrl>/$JOB_ID
 ```
 
 ## API Gateway
@@ -170,13 +172,13 @@ curl <AgentApiUrl>/$JOB_ID
 - **Access logs**: CloudWatch log group with 1-month retention (every request, structured JSON)
 - **Execution logs**: ERROR level only
 - **CloudWatch role**: set via `cloud_watch_role=True` on `RestApi`
-- No authentication — intentionally public read-only; throttling + IAM read-only scope are the mitigations
+- **Auth**: Synapse token authorizer (Lambda) — caller must present a valid Synapse PAT/OAuth token and be a member of Synapse team 273957. Result cached 5 min per token.
 
 ### app-dev-neptune-agent (`POST /ask`, `GET /ask/{job_id}`)
 - **Throttling**: 50 RPS steady-state, 100 burst (lightweight — no Bedrock/Neptune calls inline)
 - **Timeout**: 10s integration timeout (submit/status are fast; agent runs async in worker)
 - **Access logs**: CloudWatch log group with 1-month retention
-- No authentication — same public posture as `/query`
+- **Auth**: same Synapse token authorizer as `/query`
 
 ## Query Audit Logging
 
@@ -222,7 +224,7 @@ Tests live in `tests/unit/`. Lambda handler tests import from `src/lambda/` via 
 - Neptune security group has **no broad ingress rules**. Each consumer stack (Lambda, SageMaker) adds a targeted SG-to-SG `CfnSecurityGroupIngress` rule on port 8182 to avoid cross-stack cyclic references.
 - The API Lambda uses the **read endpoint** only, scoped to read-only IAM actions.
 - The API is **POST only** — GET was removed to avoid URL length limits for complex SPARQL queries.
-- **No auth planned** — the API is intentionally public; throttling and read-only IAM are the mitigations.
+- **Synapse team-gated auth** — both APIs require a valid Synapse PAT/OAuth token and membership in team 273957. The Lambda authorizer validates via Synapse's `/userProfile` + `/team/{id}/member/{userId}/membershipStatus` endpoints; results are cached 5 min by API Gateway.
 - **S3 bulk loader** is used for all data loading — not SPARQL INSERT batches. Neptune assumes `NeptuneLoadRole` (trusted by `rds.amazonaws.com`) to read from S3.
 - **Date-partitioned S3 layout** (`YYYY-MM-DD/schema/` and `YYYY-MM-DD/data/rdf/`) preserves a historical data lake. Each load is a full reset + reload from a chosen prefix.
 - **SageMaker Studio** runs in `VpcOnly` mode so notebook kernels can reach Neptune. Requires VPC interface endpoints for `sagemaker.api` and `sts` (in NetworkStack).

@@ -60,6 +60,7 @@ Always explain what you found and how confident you are in the answer.
 # Module-level state reset per invocation.
 _steps: list = []
 _current_job_id: str = ""
+_auth_header: str = ""
 
 
 def _flush_steps():
@@ -84,11 +85,13 @@ def query_neptune(sparql: str) -> str:
             status_detail=f"Executing SPARQL query (step {len(_steps)})...",
         )
 
+    auth_headers = {"X-Source": "agent", "Authorization": _auth_header}
+
     # Submit job
     submit_response = requests.post(
         NEPTUNE_QUERY_URL,
         json={"query": sparql},
-        headers={"X-Source": "agent"},
+        headers=auth_headers,
         timeout=10,
     )
     submit_response.raise_for_status()
@@ -100,6 +103,7 @@ def query_neptune(sparql: str) -> str:
         time.sleep(QUERY_POLL_INTERVAL)
         poll = requests.get(
             f"{NEPTUNE_QUERY_STATUS_URL}/{job_id}",
+            headers=auth_headers,
             timeout=10,
         )
         poll.raise_for_status()
@@ -265,10 +269,11 @@ def _invoke_agent_with_retry(agent, question: str, job_id: str):
                 raise
 
 
-def _process_job(job_id: str, question: str):
-    global _steps, _current_job_id
+def _process_job(job_id: str, question: str, authorization: str):
+    global _steps, _current_job_id, _auth_header
     _steps = []
     _current_job_id = job_id
+    _auth_header = authorization
     start = time.time()
 
     _update_job(job_id, status="running")
@@ -333,4 +338,5 @@ def handler(event, context):
         body = json.loads(record["body"])
         job_id = body["job_id"]
         question = body["question"]
-        _process_job(job_id, question)
+        authorization = body.get("authorization", "")
+        _process_job(job_id, question, authorization)

@@ -1,9 +1,13 @@
 import json
+import logging
 import os
 import time
 import uuid
 
 import boto3
+
+log = logging.getLogger()
+log.setLevel(logging.INFO)
 
 DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 SQS_QUEUE_URL = os.environ["JOB_QUEUE_URL"]
@@ -20,6 +24,10 @@ JOB_TTL_SECONDS = 86400  # 24 hours
 
 
 def handler(event, context):
+    user_id = (
+        event.get("requestContext", {}).get("authorizer", {}).get("user_id", "unknown")
+    )
+
     try:
         body = json.loads(event.get("body") or "{}")
         question = body.get("question", "").strip()
@@ -61,9 +69,27 @@ def handler(event, context):
         }
     )
 
+    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    auth_header = headers.get("authorization", "")
     _sqs.send_message(
         QueueUrl=SQS_QUEUE_URL,
-        MessageBody=json.dumps({"job_id": job_id, "question": question}),
+        MessageBody=json.dumps(
+            {"job_id": job_id, "question": question, "authorization": auth_header}
+        ),
+    )
+
+    source_ip = (
+        event.get("requestContext", {}).get("identity", {}).get("sourceIp", "unknown")
+    )
+    log.info(
+        json.dumps(
+            {
+                "event": "question_submitted",
+                "job_id": job_id,
+                "user_id": user_id,
+                "source_ip": source_ip,
+            }
+        )
     )
 
     return {

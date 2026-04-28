@@ -1,9 +1,13 @@
 import json
+import logging
 import os
 import time
 import uuid
 
 import boto3
+
+log = logging.getLogger()
+log.setLevel(logging.INFO)
 
 DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 SQS_QUEUE_URL = os.environ["JOB_QUEUE_URL"]
@@ -20,6 +24,10 @@ JOB_TTL_SECONDS = 86400  # 24 hours
 
 
 def handler(event, context):
+    user_id = (
+        event.get("requestContext", {}).get("authorizer", {}).get("user_id", "unknown")
+    )
+
     try:
         body = json.loads(event.get("body") or "{}")
         query = body.get("query", "").strip()
@@ -77,6 +85,18 @@ def handler(event, context):
                 "user_agent": headers.get("User-Agent", "unknown"),
             }
         ),
+    )
+
+    log.info(
+        json.dumps(
+            {
+                "event": "query_submitted",
+                "job_id": job_id,
+                "user_id": user_id,
+                "source_ip": source_ip,
+                "source": headers.get("X-Source", "direct"),
+            }
+        )
     )
 
     return {

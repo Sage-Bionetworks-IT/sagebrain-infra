@@ -19,3 +19,7 @@ NEPTUNE:
 NEPTUNE_SAGEMAKER:
   enabled: true
   domain_name: "sage-brain-studio"
+
+AUTH:
+  synapse_team_id: "273957"
+  # machine_api_key: ""  # set in env-specific config (not committed); enables x-api-key auth
