@@ -39,6 +39,8 @@ class NeptuneApiStack(cdk.Stack):
         neptune_read_endpoint: str,
         neptune_cluster_resource_id: str,
         neptune_security_group: ec2.SecurityGroup,
+        synapse_team_id: str,
+        machine_api_key: str = "",
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -175,6 +177,38 @@ class NeptuneApiStack(cdk.Stack):
         )
 
         # -------------------
+        # Authorizer Lambda — no VPC (calls Synapse public API)
+        # Accepts x-api-key header (machine clients) or Authorization: Bearer
+        # (Synapse PAT or OAuth JWT).  Machine clients must also send
+        # Authorization: ApiKey so API Gateway's identity-source check passes.
+        # -------------------
+        authorizer_env = {"SYNAPSE_TEAM_ID": synapse_team_id}
+        if machine_api_key:
+            authorizer_env["MACHINE_API_KEY"] = machine_api_key
+
+        authorizer_fn = lambda_.Function(
+            self,
+            "SynapseAuthorizerFunction",
+            runtime=lambda_.Runtime.PYTHON_3_11,
+            handler="authorizer.handler",
+            code=lambda_.Code.from_asset("src/lambda_authorizer"),
+            environment=authorizer_env,
+            timeout=cdk.Duration.seconds(10),
+            memory_size=256,
+        )
+
+        # REQUEST authorizer so the Lambda can read both Authorization and
+        # x-api-key headers.  Caching is disabled here; the Lambda does its
+        # own in-process token cache (5 min TTL) for warm instances.
+        token_authorizer = apigw.RequestAuthorizer(
+            self,
+            "SynapseRequestAuthorizer",
+            handler=authorizer_fn,
+            identity_sources=[apigw.IdentitySource.header("Authorization")],
+            results_cache_ttl=cdk.Duration.seconds(0),
+        )
+
+        # -------------------
         # API Gateway
         # -------------------
         access_log_group = logs.LogGroup(
@@ -192,6 +226,12 @@ class NeptuneApiStack(cdk.Stack):
             default_cors_preflight_options=apigw.CorsOptions(
                 allow_origins=apigw.Cors.ALL_ORIGINS,
                 allow_methods=["POST", "GET", "OPTIONS"],
+                allow_headers=[
+                    "Content-Type",
+                    "Authorization",
+                    "X-Source",
+                    "x-api-key",
+                ],
             ),
             deploy_options=apigw.StageOptions(
                 access_log_destination=apigw.LogGroupLogDestination(access_log_group),
@@ -213,16 +253,36 @@ class NeptuneApiStack(cdk.Stack):
             ),
         )
 
+        # Remap 403 (Deny policy from token authorizer) → 401 so clients get a
+        # consistent Unauthorized response. CORS header included so browser
+        # clients can read the status code.
+        self.api.add_gateway_response(
+            "AccessDeniedAs401",
+            type=apigw.ResponseType.ACCESS_DENIED,
+            status_code="401",
+            response_headers={"Access-Control-Allow-Origin": "'*'"},
+        )
+        # Missing/empty Authorization header → API GW returns UNAUTHORIZED before
+        # running the authorizer, which by default omits CORS headers. Browser
+        # clients need the header to read the 401 status.
+        self.api.add_gateway_response(
+            "UnauthorizedWithCors",
+            type=apigw.ResponseType.UNAUTHORIZED,
+            response_headers={"Access-Control-Allow-Origin": "'*'"},
+        )
+
         query_resource = self.api.root.add_resource("query")
         query_resource.add_method(
             "POST",
             apigw.LambdaIntegration(self.submit_fn, timeout=cdk.Duration.seconds(10)),
+            authorizer=token_authorizer,
         )
 
         query_job_resource = query_resource.add_resource("{job_id}")
         query_job_resource.add_method(
             "GET",
             apigw.LambdaIntegration(self.status_fn, timeout=cdk.Duration.seconds(10)),
+            authorizer=token_authorizer,
         )
 
         # -------------------

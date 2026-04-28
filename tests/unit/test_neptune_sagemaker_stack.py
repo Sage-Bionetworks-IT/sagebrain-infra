@@ -9,7 +9,7 @@ from src.neptune_sagemaker_stack import NeptuneSageMakerStack
 CLUSTER_RESOURCE_ID = "cluster-ABCDEFGHIJKLMNOP"
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def template():
     app = cdk.App()
 

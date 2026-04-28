@@ -6,9 +6,9 @@ from aws_cdk.assertions import Match, Template
 from src.neptune_api_stack import NeptuneApiStack
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def template():
-    app = cdk.App()
+    app = cdk.App(context={"@aws-cdk/core:bundlingStacks": []})
 
     vpc_stack = cdk.Stack(app, "TestVpcStack")
     vpc = ec2.Vpc(vpc_stack, "TestVpc", max_azs=2)
@@ -25,6 +25,7 @@ def template():
         neptune_read_endpoint="test-neptune.cluster-ro.us-east-1.neptune.amazonaws.com",
         neptune_cluster_resource_id="cluster-ABCDEFGHIJKLMNOP",
         neptune_security_group=neptune_sg,
+        synapse_team_id="273957",
     )
     return Template.from_stack(stack)
 
@@ -169,6 +170,76 @@ def test_options_method_exists_for_cors(template):
     template.has_resource_properties(
         "AWS::ApiGateway::Method",
         {"HttpMethod": "OPTIONS"},
+    )
+
+
+def test_post_method_has_custom_authorizer(template):
+    template.has_resource_properties(
+        "AWS::ApiGateway::Method",
+        {
+            "HttpMethod": "POST",
+            "AuthorizationType": "CUSTOM",
+            "AuthorizerId": Match.any_value(),
+        },
+    )
+
+
+def test_get_method_has_custom_authorizer(template):
+    template.has_resource_properties(
+        "AWS::ApiGateway::Method",
+        {
+            "HttpMethod": "GET",
+            "AuthorizationType": "CUSTOM",
+            "AuthorizerId": Match.any_value(),
+        },
+    )
+
+
+def test_options_method_has_no_authorizer(template):
+    # CORS preflight must not be gated — browsers can't send auth on OPTIONS
+    template.has_resource_properties(
+        "AWS::ApiGateway::Method",
+        {"HttpMethod": "OPTIONS", "AuthorizationType": "NONE"},
+    )
+
+
+def test_request_authorizer_created(template):
+    template.has_resource_properties(
+        "AWS::ApiGateway::Authorizer",
+        {
+            "Type": "REQUEST",
+            "AuthorizerResultTtlInSeconds": 0,
+            "IdentitySource": "method.request.header.Authorization",
+        },
+    )
+
+
+def test_authorizer_lambda_has_team_id_env(template):
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "Handler": "authorizer.handler",
+            "Environment": {"Variables": {"SYNAPSE_TEAM_ID": "273957"}},
+        },
+    )
+
+
+def test_gateway_response_remaps_access_denied_to_401(template):
+    template.has_resource_properties(
+        "AWS::ApiGateway::GatewayResponse",
+        {"ResponseType": "ACCESS_DENIED", "StatusCode": "401"},
+    )
+
+
+def test_gateway_response_unauthorized_has_cors_header(template):
+    template.has_resource_properties(
+        "AWS::ApiGateway::GatewayResponse",
+        {
+            "ResponseType": "UNAUTHORIZED",
+            "ResponseParameters": {
+                "gatewayresponse.header.Access-Control-Allow-Origin": "'*'"
+            },
+        },
     )
 
 
