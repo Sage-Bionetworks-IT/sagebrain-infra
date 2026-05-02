@@ -1,14 +1,16 @@
-VPC_CIDR: 10.254.174.0/24
+VPC_CIDR: 10.254.172.0/24
 
 # Optional
 # CERTIFICATE_ARN: >-
-#  arn:aws:acm:us-east-1:XXXXXXXXX:certificate/69b3ba97-b382-4648-8f94-a250b77b4994
+#   arn:aws:acm:us-east-1:XXXXXXXXX:certificate/e8093404-7db1-4042-90d0-01eb5bde1ffc
 
 NEPTUNE:
-  instance_count: 2  # Multi-AZ for production
-  instance_class: "db.r5.large"
-  deletion_protection: true
-  backup_retention_days: 30  # Longer retention for production
+  instance_count: 1
+  instance_class: "db.r6g.large"
+  deletion_protection: false  # Allow easier cleanup in dev
 
 NEPTUNE_SAGEMAKER:
-  enabled: false  # Data loading in prod is done via GitHub Actions, not SageMaker
+  user_profiles:
+    - thomas-yu  # SageMaker profile names: alphanumeric + hyphens only, no dots
+    - avu
+    - obanks

@@ -1,3 +1,5 @@
+import os
+
 import aws_cdk as cdk
 
 from src.neptune_agent_stack import NeptuneAgentStack
@@ -14,8 +16,11 @@ config = load_context_config(env_name=env_name)
 STACK_NAME_PREFIX = f"app-{env_name}"
 TAGS = config["TAGS"]
 
-# Define the deployment environment
-env = cdk.Environment(account="620117233256", region="us-east-1")  # sagebrain account
+# Resolved from active credentials (OIDC in CI, AWS profile locally)
+env = cdk.Environment(
+    account=os.environ.get("CDK_DEFAULT_ACCOUNT"),
+    region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),
+)
 
 # recursively apply tags to all stack resources
 if TAGS:
