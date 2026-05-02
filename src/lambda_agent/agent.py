@@ -31,7 +31,9 @@ _PREFIX_STRIP_RE = re.compile(
 
 def _safe_sparql(sparql: str) -> str:
     """Reject non-SELECT queries."""
-    clean = re.sub(r"#[^\n]*", "", sparql)  # strip line comments before keyword scan
+    clean = re.sub(
+        r"(?m)^\s*#[^\n]*\n?", "", sparql
+    )  # strip full-line comments only (# inside IRIs must survive)
     body = _PREFIX_STRIP_RE.sub("", clean).lstrip()
     if not body.upper().startswith("SELECT"):
         first = body.split()[0] if body.split() else "(empty)"
