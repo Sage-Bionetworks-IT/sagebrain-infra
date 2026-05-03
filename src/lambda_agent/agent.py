@@ -24,7 +24,7 @@ QUERY_POLL_TIMEOUT = (
 )
 # After stripping PREFIX declarations, the query must begin with SELECT.
 _PREFIX_STRIP_RE = re.compile(
-    r"^\s*(PREFIX\s+\S+\s*<[^>]*>\s*)*",
+    r"^\s*(PREFIX\s+\S+\s*<[^>]*>\s*(#[^\n]*)?\s*)*",
     re.IGNORECASE,
 )
 
