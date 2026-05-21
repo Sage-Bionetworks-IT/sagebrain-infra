@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 import time
 from decimal import Decimal
 
@@ -21,18 +22,39 @@ QUERY_POLL_INTERVAL = 3  # seconds between polls
 QUERY_POLL_TIMEOUT = (
     70  # seconds before giving up; Neptune query worker has 75s timeout
 )
+# After stripping PREFIX declarations, the query must begin with SELECT.
+_PREFIX_STRIP_RE = re.compile(
+    r"^\s*(PREFIX\s+\S+\s*<[^>]*>\s*(#[^\n]*)?\s*)*",
+    re.IGNORECASE,
+)
+
+
+def _safe_sparql(sparql: str) -> str:
+    """Reject non-SELECT queries."""
+    clean = re.sub(
+        r"(?m)^\s*#[^\n]*\n?", "", sparql
+    )  # strip full-line comments only (# inside IRIs must survive)
+    body = _PREFIX_STRIP_RE.sub("", clean).lstrip()
+    if not body.upper().startswith("SELECT"):
+        first = body.split()[0] if body.split() else "(empty)"
+        raise ValueError(f"Only SPARQL SELECT queries are permitted; got {first!r}.")
+    return sparql
+
 
 _dynamodb = boto3.resource("dynamodb")
 
 SYSTEM_PROMPT = """You are a biomedical knowledge graph assistant for the Sage Brain project.
 You have access to a Neptune RDF graph containing biomedical data about genes, diseases,
-pathways, and their relationships, described using standard ontologies (e.g. RDF/OWL, SPARQL).
+pathways, and their relationships. The primary ontology namespace is
+<http://nf-osi.github.com/terms#> (prefix: nf:).
 
 When a user asks a question:
-1. Formulate a SPARQL SELECT query to answer it.
-2. Call the query_neptune tool with that query.
-3. Interpret the results and answer in plain language.
-4. If the first query returns no results or needs refinement, try an alternative query.
+1. Call get_schema to discover available classes and properties if you are unsure of the graph structure.
+   Pass a namespace — one of "nf-osi", "obo", "efo", or "edam".
+2. Formulate a SPARQL SELECT query to answer the question.
+3. Call the query_neptune tool with that query.
+4. Interpret the results and answer in plain language.
+5. If the first query returns no results or needs refinement, try an alternative query.
 
 Always explain what you found and how confident you are in the answer.
 """
@@ -56,6 +78,7 @@ def query_neptune(sparql: str) -> str:
     """Execute a SPARQL SELECT query against the Neptune biomedical knowledge graph.
     Returns results as a JSON string with 'results.bindings' containing the rows.
     Use standard SPARQL 1.1 syntax with PREFIX declarations."""
+    sparql = _safe_sparql(sparql)
     _steps.append({"type": "tool_call", "tool": "query_neptune", "sparql": sparql})
     _flush_steps()
     if _current_job_id:
@@ -117,6 +140,74 @@ def query_neptune(sparql: str) -> str:
     )
     _flush_steps()
     raise TimeoutError(timeout_msg)
+
+
+_SCHEMA_SPARQL_BASE = """\
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT DISTINCT ?term ?kind ?label ?comment ?domain ?range WHERE {{
+    {{
+        ?term a owl:Class .
+        BIND("Class" AS ?kind)
+    }} UNION {{
+        ?term a rdfs:Class .
+        BIND("Class" AS ?kind)
+    }} UNION {{
+        ?term a owl:ObjectProperty .
+        BIND("ObjectProperty" AS ?kind)
+    }} UNION {{
+        ?term a owl:DatatypeProperty .
+        BIND("DatatypeProperty" AS ?kind)
+    }} UNION {{
+        ?term a rdf:Property .
+        BIND("Property" AS ?kind)
+    }}
+    FILTER(isIRI(?term))
+    OPTIONAL {{ ?term rdfs:label ?label }}
+    OPTIONAL {{ ?term rdfs:comment ?comment }}
+    OPTIONAL {{ ?term rdfs:domain ?domain }}
+    OPTIONAL {{ ?term rdfs:range ?range }}
+    {filter}
+}} ORDER BY ?kind ?term"""
+
+# Allowed namespace prefixes surfaced to the agent as discrete choices.
+KNOWN_NAMESPACES = {
+    "nf-osi": "http://nf-osi.github.com/terms#",
+    "obo": "http://purl.obolibrary.org/obo/",
+    "efo": "http://www.ebi.ac.uk/efo/",
+    "edam": "http://edamontology.org/",
+}
+
+
+@tool
+def get_schema(namespace: str) -> str:
+    """Return all classes and properties defined in the knowledge graph ontology
+    for a specific namespace.
+
+    Use this to discover the graph structure (available types and predicates)
+    before writing SPARQL queries.
+
+    Args:
+        namespace: The ontology namespace to inspect. Must be one of:
+            - "nf-osi" → http://nf-osi.github.com/terms#
+            - "obo"    → http://purl.obolibrary.org/obo/
+            - "efo"    → http://www.ebi.ac.uk/efo/
+            - "edam"   → http://edamontology.org/
+
+    Returns a JSON string with 'results.bindings' rows containing term, kind,
+    label, comment, domain, and range fields.
+    """
+    if namespace not in KNOWN_NAMESPACES:
+        raise ValueError(
+            f"Unknown namespace {namespace!r}. "
+            f"Must be one of: {', '.join(sorted(KNOWN_NAMESPACES))}."
+        )
+    prefix_iri = KNOWN_NAMESPACES[namespace]
+    filter_clause = f'FILTER(STRSTARTS(STR(?term), "{prefix_iri}"))'
+    sparql = _SCHEMA_SPARQL_BASE.format(filter=filter_clause)
+    return query_neptune(sparql)
 
 
 def _update_job(job_id: str, **fields):
@@ -193,7 +284,7 @@ def _process_job(job_id: str, question: str, authorization: str):
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
-        tools=[query_neptune],
+        tools=[query_neptune, get_schema],
     )
 
     try:
