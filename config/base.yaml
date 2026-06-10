@@ -20,6 +20,12 @@ NEPTUNE_SAGEMAKER:
   enabled: true
   domain_name: "sage-brain-studio"
 
+# Graph Explorer visualization UI (open-source). Disabled by default; enable
+# per-env and list the source IP/CIDRs allowed to reach the ALB.
+NEPTUNE_VIZ:
+  enabled: false
+  allowed_cidrs: []
+
 AUTH:
   synapse_team_id: "273957"
   # machine_api_key: ""  # set in env-specific config (not committed); enables x-api-key auth
