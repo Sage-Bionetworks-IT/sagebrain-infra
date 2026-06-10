@@ -173,7 +173,7 @@ Open-source [Graph Explorer](https://github.com/aws/graph-explorer) for visually
 - Single **Fargate** task running `public.ecr.aws/neptune/graph-explorer:latest` (X86_64) in **private subnets**, no public IP.
 - The task signs Neptune requests with **SigV4** (`IAM=true`, `SERVICE_TYPE=neptune-db`) using a least-privilege task role — read-only `neptune-db` actions only (same set as the query worker). `GRAPH_TYPE=sparql` (RDF triplestore). The proxy is locked to our cluster via `PROXY_SERVER_ALLOWED_DB_ORIGINS`.
 - Fronted by an **internet-facing ALB on plain HTTP (port 80)** whose security group admits **only Sage's network egress IP** (`52.44.61.21/32`, set in `config/*.yaml` as `NEPTUNE_VIZ.allowed_cidrs`). Graph Explorer has no auth of its own — **the SG IP allow-list IS the access control**. Reach it over the Sage VPN.
-- Gated by `NEPTUNE_VIZ.enabled` (default `false`; enabled in `dev`).
+- Gated by `NEPTUNE_VIZ.enabled` (default `false`; enable per-environment in `config/<env>.yaml`).
 
 ### Access
 ```bash
