@@ -26,7 +26,7 @@ def template():
         vpc=vpc,
         neptune_security_group=neptune_sg,
         neptune_cluster_resource_id="cluster-ABCDEFGHIJKLMNOP",
-        neptune_endpoint="test-neptune.cluster.us-east-1.neptune.amazonaws.com",
+        neptune_endpoint="test-neptune.cluster-ro.us-east-1.neptune.amazonaws.com",
         viz_config={"enabled": True, "allowed_cidrs": [ALLOWED_CIDR]},
     )
     return Template.from_stack(stack)

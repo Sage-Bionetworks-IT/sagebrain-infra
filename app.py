@@ -65,7 +65,9 @@ if config.get("NEPTUNE_VIZ", {}).get("enabled", False):
         vpc=network_stack.vpc,
         neptune_security_group=neptune_stack.neptune_security_group,
         neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
-        neptune_endpoint=neptune_stack.neptune_cluster.attr_endpoint,
+        # Reader endpoint: viz is read-only, so route to read replicas and keep
+        # load off the writer/cluster endpoint.
+        neptune_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
         viz_config=config["NEPTUNE_VIZ"],
         env=env,
     )
