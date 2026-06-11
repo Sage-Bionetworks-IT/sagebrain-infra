@@ -239,6 +239,53 @@ def test_service_does_not_assign_public_ip(template):
     )
 
 
+def test_proxy_locked_to_our_cluster_origin(template):
+    # The proxy must only forward to our cluster — both the connection URL and
+    # the allow-list point at the configured Neptune endpoint on 8182.
+    expected_origin = (
+        "https://test-neptune.cluster-ro.us-east-1.neptune.amazonaws.com:8182"
+    )
+    template.has_resource_properties(
+        "AWS::ECS::TaskDefinition",
+        {
+            "ContainerDefinitions": Match.array_with(
+                [
+                    Match.object_like(
+                        {
+                            "Environment": Match.array_with(
+                                [
+                                    {
+                                        "Name": "GRAPH_CONNECTION_URL",
+                                        "Value": expected_origin,
+                                    },
+                                    {
+                                        "Name": "PROXY_SERVER_ALLOWED_DB_ORIGINS",
+                                        "Value": expected_origin,
+                                    },
+                                ]
+                            )
+                        }
+                    )
+                ]
+            )
+        },
+    )
+
+
+def test_target_group_health_check_on_explorer_path(template):
+    template.has_resource_properties(
+        "AWS::ElasticLoadBalancingV2::TargetGroup",
+        {"HealthCheckPath": "/explorer/", "Matcher": {"HttpCode": "200"}},
+    )
+
+
+def test_log_group_has_one_month_retention(template):
+    template.has_resource_properties(
+        "AWS::Logs::LogGroup",
+        {"RetentionInDays": 30},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Outputs
 # ---------------------------------------------------------------------------
@@ -246,3 +293,8 @@ def test_service_does_not_assign_public_ip(template):
 
 def test_graph_explorer_url_output_exists(template):
     template.has_output("GraphExplorerUrl", {})
+
+
+def test_cluster_and_service_name_outputs_exist(template):
+    template.has_output("VizClusterName", {})
+    template.has_output("VizServiceName", {})
