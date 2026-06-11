@@ -7,6 +7,7 @@ from src.network_stack import NetworkStack
 from src.neptune_api_stack import NeptuneApiStack
 from src.neptune_sagemaker_stack import NeptuneSageMakerStack
 from src.neptune_stack import NeptuneStack
+from src.neptune_viz_stack import NeptuneVizStack
 from src.monitoring_stack import MonitoringStack
 from src.utils import load_context_config
 
@@ -53,6 +54,21 @@ if config["NEPTUNE_SAGEMAKER"].get("enabled", True):
         neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
         sagemaker_config=config["NEPTUNE_SAGEMAKER"],
         data_bucket=neptune_stack.data_bucket,
+        env=env,
+    )
+
+# Graph Explorer visualization UI (skipped in envs where enabled=false)
+if config.get("NEPTUNE_VIZ", {}).get("enabled", False):
+    NeptuneVizStack(
+        scope=cdk_app,
+        construct_id=f"{STACK_NAME_PREFIX}-neptune-viz",
+        vpc=network_stack.vpc,
+        neptune_security_group=neptune_stack.neptune_security_group,
+        neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
+        # Reader endpoint: viz is read-only, so route to read replicas and keep
+        # load off the writer/cluster endpoint.
+        neptune_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
+        viz_config=config["NEPTUNE_VIZ"],
         env=env,
     )
 
