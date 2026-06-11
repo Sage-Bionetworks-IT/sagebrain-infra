@@ -14,3 +14,10 @@ NEPTUNE_SAGEMAKER:
     - thomas-yu  # SageMaker profile names: alphanumeric + hyphens only, no dots
     - avu
     - obanks
+
+NEPTUNE_VIZ:
+  enabled: true
+  allowed_cidrs:
+    - 52.44.61.21/32  # Sage network egress IP (VPN / office) — only source allowed to reach the UI
+  # Pin a known-good image for reproducible deploys (defaults to :latest).
+  # image: "public.ecr.aws/neptune/graph-explorer@sha256:<digest>"

@@ -19,6 +19,7 @@ aws --profile sagebrain sso login
 | NeptuneSageMakerStack | `app-dev-neptune-sagemaker` | SageMaker Studio for team data loading |
 | NeptuneApiStack | `app-dev-neptune-api` | API Gateway + Lambda read-only SPARQL API |
 | NeptuneAgentStack | `app-dev-neptune-agent` | Bedrock Strands AI agent — async NL-to-SPARQL via `POST /ask` + `GET /ask/{job_id}` |
+| NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only) |
 
 ## S3 Data Bucket
 
@@ -163,6 +164,31 @@ JOB_ID=$(echo $JOB | python3 -c "import sys,json; print(json.load(sys.stdin)['jo
 # Poll
 curl -H "Authorization: Bearer <synapse-pat>" <AgentApiUrl>/$JOB_ID
 ```
+
+## Graph Explorer Visualization: src/neptune_viz_stack.py
+
+Open-source [Graph Explorer](https://github.com/aws/graph-explorer) for visually browsing the knowledge graph — for non-technical users.
+
+### Architecture
+- Single **Fargate** task running `public.ecr.aws/neptune/graph-explorer:latest` (X86_64) in **private subnets**, no public IP.
+- The task signs Neptune requests with **SigV4** (`IAM=true`, `SERVICE_TYPE=neptune-db`) using a least-privilege task role — read-only `neptune-db` actions only (same set as the query worker). `GRAPH_TYPE=sparql` (RDF triplestore). The proxy is locked to our cluster via `PROXY_SERVER_ALLOWED_DB_ORIGINS`.
+- Fronted by an **internet-facing ALB on plain HTTP (port 80)** whose security group admits **only Sage's network egress IP** (`52.44.61.21/32`, set in `config/*.yaml` as `NEPTUNE_VIZ.allowed_cidrs`). Graph Explorer has no auth of its own — **the SG IP allow-list IS the access control**. Reach it over the Sage VPN.
+- Gated by `NEPTUNE_VIZ.enabled` (default `false`; enable per-environment in `config/<env>.yaml`).
+
+### Access
+```bash
+# Get the URL (only resolves/loads from the Sage VPN)
+aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune-viz \
+  --query "Stacks[0].Outputs[?OutputKey=='GraphExplorerUrl'].OutputValue" --output text
+# → http://<alb-dns>/explorer
+```
+A default connection to Neptune is pre-configured, so the graph loads on first open. To grant more users, add their egress CIDR to `NEPTUNE_VIZ.allowed_cidrs` and redeploy.
+
+### Caveats
+- Queries go **directly** to Neptune via SigV4 — they do **not** pass through the audit-logged `/query` chokepoint, so Graph Explorer activity is not captured in the SPARQL audit log.
+- HTTP only (no TLS): traffic between the VPN client and the ALB is unencrypted within the Sage network. To add TLS, supply an ACM cert + DNS and switch the listener to HTTPS.
+- Defaults to the `latest` image tag — set `NEPTUNE_VIZ.image` in `config/<env>.yaml` to a pinned tag or `@sha256:<digest>` for reproducible deploys.
 
 ## API Gateway
 
