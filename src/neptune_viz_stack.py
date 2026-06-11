@@ -38,8 +38,11 @@ class NeptuneVizStack(cdk.Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         allowed_cidrs = viz_config.get("allowed_cidrs", [])
+        if not allowed_cidrs:
+            raise ValueError(
+                "NEPTUNE_VIZ.allowed_cidrs must be non-empty when NEPTUNE_VIZ.enabled is true"
+            )
         graph_connection_url = f"https://{neptune_endpoint}:8182"
-
         # -------------------
         # Security groups
         # -------------------
