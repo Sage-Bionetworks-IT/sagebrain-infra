@@ -188,7 +188,7 @@ A default connection to Neptune is pre-configured, so the graph loads on first o
 ### Caveats
 - Queries go **directly** to Neptune via SigV4 — they do **not** pass through the audit-logged `/query` chokepoint, so Graph Explorer activity is not captured in the SPARQL audit log.
 - HTTP only (no TLS): traffic between the VPN client and the ALB is unencrypted within the Sage network. To add TLS, supply an ACM cert + DNS and switch the listener to HTTPS.
-- `latest` image tag — pin a digest if you need reproducible deploys.
+- Defaults to the `latest` image tag — set `NEPTUNE_VIZ.image` in `config/<env>.yaml` to a pinned tag or `@sha256:<digest>` for reproducible deploys.
 
 ## API Gateway
 

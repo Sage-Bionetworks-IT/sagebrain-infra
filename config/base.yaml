@@ -25,6 +25,9 @@ NEPTUNE_SAGEMAKER:
 NEPTUNE_VIZ:
   enabled: false
   allowed_cidrs: []
+  # Graph Explorer image. Pin a tag or digest per-env for reproducible deploys,
+  # e.g. "public.ecr.aws/neptune/graph-explorer@sha256:<digest>".
+  image: "public.ecr.aws/neptune/graph-explorer:latest"
 
 AUTH:
   synapse_team_id: "273957"

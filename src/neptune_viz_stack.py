@@ -127,8 +127,11 @@ class NeptuneVizStack(cdk.Stack):
 
         container = task_definition.add_container(
             "graph-explorer",
+            # Configurable so environments can pin a known-good tag or digest
+            # for reproducible deploys (e.g. `...graph-explorer@sha256:...`).
+            # Defaults to `:latest`.
             image=ecs.ContainerImage.from_registry(
-                "public.ecr.aws/neptune/graph-explorer:latest"
+                viz_config.get("image", "public.ecr.aws/neptune/graph-explorer:latest")
             ),
             logging=ecs.LogDriver.aws_logs(
                 stream_prefix="graph-explorer",

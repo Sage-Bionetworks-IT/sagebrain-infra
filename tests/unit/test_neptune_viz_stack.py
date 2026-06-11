@@ -185,7 +185,8 @@ def test_task_definition_is_x86_64_fargate(template):
     )
 
 
-def test_container_uses_graph_explorer_image(template):
+def test_container_image_defaults_to_latest(template):
+    # No `image` in viz_config → defaults to the official :latest tag.
     template.has_resource_properties(
         "AWS::ECS::TaskDefinition",
         {
@@ -195,6 +196,39 @@ def test_container_uses_graph_explorer_image(template):
                         {"Image": "public.ecr.aws/neptune/graph-explorer:latest"}
                     )
                 ]
+            )
+        },
+    )
+
+
+def test_container_image_is_configurable_for_reproducible_deploys():
+    # A pinned digest in viz_config["image"] flows through to the container,
+    # so environments can lock a known-good version.
+    app = cdk.App(context={"@aws-cdk/core:bundlingStacks": []})
+    vpc_stack = cdk.Stack(app, "PinVpcStack")
+    vpc = ec2.Vpc(vpc_stack, "PinVpc", max_azs=2)
+    sg_stack = cdk.Stack(app, "PinSGStack")
+    neptune_sg = ec2.SecurityGroup(sg_stack, "PinNeptuneSG", vpc=vpc)
+    pinned = "public.ecr.aws/neptune/graph-explorer@sha256:" + "a" * 64
+
+    stack = NeptuneVizStack(
+        app,
+        "PinNeptuneVizStack",
+        vpc=vpc,
+        neptune_security_group=neptune_sg,
+        neptune_cluster_resource_id="cluster-ABCDEFGHIJKLMNOP",
+        neptune_endpoint="test-neptune.cluster-ro.us-east-1.neptune.amazonaws.com",
+        viz_config={
+            "enabled": True,
+            "allowed_cidrs": [ALLOWED_CIDR],
+            "image": pinned,
+        },
+    )
+    Template.from_stack(stack).has_resource_properties(
+        "AWS::ECS::TaskDefinition",
+        {
+            "ContainerDefinitions": Match.array_with(
+                [Match.object_like({"Image": pinned})]
             )
         },
     )
