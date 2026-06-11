@@ -51,7 +51,7 @@ class NeptuneVizStack(cdk.Stack):
             self,
             "VizAlbSecurityGroup",
             vpc=vpc,
-            description="Graph Explorer ALB — Sage VPN/egress access only",
+            description="Graph Explorer ALB for Sage VPN/egress access only",
             allow_all_outbound=True,
         )
         for cidr in allowed_cidrs:
@@ -94,7 +94,7 @@ class NeptuneVizStack(cdk.Stack):
             self,
             "VizTaskRole",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
-            description="Graph Explorer task role — read-only Neptune access",
+            description="Graph Explorer task role for read-only Neptune access",
         )
         task_role.add_to_policy(
             iam.PolicyStatement(
