@@ -53,6 +53,9 @@ class NeptuneStack(cdk.Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
             removal_policy=cdk.RemovalPolicy.RETAIN,
+            # Emit "Object Created" events to EventBridge so the ingestion
+            # pipeline (NeptunePipelineStack) can trigger on manifest.ttl uploads.
+            event_bridge_enabled=True,
         )
 
         # Any principal authenticated to this AWS account can read/write the bucket.

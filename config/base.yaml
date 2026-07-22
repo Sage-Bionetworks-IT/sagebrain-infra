@@ -20,6 +20,14 @@ NEPTUNE_SAGEMAKER:
   enabled: true
   domain_name: "sage-brain-studio"
 
+# Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
+# uploads and bulk-loads each snapshot into its own named graph.
+NEPTUNE_PIPELINE:
+  enabled: true
+  graph_uri_template: "urn:sagebrain:{portal}:{date}"
+  parallelism: "HIGH"
+  wait_seconds: 30
+
 # Graph Explorer visualization UI (open-source). Disabled by default; enable
 # per-env and list the source IP/CIDRs allowed to reach the ALB.
 NEPTUNE_VIZ:

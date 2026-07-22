@@ -10,6 +10,7 @@ AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune g
 - **SPARQL API**: Read-only API Gateway + Lambda endpoint for querying Neptune over HTTPS (Synapse team-gated)
 - **AI Agent API**: Natural-language query interface powered by Bedrock Strands (Claude Sonnet 4.6) — converts plain-language questions to SPARQL and returns answers with full reasoning trace
 - **SageMaker Studio**: Team JupyterLab environment for loading and querying the knowledge graph
+- **Automated Ingestion Pipeline**: Append-only, event-driven loader — an S3 `manifest.ttl` upload triggers EventBridge → Step Functions → Neptune bulk load, one named graph per dated snapshot
 - **Query Audit Logging**: All SPARQL queries logged to CloudWatch with source tracking (direct vs. agent)
 
 ## Prerequisites
