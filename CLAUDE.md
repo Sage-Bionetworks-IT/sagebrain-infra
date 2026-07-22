@@ -20,6 +20,7 @@ aws --profile sagebrain sso login
 | NeptuneApiStack | `app-dev-neptune-api` | API Gateway + Lambda read-only SPARQL API |
 | NeptuneAgentStack | `app-dev-neptune-agent` | Bedrock Strands AI agent — async NL-to-SPARQL via `POST /ask` + `GET /ask/{job_id}` |
 | NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only) |
+| NeptunePipelineStack | `app-dev-neptune-pipeline` | Append-only ingestion — S3 `manifest.ttl` → EventBridge → Step Functions → Neptune bulk loader (one named graph per snapshot) |
 
 ## S3 Data Bucket
 
@@ -55,6 +56,74 @@ export NEPTUNE_LOAD_ROLE=$(aws --profile sagebrain cloudformation describe-stack
 
 python tools/load_kg.py --prefix 2026-02-20 --stats
 ```
+
+## Automated Ingestion Pipeline: src/neptune_pipeline_stack.py
+
+`tools/load_kg.py` is the manual path. The **append-only pipeline** is the automated
+path: a transform pipeline deposits a dated snapshot per portal in S3 and writes
+`manifest.ttl` **last** as the completion sentinel; its arrival drives a Neptune bulk load
+with no human in the loop.
+
+### S3 layout it expects
+```
+s3://<NeptuneDataBucketName>/
+  nf/YYYY-MM-DD/
+    <anything>.ttl        ← full Turtle snapshot files (any names)
+    manifest.ttl          ← written LAST; its ObjectCreated event triggers the load
+```
+Generic across portals — any `{portal}/YYYY-MM-DD/manifest.ttl` works. `nf` is the first portal.
+
+### Flow
+```
+S3 "Object Created" (EventBridge) → EventBridge Rule (key suffix "manifest.ttl")
+  → Step Functions:  StartLoad → Wait 30s → CheckLoad → Choice
+                                                 ├─ IN_PROGRESS → Wait (loop)
+                                                 ├─ LOAD_COMPLETED → RecordSuccess → Succeed
+                                                 └─ failed → RecordFailure → Fail → Alarm
+```
+- **Step Functions** (not a polling Lambda) owns the Wait/Check loop, so very large loads
+  aren't bounded by the 15-min Lambda timeout. Each `loader.py` invocation is one fast
+  SigV4-signed HTTP call to Neptune (`start` / `check` / `record` via the `action` field).
+- **One named graph per snapshot** — each folder loads into `urn:sagebrain:{portal}:{date}`
+  (via the bulk loader's `parserConfiguration.namedGraphUri`), so every historical version
+  stays isolated. `manifest.ttl` is loaded too — its provenance triples become queryable lineage.
+- Loads target the **writer/cluster endpoint** (bulk loads can't go to the reader).
+  `failOnError=TRUE` (append-only surfaces bad data); `queueRequest=TRUE` (queue behind an
+  in-flight load).
+- **Idempotent** — the tracking table stores each snapshot's manifest etag. A duplicate S3
+  event (same etag) is skipped; a genuine re-publish of the same date (new etag) reloads.
+- **DynamoDB tracking table** (`app-dev-neptune-pipeline-loads`, PK `portal` / SK `snapshot`)
+  is the append-only lineage/audit trail — no TTL. A descending query gives the latest
+  snapshot graph per portal. Every load emits a structured `{"event":"kg_load", ...}` log line.
+
+### Sample manifest.ttl
+See [docs/manifest.ttl.example](docs/manifest.ttl.example). The pipeline does **not** parse the
+manifest for control flow (it derives everything from the key and loads the whole folder) — the
+manifest is the trigger + provenance. A future Strategy-A delta mode could parse it for explicit
+insert/delete file lists.
+
+### Querying a snapshot
+Neptune's SPARQL **default graph is the union of all named graphs**, so `SELECT ?s ?p ?o`
+returns every snapshot merged. To target one version, scope to its graph:
+```sparql
+SELECT (COUNT(*) AS ?n) WHERE { GRAPH <urn:sagebrain:nf:2026-04-25> { ?s ?p ?o } }
+```
+**Not yet implemented:** query API / agent defaulting to "latest snapshot per portal" — that
+query-side change is the required follow-up for append-only.
+
+### Deploy / operate
+```bash
+# Deploy (redeploys app-dev-neptune too, for EventBridge on the bucket)
+cdk deploy app-dev-neptune app-dev-neptune-pipeline --profile sagebrain --require-approval never
+
+# Watch executions
+aws --profile sagebrain stepfunctions list-executions \
+  --state-machine-arn $(aws --profile sagebrain cloudformation describe-stacks \
+    --stack-name app-dev-neptune-pipeline \
+    --query "Stacks[0].Outputs[?OutputKey=='LoadPipelineStateMachineArn'].OutputValue" --output text)
+```
+Config lives under `NEPTUNE_PIPELINE` in `config/base.yaml` (`enabled`, `graph_uri_template`,
+`parallelism`, `wait_seconds`).
 
 ## Deployment
 
