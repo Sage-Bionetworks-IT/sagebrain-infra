@@ -30,5 +30,5 @@ NEPTUNE_VIZ:
   image: "public.ecr.aws/neptune/graph-explorer:latest"
 
 AUTH:
-  synapse_team_id: "273957"
+  synapse_team_id: "3605470"
   # machine_api_key: ""  # set in env-specific config (not committed); enables x-api-key auth
