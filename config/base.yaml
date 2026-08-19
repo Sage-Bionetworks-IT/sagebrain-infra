@@ -21,7 +21,8 @@ NEPTUNE_SAGEMAKER:
   domain_name: "sage-brain-studio"
 
 # Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
-# uploads and bulk-loads each snapshot into its own named graph.
+# uploads and bulk-loads {portal}/YYYY-MM-DD/data/ (Turtle only) into its own
+# named graph. The manifest is the trigger and stays outside the load path.
 NEPTUNE_PIPELINE:
   enabled: true
   graph_uri_template: "urn:sagebrain:{portal}:{date}"
