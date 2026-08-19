@@ -55,7 +55,8 @@ def test_parse_snapshot_valid(loader):
     assert snap["portal"] == "nf"
     assert snap["date"] == "2026-04-25"
     assert snap["snapshot"] == "2026-04-25"
-    assert snap["prefix"] == "s3://mybucket/nf/2026-04-25/"
+    # Load path is the data/ subprefix; the manifest sits outside it.
+    assert snap["prefix"] == "s3://mybucket/nf/2026-04-25/data/"
     assert snap["named_graph"] == "urn:sagebrain:nf:2026-04-25"
 
 
@@ -97,7 +98,7 @@ def test_start_submits_load_into_named_graph(loader, mock_table):
     assert out["named_graph"] == "urn:sagebrain:nf:2026-04-25"
 
     body = json.loads(mock_post.call_args.kwargs["data"])
-    assert body["source"] == "s3://mybucket/nf/2026-04-25/"
+    assert body["source"] == "s3://mybucket/nf/2026-04-25/data/"
     assert body["format"] == "turtle"
     assert body["failOnError"] == "TRUE"
     assert body["parserConfiguration"]["namedGraphUri"] == "urn:sagebrain:nf:2026-04-25"
@@ -167,7 +168,7 @@ def _record_event(load_status, records=100):
         "snapshot": "2026-04-25",
         "load_id": "load-42",
         "named_graph": "urn:sagebrain:nf:2026-04-25",
-        "prefix": "s3://mybucket/nf/2026-04-25/",
+        "prefix": "s3://mybucket/nf/2026-04-25/data/",
         "etag": "etag-1",
         "load_status": load_status,
         "overall_status": {

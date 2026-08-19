@@ -33,13 +33,18 @@ class NeptunePipelineStack(cdk.Stack):
     A transform pipeline deposits a dated snapshot per portal in S3 and writes
     ``manifest.ttl`` last as the completion sentinel:
 
-        s3://<bucket>/{portal}/YYYY-MM-DD/*.ttl
-        s3://<bucket>/{portal}/YYYY-MM-DD/manifest.ttl   ← written last
+        s3://<bucket>/{portal}/YYYY-MM-DD/data/*.ttl    ← the load path (Turtle only)
+        s3://<bucket>/{portal}/YYYY-MM-DD/other/...     ← anything non-RDF
+        s3://<bucket>/{portal}/YYYY-MM-DD/manifest.ttl  ← written last, trigger only
 
     Flow:
       S3 "Object Created" (EventBridge)
         → EventBridge Rule (key suffix "manifest.ttl")
           → Step Functions: StartLoad → Wait/Check loop → Record{Success,Failure}
+
+    Only ``data/`` is loaded — Neptune's bulk loader has no include/exclude filter
+    and parses everything under the prefix as Turtle, so with failOnError=TRUE a
+    single non-RDF sibling would fail the whole snapshot.
 
     Each snapshot is bulk-loaded into its own named graph
     (``urn:sagebrain:{portal}:{date}``) so every historical version stays
