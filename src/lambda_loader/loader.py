@@ -17,12 +17,18 @@ The snapshot folder key drives everything:
     nf/2026-04-25/manifest.ttl
       → portal      = "nf"
       → date        = "2026-04-25"
-      → prefix      = "s3://<bucket>/nf/2026-04-25/"
+      → prefix      = "s3://<bucket>/nf/2026-04-25/data/"
       → named_graph = "urn:sagebrain:nf:2026-04-25"   (from GRAPH_URI_TEMPLATE)
 
-The whole folder prefix is loaded into a per-snapshot named graph, so every
-historical version stays isolated (append-only). manifest.ttl is loaded too —
-its provenance triples become queryable lineage.
+The whole ``data/`` subprefix is loaded into a per-snapshot named graph, so every
+historical version stays isolated (append-only).
+
+The manifest is the trigger only and deliberately sits *outside* the load path.
+Neptune's bulk loader takes a literal S3 prefix with no include/exclude or glob
+support — it parses every object under ``source`` as Turtle — and ``failOnError``
+is TRUE, so one non-RDF object would fail the whole snapshot. Loading from
+``{portal}/{date}/data/`` gives depositors a place to put anything non-Turtle
+(``{portal}/{date}/other/``) without breaking the load.
 """
 
 import json
@@ -64,6 +70,9 @@ def parse_snapshot(bucket: str, key: str) -> dict:
 
     Expects ``{portal}/{YYYY-MM-DD}/manifest.ttl``. Raises ValueError on any
     other shape so malformed keys fail loudly instead of loading the wrong data.
+
+    The load target is the sibling ``data/`` subprefix — the manifest itself is
+    not loaded (see the module docstring).
     """
     parts = key.split("/")
     if len(parts) != 3 or parts[2] != "manifest.ttl":
@@ -82,7 +91,9 @@ def parse_snapshot(bucket: str, key: str) -> dict:
         "date": date,
         # SK on the tracking table — an ordering-friendly per-portal history key.
         "snapshot": date,
-        "prefix": f"s3://{bucket}/{portal}/{date}/",
+        # Load only the data/ subprefix: Neptune parses every object under the
+        # prefix as Turtle, so non-RDF siblings must stay out of the load path.
+        "prefix": f"s3://{bucket}/{portal}/{date}/data/",
         "named_graph": GRAPH_URI_TEMPLATE.format(portal=portal, date=date),
     }
 
