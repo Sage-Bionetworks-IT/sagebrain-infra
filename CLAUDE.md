@@ -68,10 +68,18 @@ with no human in the loop.
 ```
 s3://<NeptuneDataBucketName>/
   nf/YYYY-MM-DD/
-    <anything>.ttl        ← full Turtle snapshot files (any names)
+    data/
+      <anything>.ttl      ← full Turtle snapshot files (any names) — THE LOAD PATH
+    other/                ← optional: anything that is not Turtle lives outside data/
     manifest.ttl          ← written LAST; its ObjectCreated event triggers the load
 ```
 Generic across portals — any `{portal}/YYYY-MM-DD/manifest.ttl` works. `nf` is the first portal.
+
+**Only `{portal}/YYYY-MM-DD/data/` is loaded.** Neptune's bulk loader takes a literal S3
+prefix — there is no include/exclude, glob, or extension filter, and it parses *every*
+object under `source` as Turtle. With `failOnError=TRUE`, one non-RDF object fails the
+entire snapshot load rather than being skipped. So the contract for depositors is
+"only Turtle lives under `data/`"; put README/CSV/logs/etc. in a sibling folder.
 
 ### Flow
 ```
@@ -84,9 +92,10 @@ S3 "Object Created" (EventBridge) → EventBridge Rule (key suffix "manifest.ttl
 - **Step Functions** (not a polling Lambda) owns the Wait/Check loop, so very large loads
   aren't bounded by the 15-min Lambda timeout. Each `loader.py` invocation is one fast
   SigV4-signed HTTP call to Neptune (`start` / `check` / `record` via the `action` field).
-- **One named graph per snapshot** — each folder loads into `urn:sagebrain:{portal}:{date}`
-  (via the bulk loader's `parserConfiguration.namedGraphUri`), so every historical version
-  stays isolated. `manifest.ttl` is loaded too — its provenance triples become queryable lineage.
+- **One named graph per snapshot** — each snapshot's `data/` prefix loads into
+  `urn:sagebrain:{portal}:{date}` (via the bulk loader's `parserConfiguration.namedGraphUri`),
+  so every historical version stays isolated. `manifest.ttl` is the trigger only and is **not**
+  loaded (it sits outside the load path) — snapshot lineage lives in the DynamoDB tracking table.
 - Loads target the **writer/cluster endpoint** (bulk loads can't go to the reader).
   `failOnError=TRUE` (append-only surfaces bad data); `queueRequest=TRUE` (queue behind an
   in-flight load).
@@ -98,9 +107,9 @@ S3 "Object Created" (EventBridge) → EventBridge Rule (key suffix "manifest.ttl
 
 ### Sample manifest.ttl
 See [docs/manifest.ttl.example](docs/manifest.ttl.example). The pipeline does **not** parse the
-manifest for control flow (it derives everything from the key and loads the whole folder) — the
-manifest is the trigger + provenance. A future Strategy-A delta mode could parse it for explicit
-insert/delete file lists.
+manifest for control flow (it derives everything from the key and loads the whole `data/`
+prefix) — the manifest is purely the completion sentinel. A future Strategy-A delta mode could
+parse it for explicit insert/delete file lists.
 
 ### Querying a snapshot
 Neptune's SPARQL **default graph is the union of all named graphs**, so `SELECT ?s ?p ?o`
