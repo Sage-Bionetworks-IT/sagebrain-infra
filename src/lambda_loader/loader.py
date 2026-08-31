@@ -39,6 +39,7 @@ from botocore.awsrequest import AWSRequest
 
 NEPTUNE_ENDPOINT = os.environ["NEPTUNE_ENDPOINT"]
 REGION = os.environ["AWS_REGION"]
+# Name is defined upstream in the neptune pipeline stack
 LOAD_TABLE_NAME = os.environ["LOAD_TABLE_NAME"]
 NEPTUNE_LOAD_ROLE_ARN = os.environ["NEPTUNE_LOAD_ROLE_ARN"]
 GRAPH_URI_TEMPLATE = os.environ.get(
@@ -91,6 +92,7 @@ def parse_snapshot(bucket: str, key: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+# TODO use boto client: https://docs.aws.amazon.com/boto3/latest/reference/services/neptunedata.html
 def _signed_headers(method: str, url: str, body: str, headers: dict) -> dict:
     session = botocore.session.Session()
     credentials = session.get_credentials()
@@ -99,6 +101,7 @@ def _signed_headers(method: str, url: str, body: str, headers: dict) -> dict:
     return dict(aws_request.headers)
 
 
+# TODO use boto client: https://docs.aws.amazon.com/boto3/latest/reference/services/neptunedata.html
 def _start_bulk_load(prefix: str, named_graph: str) -> str:
     """Submit an S3 bulk-load job into a named graph. Returns the loadId."""
     url = f"https://{NEPTUNE_ENDPOINT}:{NEPTUNE_PORT}/loader"
@@ -124,6 +127,8 @@ def _start_bulk_load(prefix: str, named_graph: str) -> str:
     return resp.json()["payload"]["loadId"]
 
 
+# TODO Same here with using boto:
+# https://docs.aws.amazon.com/boto3/latest/reference/services/neptunedata/client/get_loader_job_status.html
 def _load_status(load_id: str) -> dict:
     """Return the ``overallStatus`` block for a load job."""
     url = f"https://{NEPTUNE_ENDPOINT}:{NEPTUNE_PORT}/loader/{load_id}"
@@ -154,6 +159,7 @@ def _put_load(portal: str, snapshot: str, **fields):
 
 
 def _log(**fields):
+    # TODO: Use logger?
     print(json.dumps({"event": "kg_load", **fields}))
 
 
