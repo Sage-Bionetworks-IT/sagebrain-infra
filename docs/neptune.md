@@ -275,7 +275,7 @@ Neptune settings live in `config/base.yaml` (merged with environment overrides):
 | `serverless_min_capacity` | `1.0` | Required (stack is serverless-only) |
 | `serverless_max_capacity` | `8.0` | Required (stack is serverless-only) |
 | `instance_count` | `1` | Number of Neptune instances in the cluster |
-| `instance_class` | `db.serverless` | Fixed in this stack |
+| `instance_class` | `db.serverless` | Not configurable (stack always uses `db.serverless`) |
 | `backup_retention_days` | `7` | |
 | `iam_auth_enabled` | `true` | All requests must be SigV4-signed |
 | `storage_encrypted` | `true` | |
