@@ -3,6 +3,8 @@ TAGS:
 
 NEPTUNE:
   engine_version: "1.3.2.1"
+  serverless_min_capacity: 1.0
+  serverless_max_capacity: 8.0
   backup_retention_days: 7
   preferred_backup_window: "03:00-04:00"
   preferred_maintenance_window: "sun:04:00-sun:05:00"

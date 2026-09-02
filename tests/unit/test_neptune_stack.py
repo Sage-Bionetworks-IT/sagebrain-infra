@@ -20,8 +20,9 @@ def neptune_config():
     """Default Neptune configuration for testing"""
     return {
         "engine_version": "1.3.2.1",
+        "serverless_min_capacity": 1.0,
+        "serverless_max_capacity": 8.0,
         "instance_count": 1,
-        "instance_class": "db.t3.medium",
         "backup_retention_days": 7,
         "preferred_backup_window": "03:00-04:00",
         "preferred_maintenance_window": "sun:04:00-sun:05:00",
@@ -52,6 +53,10 @@ def test_neptune_stack_creation(app_and_vpc, neptune_config):
             "DeletionProtection": False,
             "StorageEncrypted": True,
             "IamAuthEnabled": True,
+            "ServerlessScalingConfiguration": {
+                "MinCapacity": 1,
+                "MaxCapacity": 8,
+            },
         },
     )
 
@@ -59,7 +64,7 @@ def test_neptune_stack_creation(app_and_vpc, neptune_config):
     template.has_resource_properties(
         "AWS::Neptune::DBInstance",
         {
-            "DBInstanceClass": "db.t3.medium",
+            "DBInstanceClass": "db.serverless",
         },
     )
 
@@ -85,8 +90,9 @@ def test_neptune_stack_with_parameter_group(app_and_vpc):
     app, vpc = app_and_vpc
     neptune_config = {
         "engine_version": "1.3.2.1",
+        "serverless_min_capacity": 1.0,
+        "serverless_max_capacity": 8.0,
         "instance_count": 1,
-        "instance_class": "db.t3.medium",
         "backup_retention_days": 7,
         "preferred_backup_window": "03:00-04:00",
         "preferred_maintenance_window": "sun:04:00-sun:05:00",
@@ -219,8 +225,9 @@ def test_neptune_stack_multiple_instances(app_and_vpc):
     app, vpc = app_and_vpc
     neptune_config = {
         "engine_version": "1.3.2.1",
+        "serverless_min_capacity": 1.0,
+        "serverless_max_capacity": 12.0,
         "instance_count": 2,
-        "instance_class": "db.r5.large",
         "backup_retention_days": 30,
         "preferred_backup_window": "03:00-04:00",
         "preferred_maintenance_window": "sun:04:00-sun:05:00",
@@ -247,5 +254,26 @@ def test_neptune_stack_multiple_instances(app_and_vpc):
         {
             "BackupRetentionPeriod": 30,
             "DeletionProtection": True,
+            "ServerlessScalingConfiguration": {
+                "MinCapacity": 1,
+                "MaxCapacity": 12,
+            },
         },
     )
+
+
+def test_neptune_requires_capacity_values(app_and_vpc):
+    """Neptune stack must provide min and max serverless capacity."""
+    app, vpc = app_and_vpc
+    neptune_config = {
+        "engine_version": "1.3.2.1",
+        "instance_count": 1,
+    }
+
+    with pytest.raises(ValueError):
+        NeptuneStack(
+            app,
+            "TestNeptuneServerlessCapacityMissing",
+            vpc=vpc,
+            neptune_config=neptune_config,
+        )
