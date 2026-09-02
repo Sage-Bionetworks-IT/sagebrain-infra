@@ -6,7 +6,8 @@ VPC_CIDR: 10.254.174.0/24
 
 NEPTUNE:
   instance_count: 1
-  instance_class: "db.r6g.large"
+  serverless_min_capacity: 1.0
+  serverless_max_capacity: 4.0
   deletion_protection: false  # Allow easier cleanup in dev
 
 NEPTUNE_SAGEMAKER:

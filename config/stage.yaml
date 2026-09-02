@@ -6,5 +6,6 @@ VPC_CIDR: 10.254.173.0/24
 
 NEPTUNE:
   instance_count: 1
-  instance_class: "db.t3.medium"
+  serverless_min_capacity: 1.0
+  serverless_max_capacity: 8.0
   deletion_protection: false  # Allow easier cleanup in staging
