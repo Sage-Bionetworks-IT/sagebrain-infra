@@ -121,7 +121,7 @@ def _start_bulk_load(prefix: str, named_graph: str) -> str:
     body = json.dumps(payload)
     headers = {"Content-Type": "application/json"}
     resp = requests.post(
-        url, data=body, headers=_signed_headers("POST", url, body, headers), timeout=30
+        url, data=body, headers=_signed_headers("POST", url, body, headers), timeout=25
     )
     resp.raise_for_status()
     return resp.json()["payload"]["loadId"]
@@ -132,7 +132,7 @@ def _start_bulk_load(prefix: str, named_graph: str) -> str:
 def _load_status(load_id: str) -> dict:
     """Return the ``overallStatus`` block for a load job."""
     url = f"https://{NEPTUNE_ENDPOINT}:{NEPTUNE_PORT}/loader/{load_id}"
-    resp = requests.get(url, headers=_signed_headers("GET", url, "", {}), timeout=30)
+    resp = requests.get(url, headers=_signed_headers("GET", url, "", {}), timeout=25)
     resp.raise_for_status()
     return resp.json()["payload"]["overallStatus"]
 
