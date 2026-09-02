@@ -1,4 +1,4 @@
-import importlib
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -26,10 +26,13 @@ def mock_table():
 
 @pytest.fixture
 def status_module(mock_table):
-    sys.modules.pop("status", None)
-    import status as status_handler
-
-    importlib.reload(status_handler)
+    spec = importlib.util.spec_from_file_location(
+        "lambda_agent_status",
+        Path(LAMBDA_AGENT_DIR) / "status.py",
+    )
+    assert spec and spec.loader
+    status_handler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(status_handler)
     status_handler._dynamodb.Table.return_value = mock_table
     return status_handler
 
