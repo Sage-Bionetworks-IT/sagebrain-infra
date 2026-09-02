@@ -170,7 +170,8 @@ def _record_event(load_status, records=100):
     }
 
 
-def test_record_success(loader, mock_table):
+def test_record_success(loader, mock_table_and_client):
+    mock_table, _ = mock_table_and_client
     out = loader.handler(_record_event("LOAD_COMPLETED"), None)
     assert out["status"] == "complete"
     item = mock_table.put_item.call_args.kwargs["Item"]
@@ -178,7 +179,8 @@ def test_record_success(loader, mock_table):
     assert item["total_records"] == 100
 
 
-def test_record_failure(loader, mock_table):
+def test_record_failure(loader, mock_table_and_client):
+    mock_table, _ = mock_table_and_client
     out = loader.handler(_record_event("LOAD_FAILED"), None)
     assert out["status"] == "error"
     item = mock_table.put_item.call_args.kwargs["Item"]
