@@ -51,6 +51,10 @@ syn:syn10081783 a gov:SynapseEntity ;
 5. Return `ALLOW`/`DENY` with evaluated grants and determining policy IDs.
 6. If Neptune/AVP errors, return `503` with `decision=DENY` (`authorization_unavailable`) to fail closed.
 
+The resolver sends these context flags into Cedar per evaluation:
+`governanceEvidencePresent`, `principalMatchesGrant`, `permissionMatchesGrant`,
+`arSatisfied`, `hasInferredGrant`, `inferredAllSatisfied`, `inferredEdgeMode`.
+
 ## Why this matches the governance design
 
 - **Provenance-aware**: authorization starts with governance edges from Neptune, not detached app-side ACL lookups.
@@ -58,44 +62,19 @@ syn:syn10081783 a gov:SynapseEntity ;
 - **Supports inferred-edge semantics**: explicit merge mode (`intersection` vs `union`) is configurable.
 - **Fail-closed**: transient policy/graph outages deny authorization rather than silently allowing.
 
-## Example AVP schema + policy sketch
+## Deployed AVP schema + policy
 
-```cedar
-entity User;
-entity SynapseEntity in [AccessGrant] {
-  accessRequirements: Set<String>
-};
-entity AccessGrant {
-  permission: String,
-  bindingType: String,
-  principal: String
-};
-action DOWNLOAD appliesTo {
-  principal: User,
-  resource: SynapseEntity
-};
-
-permit (
-  principal,
-  action == Action::"DOWNLOAD",
-  resource in AccessGrant
-)
-when {
-  resource.accessRequirements.contains("https://sagebionetworks.org/governance/AR-42")
-};
-```
-
-Use this as a starting point; production policies should encode Synapse-specific requirements and principal relationships (team membership, ACT approval, etc.).
+The concept stack deploys a generic Cedar policy model designed for large ACL/AR cardinality (no hardcoded user or grant IDs). The deployed policy evaluates grant matching and inferred-edge semantics using request context provided by the resolver Lambda.
 
 ## Import-ready AVP artifacts
 
-For direct import into Amazon Verified Permissions, use:
+Reference artifacts that mirror what the stack deploys:
 
 - Schema definition JSON: [rebac_concept_schema.json](./avp/rebac_concept_schema.json)
 - Sample policy statement: [rebac_concept_policy.cedar](./avp/rebac_concept_policy.cedar)
 - `create-policy` CLI payload: [rebac_concept_policy_import.json](./avp/rebac_concept_policy_import.json)
 
-Create a policy store with the schema:
+If you need to bootstrap or replicate the policy store manually:
 
 ```bash
 aws --profile sagebrain verifiedpermissions create-policy-store \
@@ -103,7 +82,7 @@ aws --profile sagebrain verifiedpermissions create-policy-store \
   --schema-definition file://docs/avp/rebac_concept_schema.json
 ```
 
-Then import the sample policy:
+Then import the generic policy:
 
 ```bash
 aws --profile sagebrain verifiedpermissions create-policy \
@@ -122,5 +101,6 @@ Required config:
 ```yaml
 NEPTUNE_REBAC_CONCEPT:
   enabled: true
+  # Optional: if omitted, the stack creates and configures a policy store.
   policy_store_id: "ps-xxxxxxxxxxxxxxxx"
 ```

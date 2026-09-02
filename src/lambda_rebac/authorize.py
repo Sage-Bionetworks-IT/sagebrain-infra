@@ -21,6 +21,7 @@ _verified_permissions = boto3.client("verifiedpermissions")
 CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
 VALID_INFERRED_EDGE_MODES = {"intersection", "union"}
 _SYNAPSE_PREFIX = "https://www.synapse.org/Synapse:"
+_AVP_ACTION_ID = "ACCESS"
 
 
 def _json_response(status_code: int, body: dict) -> dict:
@@ -134,38 +135,26 @@ def _avp_entity_type(name: str) -> str:
 
 def _avp_is_allowed(
     principal_id: str,
-    action: str,
     resource_id: str,
     grant: dict,
     access_requirements: list[str],
     inferred_edge_mode: str,
+    principal_matches_grant: bool,
+    permission_matches_grant: bool,
+    ar_satisfied: bool,
+    has_inferred_grant: bool,
+    inferred_all_satisfied: bool,
 ) -> tuple[bool, list[str]]:
     resource_entity = {
         "identifier": {
             "entityType": _avp_entity_type("SynapseEntity"),
             "entityId": resource_id,
         },
-        "parents": [
-            {
-                "entityType": _avp_entity_type("AccessGrant"),
-                "entityId": grant["grant"],
-            }
-        ],
         "attributes": {
+            "bindingType": {"string": grant["binding_type"]},
             "accessRequirements": {
                 "set": [{"string": req} for req in access_requirements]
             },
-        },
-    }
-    grant_entity = {
-        "identifier": {
-            "entityType": _avp_entity_type("AccessGrant"),
-            "entityId": grant["grant"],
-        },
-        "attributes": {
-            "permission": {"string": grant["permission"]},
-            "bindingType": {"string": grant["binding_type"]},
-            "principal": {"string": grant["principal"]},
         },
     }
 
@@ -177,14 +166,24 @@ def _avp_is_allowed(
         },
         action={
             "actionType": _avp_entity_type("Action"),
-            "actionId": action,
+            "actionId": _AVP_ACTION_ID,
         },
         resource={
             "entityType": _avp_entity_type("SynapseEntity"),
             "entityId": resource_id,
         },
-        entities={"entityList": [resource_entity, grant_entity]},
-        context={"contextMap": {"inferredEdgeMode": {"string": inferred_edge_mode}}},
+        entities={"entityList": [resource_entity]},
+        context={
+            "contextMap": {
+                "governanceEvidencePresent": {"boolean": True},
+                "principalMatchesGrant": {"boolean": principal_matches_grant},
+                "permissionMatchesGrant": {"boolean": permission_matches_grant},
+                "arSatisfied": {"boolean": ar_satisfied},
+                "hasInferredGrant": {"boolean": has_inferred_grant},
+                "inferredAllSatisfied": {"boolean": inferred_all_satisfied},
+                "inferredEdgeMode": {"string": inferred_edge_mode},
+            }
+        },
     )
     policies = [
         p.get("policyId")
@@ -232,6 +231,15 @@ def handler(event, context):
                 "error": "Missing one or more required fields: principal_id, action, resource_id"
             },
         )
+    approved_access_requirements = body.get("approved_access_requirements")
+    if approved_access_requirements is not None and (
+        not isinstance(approved_access_requirements, list)
+        or not all(isinstance(ar, str) for ar in approved_access_requirements)
+    ):
+        return _json_response(
+            400,
+            {"error": "approved_access_requirements must be an array of strings"},
+        )
     if inferred_edge_mode not in VALID_INFERRED_EDGE_MODES:
         return _json_response(
             400,
@@ -245,6 +253,28 @@ def handler(event, context):
     try:
         bindings = _query_governance(resource_iri)
         grants, access_requirements = _extract_governance(bindings)
+        required_ars = set(access_requirements)
+        approved_ars = (
+            set(approved_access_requirements)
+            if approved_access_requirements is not None
+            else set()
+        )
+        ar_satisfied = (
+            required_ars.issubset(approved_ars)
+            if approved_access_requirements is not None
+            else True
+        )
+
+        relevant_inferred_grants = [
+            g
+            for g in grants
+            if g["binding_type"].lower() != "direct"
+            and g["permission"] == action
+            and _principal_matches(g["principal"], principal_id)
+        ]
+        has_inferred_grant = bool(relevant_inferred_grants)
+        inferred_all_satisfied = all(ar_satisfied for _ in relevant_inferred_grants)
+
         matching_grants = [
             g
             for g in grants
@@ -264,6 +294,7 @@ def handler(event, context):
                     "inferred_edge_mode": inferred_edge_mode,
                     "lookup_ms": round((time.time() - lookup_start) * 1000, 2),
                     "access_requirements": access_requirements,
+                    "ar_satisfied": ar_satisfied,
                 },
             )
 
@@ -271,11 +302,17 @@ def handler(event, context):
         for grant in matching_grants:
             allowed, policy_ids = _avp_is_allowed(
                 principal_id=principal_id,
-                action=action,
                 resource_id=resource_id,
                 grant=grant,
                 access_requirements=access_requirements,
                 inferred_edge_mode=inferred_edge_mode,
+                principal_matches_grant=_principal_matches(
+                    grant["principal"], principal_id
+                ),
+                permission_matches_grant=grant["permission"] == action,
+                ar_satisfied=ar_satisfied,
+                has_inferred_grant=has_inferred_grant,
+                inferred_all_satisfied=inferred_all_satisfied,
             )
             evaluations.append(
                 {

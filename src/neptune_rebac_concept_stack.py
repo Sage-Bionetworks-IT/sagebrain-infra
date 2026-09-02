@@ -1,9 +1,11 @@
 import aws_cdk as cdk
+import json
 from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
+from aws_cdk import aws_verifiedpermissions as avp
 from constructs import Construct
 
 _BUNDLING = cdk.BundlingOptions(
@@ -14,6 +16,125 @@ _BUNDLING = cdk.BundlingOptions(
         "pip install -r requirements.txt -t /asset-output && cp -r . /asset-output",
     ],
 )
+
+
+def _policy_schema(namespace: str) -> str:
+    return json.dumps(
+        {
+            "cedarJson": {
+                namespace: {
+                    "entityTypes": {
+                        "User": {
+                            "shape": {
+                                "type": "Record",
+                                "attributes": {},
+                            }
+                        },
+                        "SynapseEntity": {
+                            "shape": {
+                                "type": "Record",
+                                "attributes": {
+                                    "bindingType": {"type": "String"},
+                                    "accessRequirements": {
+                                        "type": "Set",
+                                        "element": {"type": "String"},
+                                    },
+                                },
+                            }
+                        },
+                    },
+                    "actions": {
+                        "ACCESS": {
+                            "appliesTo": {
+                                "principalTypes": ["User"],
+                                "resourceTypes": ["SynapseEntity"],
+                                "context": {
+                                    "type": "Record",
+                                    "attributes": {
+                                        "governanceEvidencePresent": {
+                                            "type": "Boolean"
+                                        },
+                                        "principalMatchesGrant": {"type": "Boolean"},
+                                        "permissionMatchesGrant": {"type": "Boolean"},
+                                        "arSatisfied": {"type": "Boolean"},
+                                        "hasInferredGrant": {"type": "Boolean"},
+                                        "inferredAllSatisfied": {"type": "Boolean"},
+                                        "inferredEdgeMode": {"type": "String"},
+                                    },
+                                },
+                            }
+                        }
+                    },
+                }
+            }
+        }
+    )
+
+
+def _policy_statement(namespace: str) -> str:
+    return f"""
+forbid (
+    principal,
+    action == {namespace}::Action::"ACCESS",
+    resource
+)
+when {{
+    !context.governanceEvidencePresent
+}};
+
+forbid (
+    principal,
+    action == {namespace}::Action::"ACCESS",
+    resource
+)
+when {{
+    context.inferredEdgeMode == "intersection" &&
+    context.hasInferredGrant &&
+    !context.inferredAllSatisfied
+}};
+
+permit (
+    principal,
+    action == {namespace}::Action::"ACCESS",
+    resource
+)
+when {{
+    context.governanceEvidencePresent &&
+    context.principalMatchesGrant &&
+    context.permissionMatchesGrant &&
+    context.arSatisfied &&
+    resource.bindingType == "Direct"
+}};
+
+permit (
+    principal,
+    action == {namespace}::Action::"ACCESS",
+    resource
+)
+when {{
+    context.governanceEvidencePresent &&
+    context.principalMatchesGrant &&
+    context.permissionMatchesGrant &&
+    context.arSatisfied &&
+    context.inferredEdgeMode == "union" &&
+    resource.bindingType == "Inferred"
+}};
+
+permit (
+    principal,
+    action == {namespace}::Action::"ACCESS",
+    resource
+)
+when {{
+    context.governanceEvidencePresent &&
+    context.principalMatchesGrant &&
+    context.permissionMatchesGrant &&
+    context.arSatisfied &&
+    context.inferredEdgeMode == "intersection" &&
+    context.inferredAllSatisfied &&
+    resource.bindingType == "Inferred"
+}};
+""".strip()
 
 
 class NeptuneRebacConceptStack(cdk.Stack):
@@ -34,11 +155,40 @@ class NeptuneRebacConceptStack(cdk.Stack):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        policy_store_id = (rebac_config.get("policy_store_id") or "").strip()
+        namespace = rebac_config.get("namespace", "SageBrain")
+        existing_policy_store_id = (rebac_config.get("policy_store_id") or "").strip()
+        policy_store_id = existing_policy_store_id
         if not policy_store_id:
-            raise ValueError(
-                "NEPTUNE_REBAC_CONCEPT.policy_store_id is required when ReBAC concept is enabled"
+            policy_store = avp.CfnPolicyStore(
+                self,
+                "GovernanceRebacPolicyStore",
+                validation_settings=avp.CfnPolicyStore.ValidationSettingsProperty(
+                    mode=rebac_config.get("validation_mode", "STRICT")
+                ),
+                deletion_protection=avp.CfnPolicyStore.DeletionProtectionProperty(
+                    mode=rebac_config.get("deletion_protection_mode", "DISABLED")
+                ),
+                description="Governance ReBAC concept policy store",
+                schema=avp.CfnPolicyStore.SchemaDefinitionProperty(
+                    cedar_json=_policy_schema(namespace)
+                ),
             )
+            policy_store_id = policy_store.attr_policy_store_id
+
+        concept_policy = avp.CfnPolicy(
+            self,
+            "GovernanceRebacConceptPolicy",
+            policy_store_id=policy_store_id,
+            definition=avp.CfnPolicy.PolicyDefinitionProperty(
+                static=avp.CfnPolicy.StaticPolicyDefinitionProperty(
+                    statement=_policy_statement(namespace),
+                    description=(
+                        "Generic governance graph ReBAC policy for high-cardinality "
+                        "ACL/AR relationships"
+                    ),
+                )
+            ),
+        )
 
         self.lambda_sg = ec2.SecurityGroup(
             self,
@@ -72,7 +222,7 @@ class NeptuneRebacConceptStack(cdk.Stack):
             environment={
                 "NEPTUNE_ENDPOINT": neptune_read_endpoint,
                 "AVP_POLICY_STORE_ID": policy_store_id,
-                "AVP_NAMESPACE": rebac_config.get("namespace", "SageBrain"),
+                "AVP_NAMESPACE": namespace,
                 "INFERRED_EDGE_MODE": rebac_config.get(
                     "inferred_edge_mode", "intersection"
                 ),
@@ -193,4 +343,16 @@ class NeptuneRebacConceptStack(cdk.Stack):
             "GovernanceRebacAuthorizeUrl",
             value=f"{self.api.url}authorize",
             description="Concept ReBAC authorize endpoint — POST principal/action/resource",
+        )
+        cdk.CfnOutput(
+            self,
+            "GovernanceRebacPolicyStoreId",
+            value=policy_store_id,
+            description="Verified Permissions policy store used by the concept endpoint",
+        )
+        cdk.CfnOutput(
+            self,
+            "GovernanceRebacPolicyId",
+            value=concept_policy.attr_policy_id,
+            description="Deployed generic governance ReBAC policy id",
         )

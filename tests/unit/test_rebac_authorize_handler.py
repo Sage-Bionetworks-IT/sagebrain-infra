@@ -90,6 +90,28 @@ def test_allows_when_grant_matches_principal_action(module):
     assert response["statusCode"] == 200
     assert body["decision"] == "ALLOW"
     mock_avp.is_authorized.assert_called_once()
+    call = mock_avp.is_authorized.call_args.kwargs
+    assert call["action"]["actionId"] == "ACCESS"
+    assert call["context"]["contextMap"]["principalMatchesGrant"]["boolean"] is True
+    assert call["context"]["contextMap"]["permissionMatchesGrant"]["boolean"] is True
+
+
+def test_rejects_invalid_approved_access_requirements_shape(module):
+    auth, _ = module
+    response = auth.handler(
+        _event(
+            {
+                "principal_id": "9000001",
+                "action": "DOWNLOAD",
+                "resource_id": "syn10081783",
+                "approved_access_requirements": "not-a-list",
+            }
+        ),
+        {},
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 400
+    assert "approved_access_requirements" in body["error"]
 
 
 def test_denies_when_no_matching_governance_grant(module):

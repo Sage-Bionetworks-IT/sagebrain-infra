@@ -8,29 +8,13 @@
             "attributes": {}
           }
         },
-        "AccessGrant": {
+        "SynapseEntity": {
           "shape": {
             "type": "Record",
             "attributes": {
-              "permission": {
-                "type": "String"
-              },
               "bindingType": {
                 "type": "String"
               },
-              "principal": {
-                "type": "String"
-              }
-            }
-          }
-        },
-        "SynapseEntity": {
-          "memberOfTypes": [
-            "AccessGrant"
-          ],
-          "shape": {
-            "type": "Record",
-            "attributes": {
               "accessRequirements": {
                 "type": "Set",
                 "element": {
@@ -42,7 +26,7 @@
         }
       },
       "actions": {
-        "DOWNLOAD": {
+        "ACCESS": {
           "appliesTo": {
             "principalTypes": [
               "User"
@@ -53,6 +37,24 @@
             "context": {
               "type": "Record",
               "attributes": {
+                "governanceEvidencePresent": {
+                  "type": "Boolean"
+                },
+                "principalMatchesGrant": {
+                  "type": "Boolean"
+                },
+                "permissionMatchesGrant": {
+                  "type": "Boolean"
+                },
+                "arSatisfied": {
+                  "type": "Boolean"
+                },
+                "hasInferredGrant": {
+                  "type": "Boolean"
+                },
+                "inferredAllSatisfied": {
+                  "type": "Boolean"
+                },
                 "inferredEdgeMode": {
                   "type": "String"
                 }

@@ -42,12 +42,15 @@ NEPTUNE_VIZ:
 # Governance graph + ReBAC concept endpoint. Disabled by default.
 NEPTUNE_REBAC_CONCEPT:
   enabled: false
+  # Optional existing AVP policy store ID; if empty, stack creates one.
   policy_store_id: ""
   namespace: "SageBrain"
   # How to merge direct grants with inferred grants:
   # - intersection: require direct allow + all inferred allows
   # - union: allow if either direct or inferred allows
   inferred_edge_mode: "intersection"
+  validation_mode: "STRICT"
+  deletion_protection_mode: "DISABLED"
 
 AUTH:
   synapse_team_id: "3605470"

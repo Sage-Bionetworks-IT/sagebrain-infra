@@ -265,6 +265,7 @@ Enable it in config:
 ```yaml
 NEPTUNE_REBAC_CONCEPT:
   enabled: true
+  # Optional: if omitted, CDK creates and configures the policy store + policy.
   policy_store_id: "ps-xxxxxxxxxxxxxxxx"
   namespace: "SageBrain"
   inferred_edge_mode: "intersection"
