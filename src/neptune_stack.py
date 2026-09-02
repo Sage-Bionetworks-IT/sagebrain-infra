@@ -53,6 +53,9 @@ class NeptuneStack(cdk.Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
             removal_policy=cdk.RemovalPolicy.RETAIN,
+            # Emit "Object Created" events to EventBridge so the ingestion
+            # pipeline (NeptunePipelineStack) can trigger on manifest.ttl uploads.
+            event_bridge_enabled=True,
         )
 
         # Any principal authenticated to this AWS account can read/write the bucket.
@@ -121,39 +124,62 @@ class NeptuneStack(cdk.Stack):
         # -------------------
         # Neptune Cluster
         # -------------------
-        self.neptune_cluster = neptune.CfnDBCluster(
-            self,
-            "NeptuneCluster",
-            engine_version=neptune_config.get("engine_version", "1.3.2.1"),
-            db_subnet_group_name=self.neptune_subnet_group.ref,
-            vpc_security_group_ids=[self.neptune_security_group.security_group_id],
-            backup_retention_period=neptune_config.get("backup_retention_days", 7),
-            preferred_backup_window=neptune_config.get(
+        cluster_props = {
+            "engine_version": neptune_config.get("engine_version", "1.3.2.1"),
+            "db_subnet_group_name": self.neptune_subnet_group.ref,
+            "vpc_security_group_ids": [self.neptune_security_group.security_group_id],
+            "backup_retention_period": neptune_config.get("backup_retention_days", 7),
+            "preferred_backup_window": neptune_config.get(
                 "preferred_backup_window", "03:00-04:00"
             ),
-            preferred_maintenance_window=neptune_config.get(
+            "preferred_maintenance_window": neptune_config.get(
                 "preferred_maintenance_window", "sun:04:00-sun:05:00"
             ),
-            deletion_protection=neptune_config.get("deletion_protection", True),
-            enable_cloudwatch_logs_exports=neptune_config.get(
+            "deletion_protection": neptune_config.get("deletion_protection", True),
+            "enable_cloudwatch_logs_exports": neptune_config.get(
                 "cloudwatch_logs_exports", ["audit", "slowquery"]
             ),
-            iam_auth_enabled=neptune_config.get("iam_auth_enabled", True),
-            storage_encrypted=neptune_config.get("storage_encrypted", True),
-            db_cluster_parameter_group_name=(
+            "iam_auth_enabled": neptune_config.get("iam_auth_enabled", True),
+            "storage_encrypted": neptune_config.get("storage_encrypted", True),
+            "db_cluster_parameter_group_name": (
                 self.parameter_group.ref
                 if neptune_config.get("create_parameter_group", False)
                 else None
             ),
-            # Associate the load role so Neptune can assume it for bulk load jobs
-            associated_roles=[
+            "associated_roles": [
                 neptune.CfnDBCluster.DBClusterRoleProperty(
                     role_arn=self.neptune_load_role.role_arn
                 )
             ],
-            tags=[
+            "tags": [
                 cdk.CfnTag(key="Name", value=f"{construct_id}-cluster"),
             ],
+        }
+
+        min_capacity = neptune_config.get("serverless_min_capacity")
+        max_capacity = neptune_config.get("serverless_max_capacity")
+        if min_capacity is None or max_capacity is None:
+            raise ValueError(
+                "NEPTUNE.serverless_min_capacity and NEPTUNE.serverless_max_capacity are required"
+            )
+        if min_capacity <= 0 or max_capacity <= 0:
+            raise ValueError("Serverless capacity values must be greater than 0")
+        if min_capacity > max_capacity:
+            raise ValueError(
+                "NEPTUNE.serverless_min_capacity cannot be greater than NEPTUNE.serverless_max_capacity"
+            )
+
+        cluster_props["serverless_scaling_configuration"] = (
+            neptune.CfnDBCluster.ServerlessScalingConfigurationProperty(
+                min_capacity=min_capacity,
+                max_capacity=max_capacity,
+            )
+        )
+
+        self.neptune_cluster = neptune.CfnDBCluster(
+            self,
+            "NeptuneCluster",
+            **cluster_props,
         )
 
         # -------------------
@@ -161,7 +187,7 @@ class NeptuneStack(cdk.Stack):
         # -------------------
         self.neptune_instances = []
         instance_count = neptune_config.get("instance_count", 1)
-        instance_class = neptune_config.get("instance_class", "db.t3.medium")
+        instance_class = "db.serverless"
 
         for i in range(instance_count):
             instance = neptune.CfnDBInstance(

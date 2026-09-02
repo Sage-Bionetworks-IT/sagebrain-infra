@@ -3,6 +3,8 @@ TAGS:
 
 NEPTUNE:
   engine_version: "1.3.2.1"
+  serverless_min_capacity: 1.0
+  serverless_max_capacity: 8.0
   backup_retention_days: 7
   preferred_backup_window: "03:00-04:00"
   preferred_maintenance_window: "sun:04:00-sun:05:00"
@@ -20,6 +22,14 @@ NEPTUNE_SAGEMAKER:
   enabled: true
   domain_name: "sage-brain-studio"
 
+# Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
+# uploads and bulk-loads each snapshot into its own named graph.
+NEPTUNE_PIPELINE:
+  enabled: true
+  graph_uri_template: "urn:sagebrain:{portal}:{date}"
+  parallelism: "HIGH"
+  wait_seconds: 30
+
 # Graph Explorer visualization UI (open-source). Disabled by default; enable
 # per-env and list the source IP/CIDRs allowed to reach the ALB.
 NEPTUNE_VIZ:
@@ -30,5 +40,5 @@ NEPTUNE_VIZ:
   image: "public.ecr.aws/neptune/graph-explorer:latest"
 
 AUTH:
-  synapse_team_id: "273957"
+  synapse_team_id: "3605470"
   # machine_api_key: ""  # set in env-specific config (not committed); enables x-api-key auth

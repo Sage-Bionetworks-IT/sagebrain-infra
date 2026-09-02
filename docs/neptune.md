@@ -272,17 +272,22 @@ Neptune settings live in `config/base.yaml` (merged with environment overrides):
 | Setting | Default | Notes |
 |---|---|---|
 | `engine_version` | `1.3.2.1` | |
+| `serverless_min_capacity` | `1.0` | Required (stack is serverless-only) |
+| `serverless_max_capacity` | `8.0` | Required (stack is serverless-only) |
+| `instance_count` | `1` | Number of Neptune instances in the cluster |
+| `instance_class` | `db.serverless` | Not configurable (stack always uses `db.serverless`) |
 | `backup_retention_days` | `7` | |
 | `iam_auth_enabled` | `true` | All requests must be SigV4-signed |
 | `storage_encrypted` | `true` | |
 | `deletion_protection` | `true` | Set to `false` in dev |
 
-## Instance Classes
+## Serverless Capacity by Environment
 
-| Environment | Instance | Notes |
-|---|---|---|
-| Dev | `db.t3.medium` | Burstable, deletion protection off |
-| Prod | `db.r5.large`+ | Memory-optimized for graph workloads |
+| Environment | Min NCU | Max NCU | Notes |
+|---|---|---|---|
+| Dev | `1.0` | `4.0` | Lower cost default |
+| Stage | `1.0` | `8.0` | Mirrors baseline prod behavior |
+| Prod | `2.0` | `16.0` | Higher ceiling for production load |
 
 ## Monitoring
 
