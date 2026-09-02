@@ -243,6 +243,59 @@ python tools/load_kg.py --prefix 2026-02-20 --stats
 > [!NOTE]
 > For detailed usage including SPARQL querying, see [docs/neptune.md](docs/neptune.md).
 
+## Governance graph + ReBAC concept (`POST /authorize`)
+
+This repository includes an optional concept endpoint that combines:
+
+- **Governance graph provenance in Neptune** (resource → grant → access requirement), and
+- **Relationship-based access control (ReBAC)** decisions in **Amazon Verified Permissions**.
+
+When enabled, `POST /authorize` does the following:
+
+1. Reads governance relationships for the target resource from Neptune.
+2. Filters grants that match `{principal_id, action}`.
+3. Calls `verifiedpermissions:IsAuthorized` for each matching grant.
+4. Merges direct and inferred grant decisions using `inferred_edge_mode`:
+   - `intersection`: require direct allow + all inferred allows
+   - `union`: allow if any direct/inferred path allows
+5. Fails closed (`DENY`) when Neptune or Verified Permissions is unavailable.
+
+Enable it in config:
+
+```yaml
+NEPTUNE_REBAC_CONCEPT:
+  enabled: true
+  policy_store_id: "ps-xxxxxxxxxxxxxxxx"
+  namespace: "SageBrain"
+  inferred_edge_mode: "intersection"
+```
+
+Deploy:
+
+```console
+AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-rebac-concept --context env=dev
+```
+
+Get endpoint URL:
+
+```console
+aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune-rebac-concept \
+  --query "Stacks[0].Outputs[?OutputKey=='GovernanceRebacAuthorizeUrl'].OutputValue" \
+  --output text
+```
+
+Example request:
+
+```console
+curl -X POST <REBAC_URL> \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <synapse-pat>" \
+  -d '{"principal_id":"9000001","action":"DOWNLOAD","resource_id":"syn10081783"}'
+```
+
+For full technical details and import-ready AVP artifacts, see [docs/governance_rebac_concept.md](docs/governance_rebac_concept.md).
+
 ## Secrets
 
 Secrets can be manually created in the

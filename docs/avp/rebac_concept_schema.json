@@ -1,0 +1,66 @@
+{
+  "cedarJson": {
+    "SageBrain": {
+      "entityTypes": {
+        "User": {
+          "shape": {
+            "type": "Record",
+            "attributes": {}
+          }
+        },
+        "AccessGrant": {
+          "shape": {
+            "type": "Record",
+            "attributes": {
+              "permission": {
+                "type": "String"
+              },
+              "bindingType": {
+                "type": "String"
+              },
+              "principal": {
+                "type": "String"
+              }
+            }
+          }
+        },
+        "SynapseEntity": {
+          "memberOfTypes": [
+            "AccessGrant"
+          ],
+          "shape": {
+            "type": "Record",
+            "attributes": {
+              "accessRequirements": {
+                "type": "Set",
+                "element": {
+                  "type": "String"
+                }
+              }
+            }
+          }
+        }
+      },
+      "actions": {
+        "DOWNLOAD": {
+          "appliesTo": {
+            "principalTypes": [
+              "User"
+            ],
+            "resourceTypes": [
+              "SynapseEntity"
+            ],
+            "context": {
+              "type": "Record",
+              "attributes": {
+                "inferredEdgeMode": {
+                  "type": "String"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

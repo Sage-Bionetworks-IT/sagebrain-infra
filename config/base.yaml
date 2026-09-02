@@ -39,6 +39,16 @@ NEPTUNE_VIZ:
   # e.g. "public.ecr.aws/neptune/graph-explorer@sha256:<digest>".
   image: "public.ecr.aws/neptune/graph-explorer:latest"
 
+# Governance graph + ReBAC concept endpoint. Disabled by default.
+NEPTUNE_REBAC_CONCEPT:
+  enabled: false
+  policy_store_id: ""
+  namespace: "SageBrain"
+  # How to merge direct grants with inferred grants:
+  # - intersection: require direct allow + all inferred allows
+  # - union: allow if either direct or inferred allows
+  inferred_edge_mode: "intersection"
+
 AUTH:
   synapse_team_id: "3605470"
   # machine_api_key: ""  # set in env-specific config (not committed); enables x-api-key auth
