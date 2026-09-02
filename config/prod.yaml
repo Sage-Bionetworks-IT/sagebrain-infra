@@ -8,7 +8,7 @@ NEPTUNE:
   instance_count: 1
   serverless_min_capacity: 2.0
   serverless_max_capacity: 16.0
-  deletion_protection: false  # Allow easier cleanup in prod
+  deletion_protection: true
 
 NEPTUNE_SAGEMAKER:
   user_profiles:
