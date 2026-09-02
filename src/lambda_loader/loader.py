@@ -137,6 +137,32 @@ def _load_status(load_id: str) -> dict:
     return resp.json()["payload"]["overallStatus"]
 
 
+def _load_errors(load_id: str, limit: int = 5) -> list:
+    """Per-file parse/insert errors for a failed load (absent from overallStatus).
+
+    Calls ``GET /loader/{loadId}?errors=TRUE&details=TRUE`` which returns
+    ``errorLogs`` entries with ``errorCode``, ``errorMessage``, ``fileName``,
+    and ``recordNum`` — enough to identify the bad file and line without
+    manually querying Neptune from SageMaker Studio.
+    Returns an empty list if the request fails so a transient error here
+    never masks the original load failure.
+    """
+    url = (
+        f"https://{NEPTUNE_ENDPOINT}:{NEPTUNE_PORT}/loader/{load_id}"
+        f"?errors=TRUE&details=TRUE&errorsPerPage={limit}"
+    )
+    try:
+        resp = requests.get(
+            url, headers=_signed_headers("GET", url, "", {}), timeout=30
+        )
+        resp.raise_for_status()
+        payload = resp.json().get("payload", {})
+        return payload.get("errors", {}).get("errorLogs", [])
+    except Exception as exc:  # noqa: BLE001
+        _log(action="load_errors_fetch_failed", load_id=load_id, error=str(exc))
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Tracking table
 # ---------------------------------------------------------------------------
@@ -235,11 +261,14 @@ def _record(event: dict) -> dict:
     load_status = event.get("load_status", "UNKNOWN")
     succeeded = load_status == "LOAD_COMPLETED"
 
+    load_id = event.get("load_id")
+    errors = [] if succeeded else _load_errors(load_id)
+
     _put_load(
         portal,
         snapshot,
         status="complete" if succeeded else "error",
-        load_id=event.get("load_id"),
+        load_id=load_id,
         named_graph=event.get("named_graph"),
         prefix=event.get("prefix"),
         etag=event.get("etag", ""),
@@ -248,17 +277,19 @@ def _record(event: dict) -> dict:
         load_status=load_status,
         finished_at=int(time.time()),
         error="" if succeeded else json.dumps(overall)[:1000],
+        load_errors=json.dumps(errors) if errors else "",
     )
     _log(
         action="record",
         portal=portal,
         snapshot=snapshot,
-        load_id=event.get("load_id"),
+        load_id=load_id,
         named_graph=event.get("named_graph"),
         status="complete" if succeeded else "error",
         load_status=load_status,
         total_records=int(overall.get("totalRecords", 0)),
         parsing_errors=int(overall.get("parsingErrors", 0)),
+        load_errors=errors,
     )
     return {"status": "complete" if succeeded else "error", "load_status": load_status}
 
