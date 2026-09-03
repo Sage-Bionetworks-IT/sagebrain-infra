@@ -134,6 +134,8 @@ monitoring_stack = MonitoringStack(
     agent_dlq=neptune_agent_stack.dlq,
     agent_job_table=neptune_agent_stack.job_table,
     neptune_cluster_id=neptune_stack.neptune_cluster.ref,
+    cost_anomaly_config=config.get("COST_ANOMALY_ALERTS", {}),
+    resource_tags=TAGS,
     env=env,
 )
 

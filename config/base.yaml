@@ -1,6 +1,15 @@
 TAGS:
   CostCenter: NO PROGRAM / 000000
 
+# AWS Cost Anomaly Detection alerting. Enable and populate account-specific email
+# recipients in env-specific config to notify individual account owners.
+COST_ANOMALY_ALERTS:
+  enabled: false
+  monitor_dimension: "SERVICE"
+  frequency: "IMMEDIATE"
+  threshold_usd: 100
+  email_subscribers: []
+
 NEPTUNE:
   engine_version: "1.3.2.1"
   serverless_min_capacity: 1.0

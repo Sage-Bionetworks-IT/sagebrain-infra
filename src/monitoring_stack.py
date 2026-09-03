@@ -1,5 +1,8 @@
+import json
+
 import aws_cdk as cdk
 from aws_cdk import aws_cloudwatch as cw
+from aws_cdk import aws_ce as ce
 from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_lambda as lambda_
@@ -40,6 +43,8 @@ class MonitoringStack(cdk.Stack):
         agent_job_table: dynamodb.Table,
         # Neptune
         neptune_cluster_id: str,
+        cost_anomaly_config: dict | None = None,
+        resource_tags: dict[str, str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -60,12 +65,71 @@ class MonitoringStack(cdk.Stack):
                 **kwargs,
             )
 
+        def _resource_tags():
+            if not resource_tags:
+                return None
+            return [
+                {"key": key, "value": value}
+                for key, value in sorted(resource_tags.items())
+            ]
+
         dashboard = cw.Dashboard(
             self,
             "SageBrainDashboard",
             dashboard_name=f"{construct_id}-overview",
             default_interval=cdk.Duration.hours(3),
         )
+
+        cost_anomaly_config = cost_anomaly_config or {}
+        if cost_anomaly_config.get("enabled", False):
+            threshold_usd = cost_anomaly_config.get("threshold_usd")
+            email_subscribers = cost_anomaly_config.get("email_subscribers", [])
+            if threshold_usd is None or float(threshold_usd) <= 0:
+                raise ValueError(
+                    "COST_ANOMALY_ALERTS.threshold_usd must be set to a positive number"
+                )
+            if not email_subscribers:
+                raise ValueError(
+                    "COST_ANOMALY_ALERTS.email_subscribers must contain at least one email"
+                )
+
+            cost_monitor = ce.CfnAnomalyMonitor(
+                self,
+                "AccountCostAnomalyMonitor",
+                monitor_name=cost_anomaly_config.get(
+                    "monitor_name", f"{construct_id}-cost-anomalies"
+                ),
+                monitor_type="DIMENSIONAL",
+                monitor_dimension=cost_anomaly_config.get("monitor_dimension", "SERVICE"),
+                resource_tags=_resource_tags(),
+            )
+            threshold_expression = json.dumps(
+                {
+                    "Dimensions": {
+                        "Key": "ANOMALY_TOTAL_IMPACT_ABSOLUTE",
+                        "MatchOptions": ["GREATER_THAN_OR_EQUAL"],
+                        "Values": [str(threshold_usd)],
+                    }
+                },
+                separators=(",", ":"),
+            )
+            ce.CfnAnomalySubscription(
+                self,
+                "AccountCostAnomalySubscription",
+                subscription_name=cost_anomaly_config.get(
+                    "subscription_name", f"{construct_id}-cost-anomaly-subscription"
+                ),
+                frequency=cost_anomaly_config.get("frequency", "IMMEDIATE"),
+                monitor_arn_list=[cost_monitor.attr_monitor_arn],
+                subscribers=[
+                    ce.CfnAnomalySubscription.SubscriberProperty(
+                        address=email, type="EMAIL"
+                    )
+                    for email in email_subscribers
+                ],
+                threshold_expression=threshold_expression,
+                resource_tags=_resource_tags(),
+            )
 
         # ------------------------------------------------------------------ #
         # Query API

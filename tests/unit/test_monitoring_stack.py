@@ -69,6 +69,15 @@ def template():
         agent_dlq=_queue("ADLQ"),
         agent_job_table=_table("ATable"),
         neptune_cluster_id="cluster-TESTCLUSTERID",
+        cost_anomaly_config={
+            "enabled": True,
+            "threshold_usd": 25,
+            "email_subscribers": [
+                "owner1@example.com",
+                "owner2@example.com",
+            ],
+        },
+        resource_tags={"CostCenter": "NO PROGRAM / 000000"},
     )
     return Template.from_stack(stack)
 
@@ -124,6 +133,34 @@ def test_agent_dlq_alarm_threshold_is_one(template):
             "EvaluationPeriods": 1,
             "ComparisonOperator": "GreaterThanOrEqualToThreshold",
             "TreatMissingData": "notBreaching",
+        },
+    )
+
+
+def test_cost_anomaly_monitor_created(template):
+    template.has_resource_properties(
+        "AWS::CE::AnomalyMonitor",
+        {
+            "MonitorType": "DIMENSIONAL",
+            "MonitorDimension": "SERVICE",
+            "MonitorName": "TestMonitoringStack-cost-anomalies",
+            "ResourceTags": [{"Key": "CostCenter", "Value": "NO PROGRAM / 000000"}],
+        },
+    )
+
+
+def test_cost_anomaly_subscription_created(template):
+    template.has_resource_properties(
+        "AWS::CE::AnomalySubscription",
+        {
+            "Frequency": "IMMEDIATE",
+            "SubscriptionName": "TestMonitoringStack-cost-anomaly-subscription",
+            "Subscribers": [
+                {"Address": "owner1@example.com", "Type": "EMAIL"},
+                {"Address": "owner2@example.com", "Type": "EMAIL"},
+            ],
+            "ThresholdExpression": '{"Dimensions":{"Key":"ANOMALY_TOTAL_IMPACT_ABSOLUTE","MatchOptions":["GREATER_THAN_OR_EQUAL"],"Values":["25"]}}',
+            "ResourceTags": [{"Key": "CostCenter", "Value": "NO PROGRAM / 000000"}],
         },
     )
 
