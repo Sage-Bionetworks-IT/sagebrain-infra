@@ -6,7 +6,6 @@ from src.neptune_agent_stack import NeptuneAgentStack
 from src.network_stack import NetworkStack
 from src.neptune_api_stack import NeptuneApiStack
 from src.neptune_pipeline_stack import NeptunePipelineStack
-from src.neptune_sagemaker_stack import NeptuneSageMakerStack
 from src.neptune_stack import NeptuneStack
 from src.neptune_viz_stack import NeptuneVizStack
 from src.monitoring_stack import MonitoringStack
@@ -59,19 +58,6 @@ if config.get("NEPTUNE_PIPELINE", {}).get("enabled", True):
         neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
         neptune_load_role_arn=neptune_stack.neptune_load_role.role_arn,
         pipeline_config=config.get("NEPTUNE_PIPELINE", {}),
-        env=env,
-    )
-
-# SageMaker Studio for team access to Neptune (skipped in envs where enabled=false)
-if config["NEPTUNE_SAGEMAKER"].get("enabled", True):
-    NeptuneSageMakerStack(
-        scope=cdk_app,
-        construct_id=f"{STACK_NAME_PREFIX}-neptune-sagemaker",
-        vpc=network_stack.vpc,
-        neptune_security_group=neptune_stack.neptune_security_group,
-        neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
-        sagemaker_config=config["NEPTUNE_SAGEMAKER"],
-        data_bucket=neptune_stack.data_bucket,
         env=env,
     )
 

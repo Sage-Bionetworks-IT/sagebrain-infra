@@ -18,10 +18,6 @@ NEPTUNE:
   create_parameter_group: false
   parameter_group_parameters: {}
 
-NEPTUNE_SAGEMAKER:
-  enabled: true
-  domain_name: "sage-brain-studio"
-
 # Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
 # uploads and bulk-loads each snapshot into its own named graph.
 NEPTUNE_PIPELINE:
