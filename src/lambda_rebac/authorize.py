@@ -211,6 +211,99 @@ def _merge_decisions(evaluations: list[dict], inferred_edge_mode: str) -> bool:
     return any(direct) and all(inferred)
 
 
+def _authorize_resource(
+    principal_id: str,
+    action: str,
+    resource_id: str,
+    approved_access_requirements: list[str] | None,
+    inferred_edge_mode: str,
+) -> dict:
+    lookup_start = time.time()
+    resource_iri = _resource_iri(resource_id)
+    bindings = _query_governance(resource_iri)
+    grants, access_requirements = _extract_governance(bindings)
+    required_ars = set(access_requirements)
+    approved_ars = (
+        set(approved_access_requirements)
+        if approved_access_requirements is not None
+        else set()
+    )
+    ar_satisfied = (
+        required_ars.issubset(approved_ars)
+        if approved_access_requirements is not None
+        else True
+    )
+
+    relevant_inferred_grants = [
+        g
+        for g in grants
+        if g["binding_type"].lower() != "direct"
+        and g["permission"] == action
+        and _principal_matches(g["principal"], principal_id)
+    ]
+    has_inferred_grant = bool(relevant_inferred_grants)
+    inferred_all_satisfied = all(ar_satisfied for _ in relevant_inferred_grants)
+
+    matching_grants = [
+        g
+        for g in grants
+        if g["permission"] == action
+        and _principal_matches(g["principal"], principal_id)
+    ]
+
+    if not matching_grants:
+        return {
+            "decision": "DENY",
+            "reason": "no_matching_governance_grant",
+            "principal_id": principal_id,
+            "action": action,
+            "resource_id": resource_id,
+            "inferred_edge_mode": inferred_edge_mode,
+            "lookup_ms": round((time.time() - lookup_start) * 1000, 2),
+            "access_requirements": access_requirements,
+            "ar_satisfied": ar_satisfied,
+            "evaluated_grants": [],
+        }
+
+    evaluations = []
+    for grant in matching_grants:
+        allowed, policy_ids = _avp_is_allowed(
+            principal_id=principal_id,
+            resource_id=resource_id,
+            grant=grant,
+            access_requirements=access_requirements,
+            inferred_edge_mode=inferred_edge_mode,
+            principal_matches_grant=_principal_matches(
+                grant["principal"], principal_id
+            ),
+            permission_matches_grant=grant["permission"] == action,
+            ar_satisfied=ar_satisfied,
+            has_inferred_grant=has_inferred_grant,
+            inferred_all_satisfied=inferred_all_satisfied,
+        )
+        evaluations.append(
+            {
+                "grant": grant["grant"],
+                "binding_type": grant["binding_type"],
+                "allowed": allowed,
+                "determining_policies": policy_ids,
+            }
+        )
+
+    allowed = _merge_decisions(evaluations, inferred_edge_mode)
+    return {
+        "decision": "ALLOW" if allowed else "DENY",
+        "reason": "authorized" if allowed else "rebac_policy_denied",
+        "principal_id": principal_id,
+        "action": action,
+        "resource_id": resource_id,
+        "inferred_edge_mode": inferred_edge_mode,
+        "lookup_ms": round((time.time() - lookup_start) * 1000, 2),
+        "access_requirements": access_requirements,
+        "evaluated_grants": evaluations,
+    }
+
+
 def handler(event, context):
     try:
         body = json.loads(event.get("body") or "{}")
@@ -220,15 +313,35 @@ def handler(event, context):
     principal_id = str(body.get("principal_id", "")).strip()
     action = str(body.get("action", "")).strip().upper()
     resource_id = str(body.get("resource_id", "")).strip()
+    resource_ids = body.get("resource_ids")
     inferred_edge_mode = str(
         body.get("inferred_edge_mode", DEFAULT_INFERRED_EDGE_MODE)
     ).strip()
 
-    if not principal_id or not action or not resource_id:
+    if not principal_id or not action:
+        return _json_response(
+            400,
+            {"error": "Missing one or more required fields: principal_id, action"},
+        )
+    if resource_id and resource_ids is not None:
+        return _json_response(
+            400,
+            {"error": "Provide only one of resource_id or resource_ids"},
+        )
+    if resource_ids is not None and (
+        not isinstance(resource_ids, list)
+        or not resource_ids
+        or not all(isinstance(rid, str) and rid.strip() for rid in resource_ids)
+    ):
+        return _json_response(
+            400,
+            {"error": "resource_ids must be a non-empty array of strings"},
+        )
+    if not resource_id and resource_ids is None:
         return _json_response(
             400,
             {
-                "error": "Missing one or more required fields: principal_id, action, resource_id"
+                "error": "Missing one or more required fields: resource_id or resource_ids"
             },
         )
     approved_access_requirements = body.get("approved_access_requirements")
@@ -248,94 +361,58 @@ def handler(event, context):
             },
         )
 
-    lookup_start = time.time()
-    resource_iri = _resource_iri(resource_id)
     try:
-        bindings = _query_governance(resource_iri)
-        grants, access_requirements = _extract_governance(bindings)
-        required_ars = set(access_requirements)
-        approved_ars = (
-            set(approved_access_requirements)
-            if approved_access_requirements is not None
-            else set()
-        )
-        ar_satisfied = (
-            required_ars.issubset(approved_ars)
-            if approved_access_requirements is not None
-            else True
-        )
-
-        relevant_inferred_grants = [
-            g
-            for g in grants
-            if g["binding_type"].lower() != "direct"
-            and g["permission"] == action
-            and _principal_matches(g["principal"], principal_id)
-        ]
-        has_inferred_grant = bool(relevant_inferred_grants)
-        inferred_all_satisfied = all(ar_satisfied for _ in relevant_inferred_grants)
-
-        matching_grants = [
-            g
-            for g in grants
-            if g["permission"] == action
-            and _principal_matches(g["principal"], principal_id)
-        ]
-
-        if not matching_grants:
-            return _json_response(
-                200,
-                {
-                    "decision": "DENY",
-                    "reason": "no_matching_governance_grant",
-                    "principal_id": principal_id,
-                    "action": action,
-                    "resource_id": resource_id,
-                    "inferred_edge_mode": inferred_edge_mode,
-                    "lookup_ms": round((time.time() - lookup_start) * 1000, 2),
-                    "access_requirements": access_requirements,
-                    "ar_satisfied": ar_satisfied,
-                },
-            )
-
-        evaluations = []
-        for grant in matching_grants:
-            allowed, policy_ids = _avp_is_allowed(
+        if resource_ids is None:
+            result = _authorize_resource(
                 principal_id=principal_id,
+                action=action,
                 resource_id=resource_id,
-                grant=grant,
-                access_requirements=access_requirements,
+                approved_access_requirements=approved_access_requirements,
                 inferred_edge_mode=inferred_edge_mode,
-                principal_matches_grant=_principal_matches(
-                    grant["principal"], principal_id
-                ),
-                permission_matches_grant=grant["permission"] == action,
-                ar_satisfied=ar_satisfied,
-                has_inferred_grant=has_inferred_grant,
-                inferred_all_satisfied=inferred_all_satisfied,
             )
-            evaluations.append(
-                {
-                    "grant": grant["grant"],
-                    "binding_type": grant["binding_type"],
-                    "allowed": allowed,
-                    "determining_policies": policy_ids,
-                }
-            )
+            return _json_response(200, result)
 
-        allowed = _merge_decisions(evaluations, inferred_edge_mode)
+        normalized_resource_ids = [rid.strip() for rid in resource_ids]
+        per_resource = [
+            _authorize_resource(
+                principal_id=principal_id,
+                action=action,
+                resource_id=rid,
+                approved_access_requirements=approved_access_requirements,
+                inferred_edge_mode=inferred_edge_mode,
+            )
+            for rid in normalized_resource_ids
+        ]
+        authorized_resource_ids = [
+            result["resource_id"]
+            for result in per_resource
+            if result["decision"] == "ALLOW"
+        ]
+        denied_resource_ids = [
+            result["resource_id"]
+            for result in per_resource
+            if result["decision"] != "ALLOW"
+        ]
         return _json_response(
             200,
             {
-                "decision": "ALLOW" if allowed else "DENY",
-                "reason": "authorized" if allowed else "rebac_policy_denied",
+                "decision": "ALLOW" if authorized_resource_ids else "DENY",
+                "reason": (
+                    "authorized_subset"
+                    if authorized_resource_ids and denied_resource_ids
+                    else (
+                        "authorized"
+                        if authorized_resource_ids
+                        else "rebac_policy_denied"
+                    )
+                ),
                 "principal_id": principal_id,
                 "action": action,
-                "resource_id": resource_id,
                 "inferred_edge_mode": inferred_edge_mode,
-                "lookup_ms": round((time.time() - lookup_start) * 1000, 2),
-                "access_requirements": access_requirements,
-                "evaluated_grants": evaluations,
+                "resource_ids": normalized_resource_ids,
+                "authorized_resource_ids": authorized_resource_ids,
+                "denied_resource_ids": denied_resource_ids,
+                "results": per_resource,
             },
         )
     except (

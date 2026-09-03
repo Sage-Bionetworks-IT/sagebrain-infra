@@ -252,13 +252,14 @@ This repository includes an optional concept endpoint that combines:
 
 When enabled, `POST /authorize` does the following:
 
-1. Reads governance relationships for the target resource from Neptune.
+1. Reads governance relationships for the target resource(s) from Neptune.
 2. Filters grants that match `{principal_id, action}`.
 3. Calls `verifiedpermissions:IsAuthorized` for each matching grant.
 4. Merges direct and inferred grant decisions using `inferred_edge_mode`:
    - `intersection`: require direct allow + all inferred allows
    - `union`: allow if any direct/inferred path allows
-5. Fails closed (`DENY`) when Neptune or Verified Permissions is unavailable.
+5. For batch requests (`resource_ids`), returns only authorized resources when some resources are denied.
+6. Fails closed (`DENY`) when Neptune or Verified Permissions is unavailable.
 
 Enable it in config:
 
@@ -293,6 +294,15 @@ curl -X POST <REBAC_URL> \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <synapse-pat>" \
   -d '{"principal_id":"9000001","action":"DOWNLOAD","resource_id":"syn10081783"}'
+```
+
+Batch request (partial authorization):
+
+```console
+curl -X POST <REBAC_URL> \
+  -H "Content-Type: application/json" \
+  -H "Authorization: ******" \
+  -d '{"principal_id":"9000001","action":"DOWNLOAD","resource_ids":["syn10081783","syn10081784"]}'
 ```
 
 For full technical details and import-ready AVP artifacts, see [docs/governance_rebac_concept.md](docs/governance_rebac_concept.md).

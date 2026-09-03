@@ -144,6 +144,76 @@ def test_denies_when_no_matching_governance_grant(module):
     mock_avp.is_authorized.assert_not_called()
 
 
+def test_rejects_request_with_both_resource_id_and_resource_ids(module):
+    auth, _ = module
+    response = auth.handler(
+        _event(
+            {
+                "principal_id": "9000001",
+                "action": "DOWNLOAD",
+                "resource_id": "syn10081783",
+                "resource_ids": ["syn10081783"],
+            }
+        ),
+        {},
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 400
+    assert "resource_id or resource_ids" in body["error"]
+
+
+def test_rejects_invalid_resource_ids_shape(module):
+    auth, _ = module
+    response = auth.handler(
+        _event(
+            {
+                "principal_id": "9000001",
+                "action": "DOWNLOAD",
+                "resource_ids": "syn10081783",
+            }
+        ),
+        {},
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 400
+    assert "resource_ids must be a non-empty array of strings" == body["error"]
+
+
+def test_batch_returns_authorized_subset_instead_of_whole_request_deny(module):
+    auth, mock_avp = module
+    mock_avp.is_authorized.side_effect = [
+        {"decision": "ALLOW", "determiningPolicies": []},
+        {"decision": "DENY", "determiningPolicies": []},
+    ]
+    session_patch, sigv4_patch = _patch_auth_primitives(auth)
+
+    with session_patch, sigv4_patch, patch("authorize.requests.post") as mock_post:
+        mock_post.side_effect = [
+            _neptune_response([_grant_row()]),
+            _neptune_response([_grant_row()]),
+        ]
+        response = auth.handler(
+            _event(
+                {
+                    "principal_id": "9000001",
+                    "action": "DOWNLOAD",
+                    "resource_ids": ["syn10081783", "syn10081784"],
+                }
+            ),
+            {},
+        )
+
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200
+    assert body["decision"] == "ALLOW"
+    assert body["reason"] == "authorized_subset"
+    assert body["authorized_resource_ids"] == ["syn10081783"]
+    assert body["denied_resource_ids"] == ["syn10081784"]
+    assert len(body["results"]) == 2
+    assert body["results"][0]["decision"] == "ALLOW"
+    assert body["results"][1]["decision"] == "DENY"
+
+
 @pytest.mark.parametrize(
     "inferred_edge_mode,avp_decisions,expected",
     [

@@ -42,14 +42,15 @@ syn:syn10081783 a gov:SynapseEntity ;
 
 `POST /authorize` (Lambda: `src/lambda_rebac/authorize.py`) performs:
 
-1. Query Neptune for `gov:hasACL` + `gov:AccessGrant` + `gov:hasAccessRequirement` for the resource.
+1. Query Neptune for `gov:hasACL` + `gov:AccessGrant` + `gov:hasAccessRequirement` for the resource (or each resource in `resource_ids`).
 2. Keep only grants matching `{principal_id, action}`.
 3. Call `verifiedpermissions:IsAuthorized` once per matching grant.
 4. Merge direct/inferred decisions:
    - `intersection`: `direct_allow AND all_inferred_allow`
    - `union`: `any_allow`
 5. Return `ALLOW`/`DENY` with evaluated grants and determining policy IDs.
-6. If Neptune/AVP errors, return `503` with `decision=DENY` (`authorization_unavailable`) to fail closed.
+6. For batch requests (`resource_ids`), return the authorized subset (`authorized_resource_ids`) and per-resource decisions (`results`) instead of denying the whole request when some resources fail authorization.
+7. If Neptune/AVP errors, return `503` with `decision=DENY` (`authorization_unavailable`) to fail closed.
 
 The resolver sends these context flags into Cedar per evaluation:
 `governanceEvidencePresent`, `principalMatchesGrant`, `permissionMatchesGrant`,
