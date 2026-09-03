@@ -100,7 +100,9 @@ class MonitoringStack(cdk.Stack):
                     "monitor_name", f"{construct_id}-cost-anomalies"
                 ),
                 monitor_type="DIMENSIONAL",
-                monitor_dimension=cost_anomaly_config.get("monitor_dimension", "SERVICE"),
+                monitor_dimension=cost_anomaly_config.get(
+                    "monitor_dimension", "SERVICE"
+                ),
                 resource_tags=_resource_tags(),
             )
             threshold_expression = json.dumps(

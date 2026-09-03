@@ -159,7 +159,10 @@ def test_cost_anomaly_subscription_created(template):
                 {"Address": "owner1@example.com", "Type": "EMAIL"},
                 {"Address": "owner2@example.com", "Type": "EMAIL"},
             ],
-            "ThresholdExpression": '{"Dimensions":{"Key":"ANOMALY_TOTAL_IMPACT_ABSOLUTE","MatchOptions":["GREATER_THAN_OR_EQUAL"],"Values":["25"]}}',
+            "ThresholdExpression": (
+                '{"Dimensions":{"Key":"ANOMALY_TOTAL_IMPACT_ABSOLUTE",'
+                '"MatchOptions":["GREATER_THAN_OR_EQUAL"],"Values":["25"]}}'
+            ),
             "ResourceTags": [{"Key": "CostCenter", "Value": "NO PROGRAM / 000000"}],
         },
     )
