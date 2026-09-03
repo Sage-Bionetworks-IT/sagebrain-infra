@@ -304,25 +304,19 @@ def _authorize_resource(
     }
 
 
-def handler(event, context):
-    try:
-        body = json.loads(event.get("body") or "{}")
-    except json.JSONDecodeError:
-        return _json_response(400, {"error": "Request body must be valid JSON"})
+def _parse_event_body(event: dict | None) -> tuple[dict, dict | None]:
+    body = event or {}
+    if isinstance(body, dict) and "body" in body and isinstance(body.get("body"), str):
+        try:
+            body = json.loads(body.get("body") or "{}")
+        except json.JSONDecodeError:
+            return {}, _json_response(400, {"error": "Request body must be valid JSON"})
+    if not isinstance(body, dict):
+        body = {}
+    return body, None
 
-    principal_id = str(body.get("principal_id", "")).strip()
-    action = str(body.get("action", "")).strip().upper()
-    resource_id = str(body.get("resource_id", "")).strip()
-    resource_ids = body.get("resource_ids")
-    inferred_edge_mode = str(
-        body.get("inferred_edge_mode", DEFAULT_INFERRED_EDGE_MODE)
-    ).strip()
 
-    if not principal_id or not action:
-        return _json_response(
-            400,
-            {"error": "Missing one or more required fields: principal_id, action"},
-        )
+def _validate_resource_ids(resource_id: str, resource_ids: object) -> dict | None:
     if resource_id and resource_ids is not None:
         return _json_response(
             400,
@@ -344,76 +338,129 @@ def handler(event, context):
                 "error": "Missing one or more required fields: resource_id or resource_ids"
             },
         )
+    return None
+
+
+def _validate_request(body: dict) -> tuple[dict, dict | None]:
+    principal_id = str(body.get("principal_id", "")).strip()
+    action = str(body.get("action", "")).strip().upper()
+    resource_id = str(body.get("resource_id", "")).strip()
+    resource_ids = body.get("resource_ids")
+    inferred_edge_mode = str(
+        body.get("inferred_edge_mode", DEFAULT_INFERRED_EDGE_MODE)
+    ).strip()
     approved_access_requirements = body.get("approved_access_requirements")
+
+    if not principal_id or not action:
+        return {}, _json_response(
+            400,
+            {"error": "Missing one or more required fields: principal_id, action"},
+        )
+
+    resource_error = _validate_resource_ids(resource_id, resource_ids)
+    if resource_error:
+        return {}, resource_error
+
     if approved_access_requirements is not None and (
         not isinstance(approved_access_requirements, list)
         or not all(isinstance(ar, str) for ar in approved_access_requirements)
     ):
-        return _json_response(
+        return {}, _json_response(
             400,
             {"error": "approved_access_requirements must be an array of strings"},
         )
     if inferred_edge_mode not in VALID_INFERRED_EDGE_MODES:
-        return _json_response(
+        return {}, _json_response(
             400,
             {
                 "error": f"inferred_edge_mode must be one of: {', '.join(sorted(VALID_INFERRED_EDGE_MODES))}"
             },
         )
 
+    return {
+        "principal_id": principal_id,
+        "action": action,
+        "resource_id": resource_id,
+        "resource_ids": resource_ids,
+        "approved_access_requirements": approved_access_requirements,
+        "inferred_edge_mode": inferred_edge_mode,
+    }, None
+
+
+def _authorize_batch(
+    principal_id: str,
+    action: str,
+    resource_ids: list[str],
+    approved_access_requirements: list[str] | None,
+    inferred_edge_mode: str,
+) -> dict:
+    normalized_resource_ids = [rid.strip() for rid in resource_ids]
+    per_resource = [
+        _authorize_resource(
+            principal_id=principal_id,
+            action=action,
+            resource_id=rid,
+            approved_access_requirements=approved_access_requirements,
+            inferred_edge_mode=inferred_edge_mode,
+        )
+        for rid in normalized_resource_ids
+    ]
+    authorized_resource_ids = [
+        result["resource_id"]
+        for result in per_resource
+        if result["decision"] == "ALLOW"
+    ]
+    denied_resource_ids = [
+        result["resource_id"]
+        for result in per_resource
+        if result["decision"] != "ALLOW"
+    ]
+    return {
+        "decision": "ALLOW" if authorized_resource_ids else "DENY",
+        "reason": (
+            "authorized_subset"
+            if authorized_resource_ids and denied_resource_ids
+            else ("authorized" if authorized_resource_ids else "rebac_policy_denied")
+        ),
+        "principal_id": principal_id,
+        "action": action,
+        "inferred_edge_mode": inferred_edge_mode,
+        "resource_ids": normalized_resource_ids,
+        "authorized_resource_ids": authorized_resource_ids,
+        "denied_resource_ids": denied_resource_ids,
+        "results": per_resource,
+    }
+
+
+def handler(event, context):
+    body, body_error = _parse_event_body(event)
+    if body_error:
+        return body_error
+
+    request, request_error = _validate_request(body)
+    if request_error:
+        return request_error
+
     try:
-        if resource_ids is None:
+        if request["resource_ids"] is None:
             result = _authorize_resource(
-                principal_id=principal_id,
-                action=action,
-                resource_id=resource_id,
-                approved_access_requirements=approved_access_requirements,
-                inferred_edge_mode=inferred_edge_mode,
+                principal_id=request["principal_id"],
+                action=request["action"],
+                resource_id=request["resource_id"],
+                approved_access_requirements=request["approved_access_requirements"],
+                inferred_edge_mode=request["inferred_edge_mode"],
             )
             return _json_response(200, result)
 
-        normalized_resource_ids = [rid.strip() for rid in resource_ids]
-        per_resource = [
-            _authorize_resource(
-                principal_id=principal_id,
-                action=action,
-                resource_id=rid,
-                approved_access_requirements=approved_access_requirements,
-                inferred_edge_mode=inferred_edge_mode,
-            )
-            for rid in normalized_resource_ids
-        ]
-        authorized_resource_ids = [
-            result["resource_id"]
-            for result in per_resource
-            if result["decision"] == "ALLOW"
-        ]
-        denied_resource_ids = [
-            result["resource_id"]
-            for result in per_resource
-            if result["decision"] != "ALLOW"
-        ]
         return _json_response(
             200,
-            {
-                "decision": "ALLOW" if authorized_resource_ids else "DENY",
-                "reason": (
-                    "authorized_subset"
-                    if authorized_resource_ids and denied_resource_ids
-                    else (
-                        "authorized"
-                        if authorized_resource_ids
-                        else "rebac_policy_denied"
-                    )
-                ),
-                "principal_id": principal_id,
-                "action": action,
-                "inferred_edge_mode": inferred_edge_mode,
-                "resource_ids": normalized_resource_ids,
-                "authorized_resource_ids": authorized_resource_ids,
-                "denied_resource_ids": denied_resource_ids,
-                "results": per_resource,
-            },
+            _authorize_batch(
+                principal_id=request["principal_id"],
+                action=request["action"],
+                resource_ids=request["resource_ids"],
+                approved_access_requirements=request["approved_access_requirements"],
+                inferred_edge_mode=request["inferred_edge_mode"],
+            ),
         )
     except (
         requests.exceptions.RequestException,

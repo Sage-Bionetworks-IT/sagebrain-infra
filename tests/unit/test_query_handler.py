@@ -300,3 +300,84 @@ def test_processes_multiple_records(
     ]
     assert "job-a" in job_ids_written
     assert "job-b" in job_ids_written
+
+
+@pytest.fixture
+def submit_handler(monkeypatch):
+    monkeypatch.setenv(
+        "JOB_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/123456789012/test-queue"
+    )
+    monkeypatch.setenv("JOB_TABLE_NAME", "test-job-table")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    monkeypatch.setenv("REBAC_AUTHORIZE_FUNCTION_NAME", "test-rebac-lambda")
+    sys.modules.pop("submit", None)
+    import submit as s
+
+    importlib.reload(s)
+    s._dynamodb = MagicMock()
+    s._sqs = MagicMock()
+    s._lambda = MagicMock()
+    return s
+
+
+def test_submit_rebac_denies_unscoped_resource_query(submit_handler):
+    event = {
+        "requestContext": {"authorizer": {"user_id": "9000001"}},
+        "headers": {"Authorization": "Bearer test-token", "X-Source": "direct"},
+        "body": json.dumps({"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 5"}),
+    }
+
+    response = submit_handler.handler(event, {})
+
+    assert response["statusCode"] == 403
+    body = json.loads(response["body"])
+    assert "explicit Synapse resources" in body["error"]
+    submit_handler._lambda.invoke.assert_not_called()
+
+
+def test_submit_rebac_allows_resource_scoped_query(submit_handler):
+    submit_handler._lambda.invoke.return_value = {
+        "Payload": MagicMock(
+            read=MagicMock(
+                return_value=json.dumps(
+                    {
+                        "statusCode": 200,
+                        "body": json.dumps(
+                            {
+                                "decision": "ALLOW",
+                                "authorized_resource_ids": ["syn123"],
+                            }
+                        ),
+                    }
+                )
+            )
+        )
+    }
+
+    event = {
+        "requestContext": {"authorizer": {"user_id": "9000001"}},
+        "headers": {"Authorization": "Bearer test-token", "X-Source": "direct"},
+        "body": json.dumps(
+            {
+                "query": (
+                    "SELECT * WHERE { VALUES ?entity "
+                    "{ <https://www.synapse.org/Synapse:syn123> } "
+                    "?entity ?p ?o } LIMIT 5"
+                )
+            }
+        ),
+    }
+
+    response = submit_handler.handler(event, {})
+
+    assert response["statusCode"] == 202
+    body = json.loads(response["body"])
+    assert body["status"] == "pending"
+    submit_handler._lambda.invoke.assert_called_once()
+    payload = json.loads(submit_handler._lambda.invoke.call_args.kwargs["Payload"])
+    assert payload["resource_ids"] == ["syn123"]
+    assert payload["principal_id"] == "9000001"
+    assert payload["action"] == "ACCESS"

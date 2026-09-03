@@ -41,6 +41,7 @@ class NeptuneApiStack(cdk.Stack):
         neptune_security_group: ec2.SecurityGroup,
         synapse_team_id: str,
         machine_api_key: str = "",
+        rebac_authorize_function_name: str = "",
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -99,16 +100,20 @@ class NeptuneApiStack(cdk.Stack):
         # -------------------
         # Submit Lambda — POST /query (no VPC needed)
         # -------------------
+        submit_env = {
+            "JOB_TABLE_NAME": self.job_table.table_name,
+            "JOB_QUEUE_URL": self.job_queue.queue_url,
+        }
+        if rebac_authorize_function_name:
+            submit_env["REBAC_AUTHORIZE_FUNCTION_NAME"] = rebac_authorize_function_name
+
         self.submit_fn = lambda_.Function(
             self,
             "NeptuneQuerySubmitFunction",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="submit.handler",
             code=lambda_.Code.from_asset("src/lambda", bundling=_BUNDLING),
-            environment={
-                "JOB_TABLE_NAME": self.job_table.table_name,
-                "JOB_QUEUE_URL": self.job_queue.queue_url,
-            },
+            environment=submit_env,
             timeout=cdk.Duration.seconds(10),
             memory_size=256,
         )

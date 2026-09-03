@@ -175,3 +175,7 @@ node_modules/
 cdk.out
 
 kgdata
+data
+docs/manifest.ttl.example
+tools/throttle_test.py
+.vscode/

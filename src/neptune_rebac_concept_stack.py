@@ -1,10 +1,8 @@
 import aws_cdk as cdk
 import json
-from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
-from aws_cdk import aws_logs as logs
 from aws_cdk import aws_verifiedpermissions as avp
 from constructs import Construct
 
@@ -257,92 +255,11 @@ class NeptuneRebacConceptStack(cdk.Stack):
             )
         )
 
-        authorizer_env = {"SYNAPSE_TEAM_ID": synapse_team_id}
-        if machine_api_key:
-            authorizer_env["MACHINE_API_KEY"] = machine_api_key
-
-        auth_fn = lambda_.Function(
-            self,
-            "SynapseAuthorizerFunction",
-            runtime=lambda_.Runtime.PYTHON_3_11,
-            handler="authorizer.handler",
-            code=lambda_.Code.from_asset("src/lambda_authorizer"),
-            environment=authorizer_env,
-            timeout=cdk.Duration.seconds(10),
-            memory_size=256,
-        )
-
-        request_authorizer = apigw.RequestAuthorizer(
-            self,
-            "SynapseRequestAuthorizer",
-            handler=auth_fn,
-            identity_sources=[apigw.IdentitySource.header("Authorization")],
-            results_cache_ttl=cdk.Duration.seconds(0),
-        )
-
-        access_log_group = logs.LogGroup(
-            self,
-            "GovernanceRebacApiAccessLogs",
-            retention=logs.RetentionDays.ONE_MONTH,
-        )
-
-        self.api = apigw.RestApi(
-            self,
-            "GovernanceRebacApi",
-            rest_api_name="governance-rebac-concept-api",
-            description="Concept governance-graph authorization endpoint backed by Verified Permissions",
-            cloud_watch_role=True,
-            default_cors_preflight_options=apigw.CorsOptions(
-                allow_origins=apigw.Cors.ALL_ORIGINS,
-                allow_methods=["POST", "OPTIONS"],
-                allow_headers=["Content-Type", "Authorization", "x-api-key"],
-            ),
-            deploy_options=apigw.StageOptions(
-                access_log_destination=apigw.LogGroupLogDestination(access_log_group),
-                access_log_format=apigw.AccessLogFormat.json_with_standard_fields(
-                    caller=True,
-                    http_method=True,
-                    ip=True,
-                    protocol=True,
-                    request_time=True,
-                    resource_path=True,
-                    response_length=True,
-                    status=True,
-                    user=True,
-                ),
-                logging_level=apigw.MethodLoggingLevel.ERROR,
-                metrics_enabled=True,
-                throttling_rate_limit=50,
-                throttling_burst_limit=100,
-            ),
-        )
-
-        self.api.add_gateway_response(
-            "AccessDeniedAs401",
-            type=apigw.ResponseType.ACCESS_DENIED,
-            status_code="401",
-            response_headers={"Access-Control-Allow-Origin": "'*'"},
-        )
-        self.api.add_gateway_response(
-            "UnauthorizedWithCors",
-            type=apigw.ResponseType.UNAUTHORIZED,
-            response_headers={"Access-Control-Allow-Origin": "'*'"},
-        )
-
-        authorize_resource = self.api.root.add_resource("authorize")
-        authorize_resource.add_method(
-            "POST",
-            apigw.LambdaIntegration(
-                self.authorize_fn, timeout=cdk.Duration.seconds(29)
-            ),
-            authorizer=request_authorizer,
-        )
-
         cdk.CfnOutput(
             self,
-            "GovernanceRebacAuthorizeUrl",
-            value=f"{self.api.url}authorize",
-            description="Concept ReBAC authorize endpoint — POST principal/action/resource",
+            "GovernanceRebacAuthorizeFunctionName",
+            value=self.authorize_fn.function_name,
+            description="Internal ReBAC authorize Lambda used by the query submission path",
         )
         cdk.CfnOutput(
             self,

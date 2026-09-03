@@ -96,21 +96,22 @@ def test_lambda_has_verified_permissions_policy(template_with_existing_store):
     )
 
 
-def test_api_gateway_post_authorize_uses_custom_authorizer(
+def test_rebac_authorizer_lambda_is_internal_only(
     template_with_existing_store,
 ):
     template_with_existing_store.has_resource_properties(
-        "AWS::ApiGateway::Method",
+        "AWS::Lambda::Function",
         {
-            "HttpMethod": "POST",
-            "AuthorizationType": "CUSTOM",
-            "AuthorizerId": Match.any_value(),
+            "Handler": "authorize.handler",
+            "Runtime": "python3.11",
+            "Timeout": 30,
         },
     )
+    assert not template_with_existing_store.find_resources("AWS::ApiGateway::Method")
 
 
 def test_concept_outputs_exist(template_with_existing_store):
-    template_with_existing_store.has_output("GovernanceRebacAuthorizeUrl", {})
+    template_with_existing_store.has_output("GovernanceRebacAuthorizeFunctionName", {})
     template_with_existing_store.has_output("GovernanceRebacPolicyStoreId", {})
     template_with_existing_store.has_output("GovernanceRebacPolicyId", {})
 
