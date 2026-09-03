@@ -84,9 +84,19 @@ class MonitoringStack(cdk.Stack):
         if cost_anomaly_config.get("enabled", False):
             threshold_usd = cost_anomaly_config.get("threshold_usd")
             email_subscribers = cost_anomaly_config.get("email_subscribers", [])
-            if threshold_usd is None or float(threshold_usd) <= 0:
+            try:
+                threshold_value = float(threshold_usd) if threshold_usd is not None else 0
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"COST_ANOMALY_ALERTS.threshold_usd must be a positive number, got: {threshold_usd!r}"
+                ) from exc
+            if threshold_usd is None or threshold_value <= 0:
                 raise ValueError(
                     "COST_ANOMALY_ALERTS.threshold_usd must be set to a positive number"
+                )
+            if not isinstance(email_subscribers, list):
+                raise ValueError(
+                    f"COST_ANOMALY_ALERTS.email_subscribers must be a list, got: {type(email_subscribers).__name__}"
                 )
             if not email_subscribers:
                 raise ValueError(
