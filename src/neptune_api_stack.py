@@ -139,10 +139,15 @@ class NeptuneApiStack(cdk.Stack):
 
         # -------------------
         # Worker Lambda — SQS-triggered SPARQL executor (needs VPC)
+        # Supports hybrid governance: post_filter (ReBAC) or query_rewrite (Neptune)
         # -------------------
         query_env = {
             "NEPTUNE_ENDPOINT": neptune_read_endpoint,
             "JOB_TABLE_NAME": self.job_table.table_name,
+            # Governance mode: "post_filter" (default) or "query_rewrite"
+            # - post_filter: Run query, extract resources, check ReBAC
+            # - query_rewrite: Inject governance filters into SPARQL before Neptune
+            "GOVERNANCE_MODE": "post_filter",  # TODO: Switch to query_rewrite when gov triples loaded
         }
         if rebac_authorize_function_name:
             query_env["REBAC_AUTHORIZE_FUNCTION_NAME"] = rebac_authorize_function_name

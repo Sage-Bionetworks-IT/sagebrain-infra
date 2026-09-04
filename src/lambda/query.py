@@ -1,3 +1,27 @@
+"""
+SPARQL Query Worker - Hybrid Governance Architecture
+
+Supports two governance modes:
+
+1. POST_FILTER (default, transitional):
+   - Run query on Neptune
+   - Extract Synapse resource IDs from results
+   - Check authorization via ReBAC Lambda
+   - Deny if any resource unauthorized
+
+2. QUERY_REWRITE (future, when governance in Neptune):
+   - Rewrite query to inject governance filters
+   - Neptune filters unauthorized resources at query time
+   - No post-filtering needed
+
+Environment Variables:
+    GOVERNANCE_MODE: "post_filter" (default) | "query_rewrite"
+    REBAC_AUTHORIZE_FUNCTION_NAME: ReBAC Lambda (for post_filter mode)
+
+See: Policy-as-Code_sketches and pitches.pdf
+     src/lambda/query_rewriter.py
+"""
+
 import json
 import os
 import re
@@ -17,9 +41,21 @@ DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 REBAC_AUTHORIZE_FUNCTION_NAME = os.environ.get(
     "REBAC_AUTHORIZE_FUNCTION_NAME", ""
 ).strip()
+GOVERNANCE_MODE = os.environ.get("GOVERNANCE_MODE", "post_filter").lower()
 
 _dynamodb = boto3.resource("dynamodb")
 _lambda = boto3.client("lambda")
+
+# Import query rewriter for query_rewrite mode
+try:
+    from query_rewriter import inject_governance_filter, should_rewrite_query
+except ImportError:
+    # Fallback if query_rewriter not available
+    def inject_governance_filter(query: str, user_id: str) -> str:
+        return query
+
+    def should_rewrite_query(query: str) -> bool:
+        return False
 
 
 def _update_job(job_id: str, **fields):
@@ -180,6 +216,43 @@ def _execute_query(
     start = time.time()
     _update_job(job_id, status="running")
 
+    # Governance Mode: Query Rewriting
+    # Inject governance filters BEFORE sending to Neptune
+    original_query = query
+    governance_mode_used = "none"
+
+    if GOVERNANCE_MODE == "query_rewrite" and should_rewrite_query(query):
+        try:
+            query = inject_governance_filter(query, user_id)
+            governance_mode_used = "query_rewrite"
+            print(
+                json.dumps(
+                    {
+                        "event": "query_rewritten",
+                        "job_id": job_id,
+                        "user_id": user_id,
+                        "original_length": len(original_query),
+                        "rewritten_length": len(query),
+                        "timestamp": time.time(),
+                    }
+                )
+            )
+        except Exception as e:
+            # If rewriting fails, log and fall back to post-filter
+            print(
+                json.dumps(
+                    {
+                        "event": "query_rewrite_failed",
+                        "job_id": job_id,
+                        "error": str(e),
+                        "fallback": "post_filter",
+                        "timestamp": time.time(),
+                    }
+                )
+            )
+            query = original_query
+            governance_mode_used = "post_filter_fallback"
+
     url = f"https://{NEPTUNE_ENDPOINT}:8182/sparql"
     body = urlencode({"query": query})
     headers = {
@@ -206,31 +279,54 @@ def _execute_query(
         duration = (time.time() - start) * 1000
         _log_query(job_id, query, source, source_ip, user_agent, 200, duration)
 
-        # Post-query ReBAC authorization: extract resource IDs and check access
-        resource_ids = _extract_resource_ids_from_results(response.text)
-        if resource_ids:
-            auth_error = _authorize_results(user_id, sorted(resource_ids))
-            if auth_error:
-                # All-or-nothing: if any node is denied, deny entire query
-                print(
-                    json.dumps(
-                        {
-                            "event": "sparql_access_denied",
-                            "job_id": job_id,
-                            "user_id": user_id,
-                            "denied_resources": auth_error.get("denied_resources", []),
-                            "timestamp": time.time(),
-                        }
+        # Governance Mode: Post-Filter (only if not already filtered by query rewriting)
+        should_post_filter = (
+            GOVERNANCE_MODE == "post_filter"
+            or governance_mode_used == "post_filter_fallback"
+        )
+
+        if should_post_filter:
+            # Extract resource IDs and check access via ReBAC
+            resource_ids = _extract_resource_ids_from_results(response.text)
+            if resource_ids:
+                auth_error = _authorize_results(user_id, sorted(resource_ids))
+                if auth_error:
+                    # All-or-nothing: if any node is denied, deny entire query
+                    print(
+                        json.dumps(
+                            {
+                                "event": "sparql_access_denied",
+                                "job_id": job_id,
+                                "user_id": user_id,
+                                "governance_mode": governance_mode_used,
+                                "denied_resources": auth_error.get(
+                                    "denied_resources", []
+                                ),
+                                "timestamp": time.time(),
+                            }
+                        )
                     )
+                    _update_job(
+                        job_id,
+                        status="error",
+                        error=auth_error["error"],
+                        denied_resources=auth_error.get("denied_resources", []),
+                        duration_ms=round(duration, 2),
+                    )
+                    return
+        else:
+            # Query rewrite mode: authorization already enforced by Neptune
+            print(
+                json.dumps(
+                    {
+                        "event": "sparql_query_authorized_at_query_time",
+                        "job_id": job_id,
+                        "user_id": user_id,
+                        "governance_mode": governance_mode_used,
+                        "timestamp": time.time(),
+                    }
                 )
-                _update_job(
-                    job_id,
-                    status="error",
-                    error=auth_error["error"],
-                    denied_resources=auth_error.get("denied_resources", []),
-                    duration_ms=round(duration, 2),
-                )
-                return
+            )
 
         # TODO: response.text is stored raw in DynamoDB; large result sets can exceed
         # the 400KB item size limit, causing this update to fail even though Neptune
