@@ -2,48 +2,51 @@
 
 ## Think of Access Requirements Like LEGO® Blocks
 
-You're already managing access to **millions of research files** across Synapse today. As we extend governance to the knowledge graph and beyond, we need a smarter approach. Instead of writing the same rules over and over for each file, we can create **reusable building blocks** that snap together in different combinations—like LEGO bricks.
+You're already managing access to **millions of research files** across Synapse today, organized into hundreds of studies and projects. Each study has its own access requirements that files inherit. As we extend governance to the knowledge graph and beyond, we can make this even more efficient by creating **reusable building blocks** that snap together in different combinations—like LEGO bricks.
 
 ---
 
 ## The Problem with Today's Approach
 
-### How We Do It Now: Writing Rules for Every File
+### How We Do It Now: Writing Rules for Each Study/Project
 
-Right now, each dataset gets its own list of access requirements. Here's what that looks like:
+Right now, you set access requirements at the project or folder level, and files inherit them. This is already efficient—you're not managing requirements on millions of individual files. But each study/project still gets its own custom list of requirements:
 
-**ADNI Imaging Study Files (syn123):**
+**ADNI Imaging Study Project:**
 - Complete ADNI training program
 - Complete MRI imaging safety course
 - Complete HIPAA privacy training
 - Get Stanford IRB approval
 
-**ADNI Genomics Study Files (syn456):**
+**ADNI Genomics Study Project:**
 - Complete ADNI training program
 - Complete genomics data handling course
 - Complete HIPAA privacy training
 - Get Stanford IRB approval
 - Get dbGaP authorization
 
-**PPMI Imaging Study Files (syn789):**
+**PPMI Imaging Study Project:**
 - Complete PPMI training program
 - Complete MRI imaging safety course
 - Complete HIPAA privacy training
 - Get University of Pennsylvania IRB approval
 
-### Why This Doesn't Work Well
+### Why This Still Creates Problems
 
-**❌ We repeat ourselves constantly**
-HIPAA training is listed 3 times. MRI safety is listed twice. Every study has its own training, even when studies are similar.
+**❌ We repeat the same requirements across studies**
+HIPAA training appears in all 3 projects. MRI safety appears in 2. We're writing these requirements over and over for different studies.
 
-**❌ We can't easily reuse combinations**
-If we add 100 new ADNI imaging files, we have to copy-paste those same 4 requirements 100 times.
+**❌ We can't easily reuse common patterns**
+If you add 10 new imaging studies, you write "MRI safety training" 10 times. Same for HIPAA, IRB approvals, etc.
 
-**❌ It doesn't scale**
-With 400,000+ files, we'd be managing millions of individual requirements.
+**❌ Updates are tedious**
+When HIPAA requirements change, you have to update dozens or hundreds of study projects individually. Easy to miss some.
 
-**❌ Researchers can't see the big picture**
-"What do I need to access all ADNI data?" is impossible to answer without checking every single file.
+**❌ Hard to see what studies you can access**
+"What do I need to access all imaging studies?" requires checking each study's requirements individually. No way to see patterns across studies.
+
+**❌ Similar studies have different requirements**
+ADNI Imaging and PPMI Imaging both need imaging safety training + HIPAA, but they're written as completely separate requirement lists.
 
 ---
 
@@ -107,57 +110,60 @@ Different actions need different permissions.
 - Certified for cloud compute environment
 - Agree to analysis-only terms
 
-### How Files Use These Blocks
+### How Studies Use These Blocks
 
-Instead of writing out full requirements, each file just says which blocks it needs:
+Instead of writing out full requirements, each study/project just says which blocks it needs (and all files in that study inherit them):
 
-**ADNI Imaging Study File (syn123):**
+**ADNI Imaging Study Project (syn123):**
 ```
-This file needs:
+This project needs:
   🧱 ADNI Study Block
   🧱 Imaging Data Block
   🧱 HIPAA Block
+
+All files in this project automatically inherit these requirements.
 ```
 
-**ADNI Genomics Study File (syn456):**
+**ADNI Genomics Study Project (syn456):**
 ```
-This file needs:
+This project needs:
   🧱 ADNI Study Block
   🧱 Genomics Data Block
   🧱 HIPAA Block
 ```
 
-**PPMI Imaging Study File (syn789):**
+**PPMI Imaging Study Project (syn789):**
 ```
-This file needs:
+This project needs:
   🧱 PPMI Study Block
   🧱 Imaging Data Block
   🧱 HIPAA Block
 ```
 
-**NF Open Data Study File (syn999):**
+**NF Open Data Study Project (syn999):**
 ```
-This file needs:
+This project needs:
   🧱 NF Study Block
   🧱 Clinical Data Block
   🧱 HIPAA Block
 ```
 
-### Why This Is Better
+### Why This Is Better Than Custom Requirements Per Study
 
-**✅ We define each block once, use it everywhere**
-HIPAA Block is defined one time. When HIPAA training requirements change, we update one block and all millions of files using it are automatically updated.
+**✅ We define each block once, use it across hundreds of studies**
+HIPAA Block is defined one time. When HIPAA training requirements change, we update one block and all studies using it are automatically updated. No hunting through hundreds of projects.
 
-**✅ Blocks can be mixed and matched**
+**✅ Blocks can be mixed and matched across studies**
 ADNI Imaging = ADNI Block + Imaging Block + HIPAA Block
 ADNI Genomics = ADNI Block + Genomics Block + HIPAA Block
-(ADNI Block and HIPAA Block are reused!)
+PPMI Imaging = PPMI Block + Imaging Block + HIPAA Block
+(Common blocks like Imaging and HIPAA are reused across different studies!)
 
-**✅ Easy to add new files**
-Adding 10,000 new PPMI files? Just tag them with the 3 blocks. No copy-pasting.
+**✅ Easy to add new studies**
+Adding a new imaging study? Just tag the project with Study Block + Imaging Block + HIPAA Block. Takes seconds, not hours of writing custom requirements.
 
-**✅ Researchers see clear requirements**
-"What do I need for all ADNI data?" → "Complete these 3 blocks: ADNI Study + HIPAA + [your data type]"
+**✅ Researchers see clear patterns**
+"What do I need for all ADNI studies?" → "Complete ADNI Study Block + HIPAA Block + the data type blocks for the specific datasets you want"
 
 ---
 
@@ -486,29 +492,32 @@ The system does all the checking automatically. As a governance team member, you
 
 ## Why This Approach is Better: Real Benefits
 
-### 1. **Handles Millions of Files Easily**
+### 1. **Handles Scale More Efficiently**
 
-**Old way:**
-400,000 files × 5 requirements each = 2,000,000 individual requirements to manage
+**Current way:**
+Hundreds of studies, each with custom access requirements
+Similar requirements written separately for each study
+No way to see patterns across studies
 
-**New way:**
-~20 reusable blocks that cover all 400,000 files
-Check each researcher against ~10 blocks = thousands of times less work
+**Building block way:**
+~20 reusable blocks that combine to cover hundreds of studies
+Similar studies use the same data type blocks (Imaging, Genomics, Clinical, etc.)
+Clear patterns: "all imaging studies need Imaging Block + HIPAA Block"
 
 ### 2. **Update Once, Apply Everywhere**
 
 **Real scenario:** HIPAA certification requirements change
 
-**Old way:**
-- Find all 450,000 files with HIPAA requirements
-- Update each file's requirements individually
-- Risk missing some files
+**Current way:**
+- Find all studies with HIPAA requirements
+- Update each study's custom requirements individually
+- Easy to miss some studies
 - Takes days or weeks
 
-**New way:**
+**Building block way:**
 - Update the one HIPAA Block definition
-- All 450,000 files using that block automatically updated
-- Impossible to miss files
+- All studies using that block automatically updated
+- Impossible to miss studies
 - Takes 5 minutes
 
 ### 3. **Researchers Understand What They Need**
@@ -560,7 +569,7 @@ No frustrating "Access Denied" messages. No wasting time requesting files they c
 You don't have to change everything overnight. Here's a practical migration path:
 
 **Phase 1: Identify the Patterns (1-2 weeks)**
-- Look at your current access requirements across all files
+- Look at your current access requirements across all studies
 - Group similar requirements together:
   - Which ones are study-specific? (ADNI, PPMI, NF, etc.)
   - Which ones are about data types? (genomics, imaging, clinical)
@@ -580,14 +589,15 @@ Current AR003 "HIPAA Training" → becomes "HIPAA Block"
 Current AR005 "Genomics Ethics" → becomes "Genomics Data Block"
 ```
 
-**Phase 3: Tag Existing Files (Can be automated)**
-- For each file, replace individual ARs with the corresponding blocks
-- Example: File that had AR001 + AR002 + AR003 → now tagged with ADNI Block + Imaging Block + HIPAA Block
+**Phase 3: Tag Existing Studies (Can be automated)**
+- For each study/project, replace individual ARs with the corresponding blocks
+- Example: Study that had AR001 + AR002 + AR003 → now tagged with ADNI Block + Imaging Block + HIPAA Block
+- All files in that study automatically inherit the new blocks
 - This step can be done automatically by the system based on the current ARs
 
-**Phase 4: New Files Use Blocks (Ongoing)**
-- All new files get tagged with blocks from day one
-- Much faster than writing custom requirements
+**Phase 4: New Studies Use Blocks (Ongoing)**
+- All new studies/projects get tagged with blocks from day one
+- Much faster than writing custom requirements for each new study
 
 ---
 
@@ -595,7 +605,7 @@ Current AR005 "Genomics Ethics" → becomes "Genomics Data Block"
 
 ### The Core Idea
 
-Instead of writing access requirements separately for millions of files, we create **reusable building blocks** that represent common requirements. Files just say which blocks they need, and blocks snap together like LEGO pieces.
+Instead of writing custom access requirements separately for each study, we create **reusable building blocks** that represent common requirements. Studies just declare which blocks they need (and files in those studies automatically inherit them). Blocks snap together like LEGO pieces.
 
 ### The Four Types of Blocks
 
@@ -606,25 +616,26 @@ Instead of writing access requirements separately for millions of files, we crea
 
 ### How It Works
 
-- **Files are tagged with blocks:** "This file needs ADNI Block + Imaging Block + HIPAA Block"
+- **Studies are tagged with blocks:** "This study needs ADNI Block + Imaging Block + HIPAA Block"
+- **All files in that study inherit the blocks automatically**
 - **Researchers complete blocks:** "I've finished ADNI training, imaging safety, and HIPAA certification"
-- **System matches automatically:** If researcher's blocks match file's blocks → access granted
-- **When accessing multiple files:** System combines all required blocks and shows what's needed
+- **System matches automatically:** If researcher's blocks match study's blocks → access granted to all files in that study
+- **When accessing multiple studies:** System combines all required blocks and shows what's needed
 
 ### Why Governance Teams Should Care
 
-✅ **Scales to millions of files** – Manage 20 blocks instead of millions of individual requirements
+✅ **Scales effortlessly** – Manage ~20 blocks instead of hundreds of custom study requirements
 
-✅ **Update once, apply everywhere** – Change HIPAA requirements in one place, all files updated instantly
+✅ **Update once, apply everywhere** – Change HIPAA requirements in one place, all studies using it updated instantly
 
-✅ **Clear for researchers** – "You need these 3 blocks" instead of confusing individual requirements
+✅ **Clear for researchers** – "You need these 3 blocks" instead of checking requirements for dozens of studies
 
-✅ **No repetitive work** – New files? Just tag them with existing blocks. Takes seconds, not hours.
+✅ **No repetitive work** – New study? Just tag it with existing blocks. Takes seconds, not hours of writing custom requirements.
 
-✅ **Study membership works right** – Joining a consortium automatically unlocks thousands of files
+✅ **Study membership works right** – Joining a consortium automatically unlocks all studies in that program
 
 ### Bottom Line
 
-This is about working smarter, not harder. You're already managing millions of files successfully in Synapse. As you extend governance to the knowledge graph and beyond, building blocks let you scale without drowning in repetitive work.
+This is about working smarter, not harder. You're already managing millions of files across hundreds of studies successfully in Synapse, using project/folder-level requirements. As you extend governance to the knowledge graph and beyond, building blocks make it even more efficient by reusing common patterns across studies.
 
-**Think LEGO, not handcrafted custom rules for every single file.**
+**Think LEGO blocks, not handcrafted custom requirements for every single study.**
