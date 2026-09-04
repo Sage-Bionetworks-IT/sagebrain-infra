@@ -194,6 +194,32 @@ def test_record_failure(loader, mock_table):
     assert item["error"]  # non-empty error payload
 
 
+def test_record_failure_fetches_and_stores_load_errors(loader, mock_table):
+    """_load_errors is called on failure; errors stored in DynamoDB + log."""
+    error_entries = [
+        {
+            "errorCode": "PARSE_ERROR",
+            "errorMessage": "unexpected token at line 42",
+            "fileName": "s3://mybucket/nf/2026-04-25/data/rdf/bad.ttl",
+            "recordNum": 42,
+        }
+    ]
+    errors_resp = MagicMock()
+    errors_resp.json.return_value = {
+        "payload": {"errors": {"errorLogs": error_entries}}
+    }
+    errors_resp.raise_for_status = MagicMock()
+
+    with patch.object(loader.requests, "get", return_value=errors_resp):
+        out = loader.handler(_record_event("LOAD_FAILED"), None)
+
+    assert out["status"] == "error"
+    item = mock_table.put_item.call_args.kwargs["Item"]
+    assert item["status"] == "error"
+    stored_errors = json.loads(item["load_errors"])
+    assert stored_errors == error_entries
+
+
 # ---------------------------------------------------------------------------
 # dispatch
 # ---------------------------------------------------------------------------
