@@ -3,6 +3,7 @@ import json
 import aws_cdk as cdk
 from aws_cdk import aws_cloudwatch as cw
 from aws_cdk import aws_ce as ce
+from aws_cdk import aws_budgets as budgets
 from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_lambda as lambda_
@@ -43,7 +44,7 @@ class MonitoringStack(cdk.Stack):
         agent_job_table: dynamodb.Table,
         # Neptune
         neptune_cluster_id: str,
-        cost_anomaly_config: dict | None = None,
+        cost_monitoring_config: dict | None = None,
         resource_tags: dict[str, str] | None = None,
         **kwargs,
     ) -> None:
@@ -80,68 +81,12 @@ class MonitoringStack(cdk.Stack):
             default_interval=cdk.Duration.hours(3),
         )
 
-        cost_anomaly_config = cost_anomaly_config or {}
-        if cost_anomaly_config.get("enabled", False):
-            threshold_usd = cost_anomaly_config.get("threshold_usd")
-            email_subscribers = cost_anomaly_config.get("email_subscribers", [])
-            try:
-                threshold_value = float(threshold_usd) if threshold_usd is not None else 0
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"COST_ANOMALY_ALERTS.threshold_usd must be a positive number, got: {threshold_usd!r}"
-                ) from exc
-            if threshold_usd is None or threshold_value <= 0:
-                raise ValueError(
-                    "COST_ANOMALY_ALERTS.threshold_usd must be set to a positive number"
-                )
-            if not isinstance(email_subscribers, list):
-                raise ValueError(
-                    f"COST_ANOMALY_ALERTS.email_subscribers must be a list, got: {type(email_subscribers).__name__}"
-                )
-            if not email_subscribers:
-                raise ValueError(
-                    "COST_ANOMALY_ALERTS.email_subscribers must contain at least one email"
-                )
-
-            cost_monitor = ce.CfnAnomalyMonitor(
-                self,
-                "AccountCostAnomalyMonitor",
-                monitor_name=cost_anomaly_config.get(
-                    "monitor_name", f"{construct_id}-cost-anomalies"
-                ),
-                monitor_type="DIMENSIONAL",
-                monitor_dimension=cost_anomaly_config.get(
-                    "monitor_dimension", "SERVICE"
-                ),
-                resource_tags=_resource_tags(),
-            )
-            threshold_expression = json.dumps(
-                {
-                    "Dimensions": {
-                        "Key": "ANOMALY_TOTAL_IMPACT_ABSOLUTE",
-                        "MatchOptions": ["GREATER_THAN_OR_EQUAL"],
-                        "Values": [str(threshold_usd)],
-                    }
-                },
-                separators=(",", ":"),
-            )
-            ce.CfnAnomalySubscription(
-                self,
-                "AccountCostAnomalySubscription",
-                subscription_name=cost_anomaly_config.get(
-                    "subscription_name", f"{construct_id}-cost-anomaly-subscription"
-                ),
-                frequency=cost_anomaly_config.get("frequency", "IMMEDIATE"),
-                monitor_arn_list=[cost_monitor.attr_monitor_arn],
-                subscribers=[
-                    ce.CfnAnomalySubscription.SubscriberProperty(
-                        address=email, type="EMAIL"
-                    )
-                    for email in email_subscribers
-                ],
-                threshold_expression=threshold_expression,
-                resource_tags=_resource_tags(),
-            )
+        # Cost monitoring
+        cost_monitoring_config = cost_monitoring_config or {}
+        self._setup_service_anomaly_detection(
+            construct_id, cost_monitoring_config, _resource_tags
+        )
+        self._setup_account_budget(construct_id, cost_monitoring_config)
 
         # ------------------------------------------------------------------ #
         # Query API
@@ -563,4 +508,154 @@ class MonitoringStack(cdk.Stack):
             "DashboardUrl",
             value=result,
             description="CloudWatch dashboard URL",
+        )
+
+    def _setup_service_anomaly_detection(
+        self, construct_id: str, config: dict, resource_tags_fn
+    ) -> None:
+        """Set up service-level cost anomaly detection."""
+        service_config = config.get("service_anomaly", {})
+        if not service_config.get("enabled", False):
+            return
+
+        threshold_usd = service_config.get("threshold_usd")
+        email_subscribers = service_config.get("email_subscribers", [])
+
+        # Validate threshold
+        try:
+            threshold_value = float(threshold_usd) if threshold_usd is not None else 0
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"COST_MONITORING.service_anomaly.threshold_usd must be a "
+                f"positive number, got: {threshold_usd!r}"
+            ) from exc
+        if threshold_usd is None or threshold_value <= 0:
+            raise ValueError(
+                "COST_MONITORING.service_anomaly.threshold_usd must be set "
+                "to a positive number"
+            )
+
+        # Validate email subscribers
+        if not isinstance(email_subscribers, list):
+            raise ValueError(
+                f"COST_MONITORING.service_anomaly.email_subscribers must be "
+                f"a list, got: {type(email_subscribers).__name__}"
+            )
+        if not email_subscribers:
+            raise ValueError(
+                "COST_MONITORING.service_anomaly.email_subscribers must "
+                "contain at least one email"
+            )
+
+        # Create monitor
+        service_monitor = ce.CfnAnomalyMonitor(
+            self,
+            "ServiceCostAnomalyMonitor",
+            monitor_name=f"{construct_id}-service-cost-anomalies",
+            monitor_type="DIMENSIONAL",
+            monitor_dimension="SERVICE",
+            resource_tags=resource_tags_fn(),
+        )
+
+        # Create subscription
+        threshold_expression = json.dumps(
+            {
+                "Dimensions": {
+                    "Key": "ANOMALY_TOTAL_IMPACT_ABSOLUTE",
+                    "MatchOptions": ["GREATER_THAN_OR_EQUAL"],
+                    "Values": [str(threshold_usd)],
+                }
+            },
+            separators=(",", ":"),
+        )
+        ce.CfnAnomalySubscription(
+            self,
+            "ServiceCostAnomalySubscription",
+            subscription_name=f"{construct_id}-service-cost-anomaly-subscription",
+            frequency=service_config.get("frequency", "IMMEDIATE"),
+            monitor_arn_list=[service_monitor.attr_monitor_arn],
+            subscribers=[
+                ce.CfnAnomalySubscription.SubscriberProperty(
+                    address=email, type="EMAIL"
+                )
+                for email in email_subscribers
+            ],
+            threshold_expression=threshold_expression,
+            resource_tags=resource_tags_fn(),
+        )
+
+    def _setup_account_budget(self, construct_id: str, config: dict) -> None:
+        """Set up account-level monthly budget."""
+        budget_config = config.get("account_budget", {})
+        if not budget_config.get("enabled", False):
+            return
+
+        monthly_limit = budget_config.get("monthly_limit_usd")
+        alert_thresholds = budget_config.get("alert_thresholds", [80, 100])
+        email_subscribers = budget_config.get("email_subscribers", [])
+
+        # Validate monthly limit
+        try:
+            limit_value = float(monthly_limit) if monthly_limit is not None else 0
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"COST_MONITORING.account_budget.monthly_limit_usd must be a "
+                f"positive number, got: {monthly_limit!r}"
+            ) from exc
+        if monthly_limit is None or limit_value <= 0:
+            raise ValueError(
+                "COST_MONITORING.account_budget.monthly_limit_usd must be set "
+                "to a positive number"
+            )
+
+        # Validate alert thresholds
+        if not isinstance(alert_thresholds, list) or not alert_thresholds:
+            raise ValueError(
+                f"COST_MONITORING.account_budget.alert_thresholds must be a "
+                f"non-empty list, got: {alert_thresholds!r}"
+            )
+
+        # Validate email subscribers
+        if not isinstance(email_subscribers, list):
+            raise ValueError(
+                f"COST_MONITORING.account_budget.email_subscribers must be a "
+                f"list, got: {type(email_subscribers).__name__}"
+            )
+        if not email_subscribers:
+            raise ValueError(
+                "COST_MONITORING.account_budget.email_subscribers must "
+                "contain at least one email"
+            )
+
+        # Create budget
+        budgets.CfnBudget(
+            self,
+            "AccountMonthlyBudget",
+            budget=budgets.CfnBudget.BudgetDataProperty(
+                budget_name=f"{construct_id}-monthly-budget",
+                budget_type="COST",
+                time_unit="MONTHLY",
+                budget_limit=budgets.CfnBudget.SpendProperty(
+                    amount=limit_value,
+                    unit="USD",
+                ),
+            ),
+            notifications_with_subscribers=[
+                budgets.CfnBudget.NotificationWithSubscribersProperty(
+                    notification=budgets.CfnBudget.NotificationProperty(
+                        comparison_operator="GREATER_THAN",
+                        notification_type="ACTUAL",
+                        threshold=threshold,
+                        threshold_type="PERCENTAGE",
+                    ),
+                    subscribers=[
+                        budgets.CfnBudget.SubscriberProperty(
+                            address=email,
+                            subscription_type="EMAIL",
+                        )
+                        for email in email_subscribers
+                    ],
+                )
+                for threshold in alert_thresholds
+            ],
         )
