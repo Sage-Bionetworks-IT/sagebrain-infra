@@ -22,17 +22,3 @@ NEPTUNE_VIZ:
     - 52.44.61.21/32  # Sage network egress IP (VPN / office) — only source allowed to reach the UI
   # Pin a known-good image for reproducible deploys (defaults to :latest).
   # image: "public.ecr.aws/neptune/graph-explorer@sha256:<digest>"
-
-COST_MONITORING:
-  service_anomaly:
-    enabled: true
-    threshold_usd: 300
-    frequency: "IMMEDIATE"
-    email_subscribers:
-      - aws-sagebrain-cost-dev@sagebase.org
-  account_budget:
-    enabled: true
-    monthly_limit_usd: 1000
-    alert_thresholds: [80, 100, 120]
-    email_subscribers:
-      - aws-sagebrain-cost-dev@sagebase.org

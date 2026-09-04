@@ -259,41 +259,6 @@ A default connection to Neptune is pre-configured, so the graph loads on first o
 - HTTP only (no TLS): traffic between the VPN client and the ALB is unencrypted within the Sage network. To add TLS, supply an ACM cert + DNS and switch the listener to HTTPS.
 - Defaults to the `latest` image tag — set `NEPTUNE_VIZ.image` in `config/<env>.yaml` to a pinned tag or `@sha256:<digest>` for reproducible deploys.
 
-## Cost Monitoring
-
-The monitoring stack supports two complementary cost controls:
-
-### Service-level anomaly detection
-Uses AWS Cost Anomaly Detection to monitor each service (Neptune, Lambda, API Gateway, etc.) and alert when any single service's costs spike unexpectedly. Email alerts include:
-- Which service caused the anomaly
-- Expected cost vs. actual cost
-- Impact amount (the unexpected increase)
-- Time period affected
-
-Alerts trigger when the anomaly's impact exceeds `threshold_usd`. This is ML-based — AWS learns your normal spending pattern and detects deviations in real-time, not monthly resets.
-
-### Account-level monthly budget
-Uses AWS Budgets to set a hard monthly spending cap for the entire account. Alerts at configurable percentage thresholds (e.g., 80%, 100%, 120% of limit). Budget resets at the start of each month.
-
-Both are configured in `config/<env>.yaml` under `COST_MONITORING`:
-```yaml
-COST_MONITORING:
-  service_anomaly:
-    enabled: true
-    threshold_usd: 500  # Alert if any service spikes by $500+
-    frequency: "IMMEDIATE"
-    email_subscribers:
-      - aws-sagebrain-cost@sagebase.org
-  account_budget:
-    enabled: true
-    monthly_limit_usd: 5000  # Total monthly cap
-    alert_thresholds: [80, 100, 120]  # Alert at 80%, 100%, 120%
-    email_subscribers:
-      - aws-sagebrain-cost@sagebase.org
-```
-
-Set `enabled: true` and populate `email_subscribers` to activate. Each can be enabled independently with separate subscriber lists.
-
 ## API Gateway
 
 ### app-dev-neptune-api (`POST /query`, `GET /query/{job_id}`)
