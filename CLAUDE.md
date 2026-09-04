@@ -142,6 +142,32 @@ cdk deploy app-dev-neptune-agent --profile sagebrain --require-approval never
 
 Use `--hotswap` only for Lambda code changes. API Gateway method/stage/IAM changes need a full deploy — hotswap will silently skip them.
 
+## Governance Architecture: Hybrid Post-Filter + Query Rewrite
+
+The query API supports **two governance modes** for gradual migration to Policy-as-Code:
+
+### Mode 1: Post-Filter (Current, Default)
+- Run SPARQL query on Neptune
+- Extract Synapse resource IDs from results
+- Check authorization via ReBAC Lambda
+- If ANY resource denied → error with specific list
+- **Use when:** Governance data not yet in Neptune
+
+### Mode 2: Query Rewrite (Future, when governance in Neptune)
+- Inject governance filters into SPARQL BEFORE sending to Neptune
+- Neptune filters unauthorized resources at query time via joins:
+  ```sparql
+  ?file gov:hasACL ?grant .
+  ?grant gov:principal "user:9000001" ;
+         gov:permission "ACCESS" .
+  ```
+- No post-filtering needed
+- **Use when:** Governance triples loaded in Neptune (scales to 400K+ resources)
+
+**Switch modes:** Set `GOVERNANCE_MODE=query_rewrite` in `src/neptune_api_stack.py`
+
+**See:** [docs/governance_hybrid_architecture.md](docs/governance_hybrid_architecture.md) for full architecture, migration path, and Policy-as-Code roadmap.
+
 ## Query API: src/lambda/ (async job pattern)
 
 Three Lambdas + SQS + DynamoDB — mirrors the agent's async pattern.

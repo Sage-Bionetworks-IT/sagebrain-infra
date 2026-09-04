@@ -41,6 +41,7 @@ class NeptuneApiStack(cdk.Stack):
         neptune_security_group: ec2.SecurityGroup,
         synapse_team_id: str,
         machine_api_key: str = "",
+        rebac_authorize_function_name: str = "",
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -99,16 +100,20 @@ class NeptuneApiStack(cdk.Stack):
         # -------------------
         # Submit Lambda — POST /query (no VPC needed)
         # -------------------
+        submit_env = {
+            "JOB_TABLE_NAME": self.job_table.table_name,
+            "JOB_QUEUE_URL": self.job_queue.queue_url,
+        }
+        if rebac_authorize_function_name:
+            submit_env["REBAC_AUTHORIZE_FUNCTION_NAME"] = rebac_authorize_function_name
+
         self.submit_fn = lambda_.Function(
             self,
             "NeptuneQuerySubmitFunction",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="submit.handler",
             code=lambda_.Code.from_asset("src/lambda", bundling=_BUNDLING),
-            environment={
-                "JOB_TABLE_NAME": self.job_table.table_name,
-                "JOB_QUEUE_URL": self.job_queue.queue_url,
-            },
+            environment=submit_env,
             timeout=cdk.Duration.seconds(10),
             memory_size=256,
         )
@@ -134,7 +139,19 @@ class NeptuneApiStack(cdk.Stack):
 
         # -------------------
         # Worker Lambda — SQS-triggered SPARQL executor (needs VPC)
+        # Supports hybrid governance: post_filter (ReBAC) or query_rewrite (Neptune)
         # -------------------
+        query_env = {
+            "NEPTUNE_ENDPOINT": neptune_read_endpoint,
+            "JOB_TABLE_NAME": self.job_table.table_name,
+            # Governance mode: "post_filter" (default) or "query_rewrite"
+            # - post_filter: Run query, extract resources, check ReBAC
+            # - query_rewrite: Inject governance filters into SPARQL before Neptune
+            "GOVERNANCE_MODE": "post_filter",  # TODO: Switch to query_rewrite when gov triples loaded
+        }
+        if rebac_authorize_function_name:
+            query_env["REBAC_AUTHORIZE_FUNCTION_NAME"] = rebac_authorize_function_name
+
         self.query_fn = lambda_.Function(
             self,
             "NeptuneQueryFunction",
@@ -146,10 +163,7 @@ class NeptuneApiStack(cdk.Stack):
             vpc_subnets=ec2.SubnetSelection(
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
             ),
-            environment={
-                "NEPTUNE_ENDPOINT": neptune_read_endpoint,
-                "JOB_TABLE_NAME": self.job_table.table_name,
-            },
+            environment=query_env,
             timeout=cdk.Duration.seconds(75),  # Neptune complex queries can take 40s+
             memory_size=512,
         )
@@ -175,6 +189,21 @@ class NeptuneApiStack(cdk.Stack):
                 ],
             )
         )
+
+        # IAM: Grant query worker permission to invoke ReBAC authorize Lambda
+        # for post-query access checks
+        if rebac_authorize_function_name:
+            rebac_fn_arn = (
+                f"arn:{self.partition}:lambda:{self.region}:{self.account}"
+                f":function:{rebac_authorize_function_name}"
+            )
+            self.query_fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    effect=iam.Effect.ALLOW,
+                    actions=["lambda:InvokeFunction"],
+                    resources=[rebac_fn_arn],
+                )
+            )
 
         # -------------------
         # Authorizer Lambda — no VPC (calls Synapse public API)

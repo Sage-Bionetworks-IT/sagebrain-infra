@@ -6,6 +6,7 @@ from src.neptune_agent_stack import NeptuneAgentStack
 from src.network_stack import NetworkStack
 from src.neptune_api_stack import NeptuneApiStack
 from src.neptune_pipeline_stack import NeptunePipelineStack
+from src.neptune_rebac_concept_stack import NeptuneRebacConceptStack
 from src.neptune_sagemaker_stack import NeptuneSageMakerStack
 from src.neptune_stack import NeptuneStack
 from src.neptune_viz_stack import NeptuneVizStack
@@ -90,6 +91,21 @@ if config.get("NEPTUNE_VIZ", {}).get("enabled", False):
         env=env,
     )
 
+rebac_stack = None
+if config.get("NEPTUNE_REBAC_CONCEPT", {}).get("enabled", False):
+    rebac_stack = NeptuneRebacConceptStack(
+        scope=cdk_app,
+        construct_id=f"{STACK_NAME_PREFIX}-neptune-rebac-concept",
+        vpc=network_stack.vpc,
+        neptune_read_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
+        neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
+        neptune_security_group=neptune_stack.neptune_security_group,
+        synapse_team_id=config["AUTH"]["synapse_team_id"],
+        machine_api_key=config["AUTH"].get("machine_api_key", ""),
+        rebac_config=config.get("NEPTUNE_REBAC_CONCEPT", {}),
+        env=env,
+    )
+
 # Public read-only API for Neptune
 neptune_api_stack = NeptuneApiStack(
     scope=cdk_app,
@@ -100,6 +116,9 @@ neptune_api_stack = NeptuneApiStack(
     neptune_security_group=neptune_stack.neptune_security_group,
     synapse_team_id=config["AUTH"]["synapse_team_id"],
     machine_api_key=config["AUTH"].get("machine_api_key", ""),
+    rebac_authorize_function_name=(
+        rebac_stack.authorize_fn.function_name if rebac_stack else ""
+    ),
     env=env,
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies

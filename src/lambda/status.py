@@ -42,6 +42,9 @@ def handler(event, context):
         )
     elif status == "error":
         result["error"] = item.get("error", "Unknown error")
+        # Include denied_resources for ReBAC access denied errors
+        if "denied_resources" in item:
+            result["denied_resources"] = item["denied_resources"]
 
     return {
         "statusCode": 200,
