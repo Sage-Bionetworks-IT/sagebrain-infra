@@ -52,7 +52,7 @@ _neptunedata = boto3.client(
     "neptunedata",
     endpoint_url=f"https://{NEPTUNE_ENDPOINT}:{NEPTUNE_PORT}",
     region_name=REGION,
-    config=Config(connect_timeout=5, read_timeout=30),
+    config=Config(connect_timeout=3, read_timeout=20),
 )
 
 
