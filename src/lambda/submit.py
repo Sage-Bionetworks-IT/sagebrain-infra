@@ -135,14 +135,8 @@ def handler(event, context):
             ),
         }
 
-    try:
-        _authorize_query(event, user_id, query)
-    except PermissionError as exc:
-        return {
-            "statusCode": 403,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps({"error": str(exc)}),
-        }
+    # ReBAC authorization moved to post-query filtering in query.py worker
+    # Synapse team authorization still enforced by API Gateway authorizer
 
     # Capture caller metadata for audit logging by the worker
     headers = event.get("headers") or {}

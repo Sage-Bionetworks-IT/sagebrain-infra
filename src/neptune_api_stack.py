@@ -140,6 +140,13 @@ class NeptuneApiStack(cdk.Stack):
         # -------------------
         # Worker Lambda — SQS-triggered SPARQL executor (needs VPC)
         # -------------------
+        query_env = {
+            "NEPTUNE_ENDPOINT": neptune_read_endpoint,
+            "JOB_TABLE_NAME": self.job_table.table_name,
+        }
+        if rebac_authorize_function_name:
+            query_env["REBAC_AUTHORIZE_FUNCTION_NAME"] = rebac_authorize_function_name
+
         self.query_fn = lambda_.Function(
             self,
             "NeptuneQueryFunction",
@@ -151,10 +158,7 @@ class NeptuneApiStack(cdk.Stack):
             vpc_subnets=ec2.SubnetSelection(
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
             ),
-            environment={
-                "NEPTUNE_ENDPOINT": neptune_read_endpoint,
-                "JOB_TABLE_NAME": self.job_table.table_name,
-            },
+            environment=query_env,
             timeout=cdk.Duration.seconds(75),  # Neptune complex queries can take 40s+
             memory_size=512,
         )
@@ -180,6 +184,21 @@ class NeptuneApiStack(cdk.Stack):
                 ],
             )
         )
+
+        # IAM: Grant query worker permission to invoke ReBAC authorize Lambda
+        # for post-query access checks
+        if rebac_authorize_function_name:
+            rebac_fn_arn = (
+                f"arn:{self.partition}:lambda:{self.region}:{self.account}"
+                f":function:{rebac_authorize_function_name}"
+            )
+            self.query_fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    effect=iam.Effect.ALLOW,
+                    actions=["lambda:InvokeFunction"],
+                    resources=[rebac_fn_arn],
+                )
+            )
 
         # -------------------
         # Authorizer Lambda — no VPC (calls Synapse public API)
