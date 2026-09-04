@@ -76,6 +76,8 @@ cdk synth --context env=prod
 
 Environment-specific config files live in [config/](./config). A `base.yaml` is always loaded and merged with the environment-specific file, with environment values taking precedence.
 
+Cost anomaly alerting is configured under `COST_ANOMALY_ALERTS`. Set `enabled: true`, choose a `threshold_usd`, and populate `email_subscribers` with the individual billing recipients for that AWS account to receive anomaly notifications.
+
 > [!NOTE]
 > Ensure that `VPC_CIDR` is unique within your AWS organization.
 > Refer to our [guidance](https://sagebionetworks.jira.com/wiki/spaces/IT/pages/2850586648/Setup+AWS+VPC) on selecting a unique CIDR block.

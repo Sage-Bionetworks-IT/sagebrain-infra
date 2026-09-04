@@ -69,6 +69,27 @@ def template():
         agent_dlq=_queue("ADLQ"),
         agent_job_table=_table("ATable"),
         neptune_cluster_id="cluster-TESTCLUSTERID",
+        cost_monitoring_config={
+            "service_anomaly": {
+                "enabled": True,
+                "threshold_usd": 25,
+                "frequency": "IMMEDIATE",
+                "email_subscribers": [
+                    "owner1@example.com",
+                    "owner2@example.com",
+                ],
+            },
+            "account_budget": {
+                "enabled": True,
+                "monthly_limit_usd": 1000,
+                "alert_thresholds": [80, 100, 120],
+                "email_subscribers": [
+                    "owner1@example.com",
+                    "owner2@example.com",
+                ],
+            },
+        },
+        resource_tags={"CostCenter": "NO PROGRAM / 000000"},
     )
     return Template.from_stack(stack)
 
@@ -124,6 +145,134 @@ def test_agent_dlq_alarm_threshold_is_one(template):
             "EvaluationPeriods": 1,
             "ComparisonOperator": "GreaterThanOrEqualToThreshold",
             "TreatMissingData": "notBreaching",
+        },
+    )
+
+
+def test_service_anomaly_monitor_created(template):
+    # Should have only service-level anomaly monitor (account uses budget instead)
+    template.resource_count_is("AWS::CE::AnomalyMonitor", 1)
+
+
+def test_service_anomaly_monitor_properties(template):
+    template.has_resource_properties(
+        "AWS::CE::AnomalyMonitor",
+        {
+            "MonitorType": "DIMENSIONAL",
+            "MonitorDimension": "SERVICE",
+            "MonitorName": "TestMonitoringStack-service-cost-anomalies",
+            "ResourceTags": [{"Key": "CostCenter", "Value": "NO PROGRAM / 000000"}],
+        },
+    )
+
+
+def test_service_anomaly_subscription_created(template):
+    # Should have only service-level anomaly subscription
+    template.resource_count_is("AWS::CE::AnomalySubscription", 1)
+
+
+def test_service_anomaly_subscription_properties(template):
+    template.has_resource_properties(
+        "AWS::CE::AnomalySubscription",
+        {
+            "Frequency": "IMMEDIATE",
+            "SubscriptionName": "TestMonitoringStack-service-cost-anomaly-subscription",
+            "Subscribers": [
+                {"Address": "owner1@example.com", "Type": "EMAIL"},
+                {"Address": "owner2@example.com", "Type": "EMAIL"},
+            ],
+            "ThresholdExpression": (
+                '{"Dimensions":{"Key":"ANOMALY_TOTAL_IMPACT_ABSOLUTE",'
+                '"MatchOptions":["GREATER_THAN_OR_EQUAL"],"Values":["25"]}}'
+            ),
+            "ResourceTags": [{"Key": "CostCenter", "Value": "NO PROGRAM / 000000"}],
+        },
+    )
+
+
+def test_account_monthly_budget_created(template):
+    # Should have account-level monthly budget
+    template.resource_count_is("AWS::Budgets::Budget", 1)
+
+
+def test_account_monthly_budget_properties(template):
+    template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {
+            "Budget": {
+                "BudgetName": "TestMonitoringStack-monthly-budget",
+                "BudgetType": "COST",
+                "TimeUnit": "MONTHLY",
+                "BudgetLimit": {
+                    "Amount": 1000,
+                    "Unit": "USD",
+                },
+            },
+        },
+    )
+
+
+def test_account_budget_has_threshold_notifications(template):
+    # Should have notifications for 80%, 100%, 120%
+    template.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {
+            "NotificationsWithSubscribers": [
+                {
+                    "Notification": {
+                        "ComparisonOperator": "GREATER_THAN",
+                        "NotificationType": "ACTUAL",
+                        "Threshold": 80,
+                        "ThresholdType": "PERCENTAGE",
+                    },
+                    "Subscribers": [
+                        {
+                            "Address": "owner1@example.com",
+                            "SubscriptionType": "EMAIL",
+                        },
+                        {
+                            "Address": "owner2@example.com",
+                            "SubscriptionType": "EMAIL",
+                        },
+                    ],
+                },
+                {
+                    "Notification": {
+                        "ComparisonOperator": "GREATER_THAN",
+                        "NotificationType": "ACTUAL",
+                        "Threshold": 100,
+                        "ThresholdType": "PERCENTAGE",
+                    },
+                    "Subscribers": [
+                        {
+                            "Address": "owner1@example.com",
+                            "SubscriptionType": "EMAIL",
+                        },
+                        {
+                            "Address": "owner2@example.com",
+                            "SubscriptionType": "EMAIL",
+                        },
+                    ],
+                },
+                {
+                    "Notification": {
+                        "ComparisonOperator": "GREATER_THAN",
+                        "NotificationType": "ACTUAL",
+                        "Threshold": 120,
+                        "ThresholdType": "PERCENTAGE",
+                    },
+                    "Subscribers": [
+                        {
+                            "Address": "owner1@example.com",
+                            "SubscriptionType": "EMAIL",
+                        },
+                        {
+                            "Address": "owner2@example.com",
+                            "SubscriptionType": "EMAIL",
+                        },
+                    ],
+                },
+            ],
         },
     )
 
