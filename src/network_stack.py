@@ -37,36 +37,10 @@ class NetworkStack(cdk.Stack):
             "HTTPS from VPC",
         )
 
-        private_subnets = ec2.SubnetSelection(
-            subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
-        )
-
         # S3 gateway endpoint — free, route-table based, no SG needed
         ec2.GatewayVpcEndpoint(
             self,
             "S3Endpoint",
             vpc=self.vpc,
             service=ec2.GatewayVpcEndpointAwsService.S3,
-        )
-
-        # SageMaker API endpoint — required for Studio VpcOnly mode
-        ec2.InterfaceVpcEndpoint(
-            self,
-            "SageMakerApiEndpoint",
-            vpc=self.vpc,
-            service=ec2.InterfaceVpcEndpointAwsService.SAGEMAKER_API,
-            subnets=private_subnets,
-            security_groups=[endpoint_sg],
-            private_dns_enabled=True,
-        )
-
-        # STS endpoint — required for IAM credential refresh in VpcOnly mode
-        ec2.InterfaceVpcEndpoint(
-            self,
-            "StsEndpoint",
-            vpc=self.vpc,
-            service=ec2.InterfaceVpcEndpointAwsService.STS,
-            subnets=private_subnets,
-            security_groups=[endpoint_sg],
-            private_dns_enabled=True,
         )

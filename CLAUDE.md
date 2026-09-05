@@ -1,6 +1,6 @@
 # sage-brain-infra
 
-AWS CDK (Python) infrastructure for the Sage Brain project. Deploys an Amazon Neptune graph database with a Synapse-authenticated read-only API (API Gateway + Lambda), a Bedrock Strands AI agent API, and SageMaker Studio for team data loading.
+AWS CDK (Python) infrastructure for the Sage Brain project. Deploys an Amazon Neptune graph database with a Synapse-authenticated read-only API (API Gateway + Lambda) and a Bedrock Strands AI agent API.
 
 ## AWS Profile
 
@@ -16,7 +16,6 @@ aws --profile sagebrain sso login
 |---|---|---|
 | NetworkStack | `app-dev-network` | VPC, subnets, VPC endpoints |
 | NeptuneStack | `app-dev-neptune` | Neptune cluster + S3 data bucket + load role |
-| NeptuneSageMakerStack | `app-dev-neptune-sagemaker` | SageMaker Studio for team data loading |
 | NeptuneApiStack | `app-dev-neptune-api` | API Gateway + Lambda read-only SPARQL API |
 | NeptuneAgentStack | `app-dev-neptune-agent` | Bedrock Strands AI agent — async NL-to-SPARQL via `POST /ask` + `GET /ask/{job_id}` |
 | NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only) |
@@ -38,9 +37,11 @@ Any principal authenticated to the AWS account can upload to the bucket. Bucket 
 
 ## Loading Data
 
-Run `tools/load_kg.py` from a SageMaker Studio terminal. Read values from CloudFormation outputs:
+Activate the `neptune` conda environment and run `tools/load_kg.py`. Read values from CloudFormation outputs:
 
 ```bash
+conda activate neptune
+
 export NEPTUNE_ENDPOINT=$(aws --profile sagebrain cloudformation describe-stacks \
   --stack-name app-dev-neptune \
   --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
@@ -316,13 +317,12 @@ Tests live in `tests/unit/`. Lambda handler tests import from `src/lambda/` via 
 ## Key Design Decisions
 
 - Neptune has **IAM auth enabled** — all requests must be SigV4-signed. Plain `curl` returns `AccessDeniedException`.
-- Neptune security group has **no broad ingress rules**. Each consumer stack (Lambda, SageMaker) adds a targeted SG-to-SG `CfnSecurityGroupIngress` rule on port 8182 to avoid cross-stack cyclic references.
+- Neptune security group has **no broad ingress rules**. Each consumer stack (Lambda) adds a targeted SG-to-SG `CfnSecurityGroupIngress` rule on port 8182 to avoid cross-stack cyclic references.
 - The API Lambda uses the **read endpoint** only, scoped to read-only IAM actions.
 - The API is **POST only** — GET was removed to avoid URL length limits for complex SPARQL queries.
 - **Synapse team-gated auth** — both APIs require a valid Synapse PAT/OAuth token and membership in team 273957. The Lambda authorizer validates via Synapse's `/userProfile` + `/team/{id}/member/{userId}/membershipStatus` endpoints; results are cached 5 min by API Gateway.
 - **S3 bulk loader** is used for all data loading — not SPARQL INSERT batches. Neptune assumes `NeptuneLoadRole` (trusted by `rds.amazonaws.com`) to read from S3.
 - **Date-partitioned S3 layout** (`YYYY-MM-DD/schema/` and `YYYY-MM-DD/data/rdf/`) preserves a historical data lake. Each load is a full reset + reload from a chosen prefix.
-- **SageMaker Studio** runs in `VpcOnly` mode so notebook kernels can reach Neptune. Requires VPC interface endpoints for `sagemaker.api` and `sts` (in NetworkStack).
 - **Both APIs are async (submit + poll)** — Neptune SPARQL on the 2.27M-triple graph takes 4–40s; synchronous API Gateway has a hard 29s limit. SQS + DynamoDB decouples HTTP from execution for both `/query` and `/ask`.
 - **Agent routes through `/query`** rather than calling Neptune directly. The `query_neptune` tool submits to `/query` and polls `/query/{job_id}` — keeps all query traffic through the single audit-logged chokepoint, and the agent inherits future ACLs for free.
 - **Worker concurrency is capped** — query worker uncapped (SPARQL is read-only); agent worker capped at 10 concurrent invocations to prevent Bedrock rate-limit errors under burst traffic.

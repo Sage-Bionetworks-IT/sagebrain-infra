@@ -2,8 +2,8 @@
 """
 Load NF-OSI KG data into Amazon Neptune via the S3 bulk loader.
 
-Run from a SageMaker Studio terminal or notebook where Neptune is accessible
-via the VPC. Credentials are picked up automatically from the instance role.
+Run from any machine with VPC access to Neptune and the sagebrain AWS profile.
+Credentials are picked up automatically from the AWS profile.
 
 Requirements:
     pip install requests aws-requests-auth
