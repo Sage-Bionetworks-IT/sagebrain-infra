@@ -73,7 +73,7 @@ class NeptuneVizStack(cdk.Stack):
 
         # Neptune ingress from the Graph Explorer task. Rule lives in this stack
         # (not the Neptune stack) to avoid cross-stack cyclic references — same
-        # pattern as the Lambda and SageMaker stacks.
+        # pattern as the Lambda stacks.
         ec2.CfnSecurityGroupIngress(
             self,
             "NeptuneIngressFromViz",

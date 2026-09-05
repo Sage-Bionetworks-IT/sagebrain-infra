@@ -1,7 +1,7 @@
 
 # sage-brain-infra
 
-AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a public read-only SPARQL API and SageMaker Studio for team data access.
+AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a public read-only SPARQL API and an AI agent interface.
 
 ## Features
 
@@ -9,7 +9,6 @@ AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune g
 - **Amazon Neptune**: Managed graph database for knowledge graphs
 - **SPARQL API**: Read-only API Gateway + Lambda endpoint for querying Neptune over HTTPS (Synapse team-gated)
 - **AI Agent API**: Natural-language query interface powered by Bedrock Strands (Claude Sonnet 4.6) — converts plain-language questions to SPARQL and returns answers with full reasoning trace
-- **SageMaker Studio**: Team JupyterLab environment for loading and querying the knowledge graph
 - **Automated Ingestion Pipeline**: Append-only, event-driven loader — an S3 `manifest.ttl` upload triggers EventBridge → Step Functions → Neptune bulk load, one named graph per dated snapshot
 - **Query Audit Logging**: All SPARQL queries logged to CloudWatch with source tracking (direct vs. agent)
 
@@ -110,7 +109,7 @@ AWS_PROFILE=sagebrain cdk deploy --context env=dev --all
 To deploy a specific stack:
 
 ```console
-AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-sagemaker --context env=dev
+AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-api --context env=dev
 ```
 
 ## Querying Neptune via the Public API
@@ -176,15 +175,9 @@ Response includes the answer and the SPARQL steps taken:
 > [!NOTE]
 > Requires Claude Sonnet 4.6 model access to be enabled in **AWS Console → Bedrock → Model access**. This is a one-time account-level setup.
 
-## Accessing and Loading Data via SageMaker Studio
+## Loading Data
 
-Team members can load and query the knowledge graph directly from JupyterLab in the AWS Console — no SSH or EC2 required.
-
-### 1. Open Studio
-
-Go to **AWS Console → SageMaker → Studio**, select your user profile, and launch a JupyterLab space.
-
-### 2. Upload data to S3
+### 1. Upload data to S3
 
 Data is stored in a date-partitioned layout that preserves a historical data lake. Each contribution goes under its own date prefix:
 
@@ -205,14 +198,14 @@ aws --profile sagebrain cloudformation describe-stacks \
   --output text
 ```
 
-Then upload via the AWS Console S3 UI, or from the Studio terminal:
+Then upload via the AWS Console S3 UI or AWS CLI:
 
 ```console
 aws s3 cp ./schema/ s3://<NeptuneDataBucketName>/2026-02-20/schema/ --recursive
 aws s3 cp ./data/rdf/ s3://<NeptuneDataBucketName>/2026-02-20/data/rdf/ --recursive
 ```
 
-### 3. Load into Neptune
+### 2. Load into Neptune
 
 Read the required values from CloudFormation outputs, then run `tools/load_kg.py`:
 
@@ -254,14 +247,12 @@ To pass secrets to a container set the secrets manager `container_secrets`
 In this repository, the infrastructure does not define application-specific helpers such as `ServiceProps` or `ServiceSecret`. Instead, it assumes that:
 
 - Sensitive values (for example, Neptune credentials or application API keys) are stored in **AWS Secrets Manager** or **SSM Parameter Store**.
-- Client applications that connect to Neptune (from SageMaker Studio or other trusted workloads in the VPC) are responsible for retrieving those secrets and exposing them to their own runtime (for example, as environment variables or in their own configuration layer).
+- Client applications that connect to Neptune (from trusted workloads in the VPC) are responsible for retrieving those secrets and exposing them to their own runtime (for example, as environment variables or in their own configuration layer).
 
 A typical pattern is:
 
 1. Store connection details (host, port, user, password, etc.) in a secret in AWS Secrets Manager.
-2. Grant IAM permissions for that secret to:
-   - Developers or automation that need to connect via SageMaker Studio, and/or
-   - Application workloads that will access Neptune from within the VPC.
+2. Grant IAM permissions for that secret to application workloads that will access Neptune from within the VPC.
 3. Have those clients retrieve the secret at runtime and use it to construct the Neptune endpoint/connection string.
 
 The exact mechanism for loading and using secrets (for example, via environment variables, configuration files, or direct SDK calls to AWS Secrets Manager) is left to the consuming application or tooling and is not implemented in this CDK stack.
