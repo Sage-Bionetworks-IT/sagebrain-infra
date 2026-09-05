@@ -6,18 +6,27 @@ Amazon Neptune cluster for the Sage Brain knowledge graph.
 
 - **Neptune Cluster**: Managed graph database in private subnets, IAM auth enabled
 - **Security Groups**: No broad ingress — each consumer stack adds a targeted SG-to-SG rule on port 8182
-- **SageMaker Studio**: Team access for loading and querying data via JupyterLab (VpcOnly mode, routes through VPC)
+- **Graph Explorer** (`app-dev-neptune-viz`): Visual graph browsing interface running on Fargate behind an IP-restricted ALB (VPN-only access). Open-source Neptune Graph Explorer for non-technical users to explore the knowledge graph visually.
 - **Public SPARQL API** (`app-dev-neptune-api`): Async read-only SPARQL interface. `POST /query` submits a job and returns a `job_id`. A worker Lambda executes the SPARQL against Neptune and writes results to DynamoDB. Callers poll `GET /query/{job_id}`. All queries logged to CloudWatch with source, IP, duration, and query text.
 - **AI Agent API** (`app-dev-neptune-agent`): Async natural-language interface. `POST /ask` enqueues a job and returns a `job_id` immediately. A worker Lambda (Bedrock Strands / Claude Sonnet 4.6) processes the job via SQS, writes the result to DynamoDB, and the caller polls `GET /ask/{job_id}` for the answer.
 - **Backup & Monitoring**: Automated backups and CloudWatch audit/slow-query logging
 
 ## Accessing Neptune
 
-### From SageMaker Studio (team access)
+### Via Graph Explorer (visual interface)
 
-Go to **AWS Console → SageMaker → Studio**, open your user profile, and launch a JupyterLab space.
+Get the URL from CloudFormation (only accessible from Sage VPN):
 
-The execution role has full Neptune permissions (read, write, delete) scoped to this cluster. Authentication is handled automatically via instance credentials — no keys needed.
+```bash
+aws --profile sagebrain cloudformation describe-stacks \
+  --stack-name app-dev-neptune-viz \
+  --query "Stacks[0].Outputs[?OutputKey=='GraphExplorerUrl'].OutputValue" \
+  --output text
+```
+
+Open the URL in a browser — the connection to Neptune is pre-configured. Graph Explorer provides a visual interface for exploring the knowledge graph, browsing entities, and running SPARQL queries interactively.
+
+**Access Control**: Graph Explorer is fronted by an ALB with security group rules that only allow Sage's network egress IP (`52.44.61.21/32`). It has no authentication of its own — the IP allowlist is the access control.
 
 **Cluster endpoints** (from CloudFormation outputs):
 
@@ -33,50 +42,6 @@ aws --profile sagebrain cloudformation describe-stacks \
   --stack-name app-dev-neptune \
   --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterReadEndpoint'].OutputValue" \
   --output text
-```
-
-**Verify connectivity from a notebook:**
-
-```python
-import socket
-socket.create_connection(("YOUR_NEPTUNE_ENDPOINT", 8182), timeout=5)
-print("connected")
-```
-
-**Query Neptune from a notebook:**
-
-```python
-import requests
-from aws_requests_auth.boto_utils import BotoAWSRequestsAuth
-
-ENDPOINT = "<NeptuneClusterEndpoint>"  # from app-dev-neptune CloudFormation outputs
-auth = BotoAWSRequestsAuth(
-    aws_host=f"{ENDPOINT}:8182",
-    aws_region="us-east-1",
-    aws_service="neptune-db",
-)
-
-def sparql(query: str) -> list[dict]:
-    resp = requests.post(
-        f"https://{ENDPOINT}:8182/sparql",
-        data={"query": query},
-        auth=auth,
-        headers={"Accept": "application/sparql-results+json"},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    bindings = resp.json()["results"]["bindings"]
-    return [{k: v["value"] for k, v in row.items()} for row in bindings]
-
-# Check triple counts per named graph
-import pandas as pd
-rows = sparql("""
-    SELECT ?graph (COUNT(*) AS ?triples)
-    WHERE { GRAPH ?graph { ?s ?p ?o } }
-    GROUP BY ?graph
-    ORDER BY DESC(?triples)
-""")
-pd.DataFrame(rows)
 ```
 
 ### From the Public SPARQL API (read-only, no auth)
@@ -195,7 +160,7 @@ Each date prefix is a self-contained snapshot. Old prefixes are retained in S3 �
 
 ### Uploading data to S3
 
-From a Studio terminal or any machine with the `sagebrain` AWS profile:
+From any machine with the `sagebrain` AWS profile:
 
 ```bash
 export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
@@ -207,11 +172,12 @@ aws s3 cp ./schema/ s3://$NEPTUNE_BUCKET/2026-02-20/schema/ --recursive
 aws s3 cp ./data/rdf/ s3://$NEPTUNE_BUCKET/2026-02-20/data/rdf/ --recursive
 ```
 
-### Running the loader
+### Running the loader (manual)
 
-Run `tools/load_kg.py` from a JupyterLab terminal in Studio. It performs a full reset (wipes Neptune) then loads schema followed by data:
+Run `tools/load_kg.py` from any machine with the `sagebrain` AWS profile and VPC connectivity to Neptune. It performs a full reset (wipes Neptune) then loads schema followed by data:
 
 ```bash
+conda activate neptune
 pip install requests aws-requests-auth
 
 export NEPTUNE_ENDPOINT=$(aws --profile sagebrain cloudformation describe-stacks \
@@ -244,26 +210,27 @@ The loader:
 4. Bulk loads `YYYY-MM-DD/data/rdf/`
 5. Polls until each job completes and prints record counts
 
-## Adding Team Members
+### Automated ingestion pipeline
 
-User profiles are managed in CDK. Add a new username to `config/dev.yaml`:
+See CLAUDE.md for details on the append-only pipeline (`app-dev-neptune-pipeline`) — transform uploads a snapshot + `manifest.ttl` to S3, EventBridge triggers Step Functions, which invokes a loader Lambda that calls Neptune's bulk loader. Fully automated with DynamoDB lineage tracking.
+
+## Adding Graph Explorer Users
+
+To grant more users access to Graph Explorer, add their egress CIDR to `config/<env>.yaml`:
 
 ```yaml
-NEPTUNE_SAGEMAKER:
-  user_profiles:
-    - thomas-yu
-    - new-user   # alphanumeric + hyphens only, no dots
+NEPTUNE_VIZ:
+  enabled: true
+  allowed_cidrs:
+    - "52.44.61.21/32"  # Sage network
+    - "1.2.3.4/32"      # Additional user
 ```
 
-Then deploy:
+Then redeploy:
 
 ```bash
-AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-sagemaker --context env=dev
+cdk deploy app-dev-neptune-viz --profile sagebrain
 ```
-
-The user can then log into the AWS Console and launch Studio from their profile. No `iam:PassRole` permission is required on their SSO role — CloudFormation handles it.
-
-New users automatically inherit access to the Neptune S3 data bucket and can run `tools/load_kg.py` from their Studio space.
 
 ## Configuration
 
@@ -299,7 +266,7 @@ CloudWatch logs enabled for:
 
 | Symptom | Likely cause |
 |---|---|
-| `ConnectTimeout` from Studio | Space wasn't restarted after SG/network change — stop and restart the space |
+| Graph Explorer won't load | Not connected to Sage VPN, or your IP not in `allowed_cidrs` — check ALB security group rules |
 | `AccessDeniedException` on Neptune | Request not SigV4-signed, or IAM role missing Neptune permissions |
 | `TimeoutError` on port 8182 | Security group rule missing, or VPC routing issue |
 | `POST /ask` returns 504 | Should not happen — submit Lambda only enqueues. Check if the stack was redeployed with the new async stack. |
