@@ -101,6 +101,9 @@ def test_start_submits_load_into_named_graph(loader, mock_table):
     assert body["source"] == "s3://mybucket/nf/2026-04-25/data/"
     assert body["format"] == "turtle"
     assert body["failOnError"] == "TRUE"
+    # Never AUTO: AUTO would resume the prior job for this source and no-op a
+    # re-publish of the same date, reporting success without loading anything.
+    assert body["mode"] == "NEW"
     assert body["parserConfiguration"]["namedGraphUri"] == "urn:sagebrain:nf:2026-04-25"
 
     # in_progress row written

@@ -121,7 +121,15 @@ def _start_bulk_load(prefix: str, named_graph: str) -> str:
         "format": "turtle",
         "iamRoleArn": NEPTUNE_LOAD_ROLE_ARN,
         "region": REGION,
+        # NEW, never the AUTO default: AUTO resumes a prior job from the same
+        # source, and our source is byte-identical on a re-publish of the same
+        # date. RESUME semantics would then reload nothing and return success,
+        # so corrected data would never land while the tracking table recorded
+        # a completed load. NEW also means dropped graph data does get reloaded.
+        "mode": "NEW",
         # Append-only: surface bad data instead of silently skipping it.
+        # Caveat: on error the loader stops but data loaded up to that point
+        # persists, so a failed load leaves a partial named graph behind.
         "failOnError": "TRUE",
         "parallelism": PARALLELISM,
         # Queue behind any in-flight load rather than erroring on a busy cluster.
