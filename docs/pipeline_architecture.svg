@@ -53,8 +53,8 @@
   <!-- S3 -->
   <rect class="node" x="30" y="112" width="170" height="92" rx="8" stroke="#1D9E75" stroke-width="1.5"/>
   <text x="115" y="138" text-anchor="middle" style="fill:#a9dcc9;font-size:13px;font-weight:500">Amazon S3 · Data Bucket</text>
-  <text x="115" y="160" text-anchor="middle" style="fill:#8f8c82;font-size:11px">{portal}/YYYY-MM-DD/</text>
-  <text x="115" y="178" text-anchor="middle" style="fill:#8f8c82;font-size:11px">*.ttl  +  manifest.ttl (last)</text>
+  <text x="115" y="160" text-anchor="middle" style="fill:#8f8c82;font-size:11px">{portal}/YYYY-MM-DD/data/*.ttl</text>
+  <text x="115" y="178" text-anchor="middle" style="fill:#8f8c82;font-size:11px">+ manifest.ttl (last, trigger)</text>
 
   <!-- Transform (upstream) -->
   <rect class="node" x="30" y="250" width="170" height="60" rx="8" stroke="#5F5E5A" stroke-width="1.5" stroke-dasharray="5 4"/>
