@@ -153,7 +153,7 @@ def _load_errors(load_id: str, limit: int = 5) -> list:
     )
     try:
         resp = requests.get(
-            url, headers=_signed_headers("GET", url, "", {}), timeout=30
+            url, headers=_signed_headers("GET", url, "", {}), timeout=10
         )
         resp.raise_for_status()
         payload = resp.json().get("payload", {})
