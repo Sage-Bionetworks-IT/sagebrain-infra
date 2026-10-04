@@ -237,7 +237,9 @@ GET /ask/{job_id}  →  status.py  →  DynamoDB
 
 ### agent.py — SQS worker
 - SQS-triggered (batch size 1). Uses [Strands Agents SDK](https://strandsagents.com) with a `query_neptune` tool
-- Model: `us.anthropic.claude-sonnet-4-6` (cross-region inference profile)
+- Model: `us.anthropic.claude-sonnet-5-5` (cross-region inference profile), set per environment by
+  `AGENT.bedrock_model_id` in `config/base.yaml` (override in `config/<env>.yaml`). Each model needs its
+  Bedrock Marketplace agreement accepted once per account, or calls fail with `AccessDeniedException`
 - Calls `sagebrain_core.query_service.run_query` **in-process** (spec 001 Phase 1c): validation, the caller's
   `query` rate buckets and the `sparql_query` audit log (`source=agent`, `principal=<user_id>`) all come from
   `sagebrain_core`. `_safe_sparql` (SELECT-only) runs first. Over-length / rate-limited queries become

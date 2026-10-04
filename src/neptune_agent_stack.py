@@ -49,9 +49,9 @@ class NeptuneAgentStack(cdk.Stack):
         neptune_cluster_resource_id: str,
         neptune_security_group: ec2.SecurityGroup,
         rate_limit_table: dynamodb.ITable,
+        bedrock_model_id: str,
         synapse_team_id: str,
         machine_api_key: str = "",
-        bedrock_model_id: str = "us.anthropic.claude-sonnet-4-6",
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)

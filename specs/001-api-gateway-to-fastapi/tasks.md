@@ -87,7 +87,27 @@ tracked in this file once Phase 1 lands. Carried forward from 1d:
 
 ## Handoff: current state (updated 2026-10-04, end of Phase 1d code)
 **Branch:** `spec-driven-fastapi-phase0`. 0, 1a and 1b–1c are committed (`7810dc9`, `21d4a63`).
-**Phase 1d (T141–T147) is in the working tree, uncommitted.** Nothing is deployed or pushed.
+1d is committed (`73171cf`). Nothing is pushed.
+**Deployed to dev 2026-10-04:** `app-dev-rate-limits` (new), `app-dev-neptune-agent` (1c + 1d) and
+`app-dev-neptune-api` (1a layer). The pipeline, monitoring, network and Neptune stacks were not touched;
+monitoring was already `UPDATE_ROLLBACK_COMPLETE`. **Prod has none of this.** Smoke tests:
+- `/query` via API Gateway completes.
+- `/ask` via API Gateway runs as `legacy-apigw`: `sparql_query` with `source=agent` in the agent log
+  group, and items `{rl:query}:global` + `{rl:query}:u:legacy-apigw` in the table, with no
+  `ratelimit_degraded`.
+- `/ask` via the local Docker app runs as the caller's user id.
+- **Every `/ask` then fails at Bedrock** with `AccessDeniedException` (Marketplace
+  `ViewSubscriptions`/`Subscribe`). This is account setup, not this code: `anthropic.claude-sonnet-4-6`
+  has `agreementAvailability: NOT_AVAILABLE`, and a 09:12 job on the old worker failed at Bedrock
+  too. The model is now config (`AGENT.bedrock_model_id`): dev uses Sonnet 5.5
+  (`us.anthropic.claude-sonnet-5-5`, `config/base.yaml`), and prod is pinned to Sonnet 4.6
+  (`config/prod.yaml`). **Resolved 2026-10-04 ~10:50:** both agreements now show `AVAILABLE` in dev,
+  and `converse` on `us.anthropic.claude-sonnet-5-5` and `…-4-6` succeeds. A new account needs the
+  same one-time agreement per model (opening the model in the Bedrock console does it). The 5.5
+  switch is not yet deployed to dev. Don't grant `aws-marketplace:*` to the
+  worker role. After that, re-run an `/ask` to complete the 1c end-to-end check.
+- **Keep the two `export_value` lines in `app.py`.** Nothing in dev imports them now, but the prod
+  agent stack still does until prod gets 1c. Remove them only after the prod agent deploy.
 Phases 0, 1a, 1c and 1d-code are complete. 1b is complete (T118 re-verified with a
 real build + compose run). T148 is blocked (see its entry).
 **Next: the local-run tasks (T125–T131)**, then deploy 1c + 1d to dev (order below), then

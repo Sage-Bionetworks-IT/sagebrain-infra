@@ -13,7 +13,8 @@ from sagebrain_core.errors import QueryRejected, RateLimited
 from strands import Agent, tool
 from strands.models.bedrock import BedrockModel
 
-BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+# Set by CDK from config AGENT.bedrock_model_id; the fallback only serves local runs and tests.
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-5-5")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 

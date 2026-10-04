@@ -114,6 +114,7 @@ neptune_agent_stack = NeptuneAgentStack(
     neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
     neptune_security_group=neptune_stack.neptune_security_group,
     rate_limit_table=rate_limit_stack.table,
+    bedrock_model_id=config["AGENT"]["bedrock_model_id"],
     synapse_team_id=config["AUTH"]["synapse_team_id"],
     machine_api_key=config["AUTH"].get("machine_api_key", ""),
     env=env,

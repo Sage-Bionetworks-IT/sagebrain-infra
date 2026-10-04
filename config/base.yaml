@@ -36,6 +36,12 @@ NEPTUNE_VIZ:
   # e.g. "public.ecr.aws/neptune/graph-explorer@sha256:<digest>".
   image: "public.ecr.aws/neptune/graph-explorer:latest"
 
+AGENT:
+  # Bedrock cross-region inference profile for the agent worker (Claude 4+ needs the `us.`
+  # profile, not the base model ID). The worker's IAM allows us.anthropic.claude-* profiles.
+  # Each model needs its Bedrock Marketplace agreement accepted once per account.
+  bedrock_model_id: us.anthropic.claude-sonnet-5-5
+
 AUTH:
   synapse_team_id: "3605470"
   # machine_api_key: ""  # set in env-specific config (not committed); enables x-api-key auth

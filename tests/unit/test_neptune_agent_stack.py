@@ -9,6 +9,7 @@ from src.neptune_agent_stack import NeptuneAgentStack
 from src.rate_limit_stack import RateLimitStack
 
 READ_ENDPOINT = "test-neptune.cluster-ro.us-east-1.neptune.amazonaws.com"
+MODEL_ID = "us.anthropic.claude-test-model"
 
 
 @pytest.fixture(scope="module")
@@ -33,6 +34,7 @@ def template():
         neptune_cluster_resource_id="cluster-ABCDEFGHIJKLMNOP",
         neptune_security_group=neptune_sg,
         rate_limit_table=rate_limit_stack.table,
+        bedrock_model_id=MODEL_ID,
         synapse_team_id="273957",
     )
     return Template.from_stack(stack)
@@ -393,3 +395,33 @@ def test_no_wildcard_dynamodb_actions(template):
         if _on_rate_limit_table(stmt):
             for denied in ("dynamodb:Scan", "dynamodb:Query", "dynamodb:DeleteItem"):
                 assert denied not in actions
+
+
+# ---------------------------------------------------------------------------
+# Bedrock model: comes from config (AGENT.bedrock_model_id), not a constructor default
+# ---------------------------------------------------------------------------
+
+
+def test_worker_env_has_the_configured_model(template):
+    assert _worker(template)["Environment"]["Variables"]["BEDROCK_MODEL_ID"] == MODEL_ID
+
+
+def test_model_id_has_no_default():
+    param = inspect.signature(NeptuneAgentStack.__init__).parameters["bedrock_model_id"]
+    assert param.default is inspect.Parameter.empty
+
+
+@pytest.mark.parametrize(
+    "env_name, expected",
+    [
+        ("dev", "us.anthropic.claude-sonnet-5-5"),  # config/base.yaml
+        ("prod", "us.anthropic.claude-sonnet-4-6"),  # pinned in config/prod.yaml
+    ],
+)
+def test_configured_model_per_env_is_covered_by_iam(env_name, expected):
+    from src.utils import load_context_config
+
+    model_id = load_context_config(env_name)["AGENT"]["bedrock_model_id"]
+    assert model_id == expected
+    # The worker's Bedrock statement allows inference-profile/us.anthropic.claude-*.
+    assert model_id.startswith("us.anthropic.claude-")
