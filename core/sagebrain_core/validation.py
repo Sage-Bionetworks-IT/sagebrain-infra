@@ -23,3 +23,17 @@ def validate_query(value) -> str:
 def validate_question(value) -> str:
     """Return the stripped question or raise QueryRejected (messages per api/openapi.yaml)."""
     return _validate_text(value, "question", "Question", limits.QUESTION_MAX_CHARS)
+
+
+DEFAULT_SOURCE = "direct"
+
+
+def validate_source(value) -> str:
+    """Return the caller tag (X-Source) or raise QueryRejected. Not stripped: logged verbatim."""
+    if value is None:
+        return DEFAULT_SOURCE
+    if len(value) > limits.SOURCE_MAX_CHARS:
+        raise QueryRejected(
+            f"'X-Source' exceeds maximum length of {limits.SOURCE_MAX_CHARS} characters"
+        )
+    return value

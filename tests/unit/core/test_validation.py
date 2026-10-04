@@ -5,7 +5,12 @@ import json
 import pytest
 
 from sagebrain_core.errors import QueryRejected
-from sagebrain_core.validation import validate_query, validate_question
+from sagebrain_core import limits
+from sagebrain_core.validation import (
+    validate_query,
+    validate_question,
+    validate_source,
+)
 from tests.contract.cases import load_cases
 
 VALIDATORS = {"query": validate_query, "ask": validate_question}
@@ -36,13 +41,19 @@ CASES = _field_cases()
 def test_validator_matches_contract(case, body):
     validate = VALIDATORS[case["api"]]
     value = body.get(FIELDS[case["api"]])
+    headers = {k.lower(): v for k, v in (case["request"].get("headers") or {}).items()}
     expect = case["expect"]
 
+    def run():
+        if case["api"] == "query":
+            validate_source(headers.get("x-source"))
+        return validate(value)
+
     if expect["status"] == 202:
-        assert validate(value) == value.strip()
+        assert run() == value.strip()
     else:
         with pytest.raises(QueryRejected) as exc:
-            validate(value)
+            run()
         assert exc.value.message == expect["body"]["error"]
         assert exc.value.status == 400
 
@@ -57,3 +68,15 @@ def test_question_limit_boundary():
     assert len(validate_question("q" * 2000)) == 2000
     with pytest.raises(QueryRejected):
         validate_question("q" * 2001)
+
+
+def test_source_defaults_to_direct():
+    assert validate_source(None) == "direct"
+
+
+def test_source_limit_boundary():
+    # Not stripped: the header value is recorded verbatim, as today.
+    assert validate_source("s" * limits.SOURCE_MAX_CHARS) == "s" * 64
+    with pytest.raises(QueryRejected) as exc:
+        validate_source("s" * (limits.SOURCE_MAX_CHARS + 1))
+    assert exc.value.message == "'X-Source' exceeds maximum length of 64 characters"

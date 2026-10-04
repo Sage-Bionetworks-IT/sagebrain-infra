@@ -26,6 +26,7 @@ info:
     query_max_chars: 8000
     neptune_query_timeout_seconds: 60
     question_max_chars: 2000
+    source_max_chars: 64
     global_rate_per_api_rps: 50
     global_burst_per_api: 100
     user_rate_rps: 5
@@ -98,6 +99,8 @@ paths:
                   value: { error: "'query' must be a string" }
                 notObject:
                   value: { error: "Request body must be a JSON object" }
+                sourceTooLong:
+                  value: { error: "'X-Source' exceeds maximum length of 64 characters" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "413":
@@ -298,15 +301,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [openapi, info, paths]
-                properties:
-                  openapi:
-                    type: string
-                  info:
-                    type: object
-                  paths:
-                    type: object
+                $ref: "#/components/schemas/OpenApiDocument"
 
   /api/openapi.yaml:
     get:
@@ -321,7 +316,7 @@ paths:
           content:
             application/yaml:
               schema:
-                type: string
+                $ref: "#/components/schemas/OpenApiDocument"
 
 components:
   securitySchemes:
@@ -349,7 +344,7 @@ components:
       name: X-Source
       in: header
       required: false
-      description: Caller tag recorded in the SPARQL audit log (`agent` for agent-originated queries). Defaults to `direct`.
+      description: Caller tag recorded in the SPARQL audit log (`agent` for agent-originated queries). Defaults to `direct`. Longer than 64 characters is a 400.
       schema:
         type: string
         maxLength: 64
@@ -466,6 +461,18 @@ components:
       properties:
         message:
           type: string
+
+    OpenApiDocument:
+      type: object
+      description: An OpenAPI 3.1 document (this contract), as JSON or YAML.
+      required: [openapi, info, paths]
+      properties:
+        openapi:
+          type: string
+        info:
+          type: object
+        paths:
+          type: object
 
     Health:
       type: object

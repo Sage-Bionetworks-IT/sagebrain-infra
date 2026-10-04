@@ -2,6 +2,7 @@
 
 QUERY_MAX_CHARS = 8000
 QUESTION_MAX_CHARS = 2000
+SOURCE_MAX_CHARS = 64  # X-Source header, recorded in the sparql_query audit log
 NEPTUNE_QUERY_TIMEOUT_SECONDS = 60
 
 # Token buckets: rate = refill per second, burst = bucket capacity.

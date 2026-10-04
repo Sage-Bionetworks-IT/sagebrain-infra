@@ -187,7 +187,7 @@ Three Lambdas + SQS + DynamoDB — mirrors the agent's async pattern.
 - `limits.py` — every threshold value; a test asserts it equals `api/openapi.yaml` `x-sagebrain-limits`
 - `validation.py` — `validate_query` / `validate_question` (trim, type, length; contract error strings)
 - `ratelimit.py` — `admit(api, principal)`: global bucket (50/100) then per-principal bucket
-  (user 5/20, machine 25/50). `LocalLimiter` is in-process only until the Valkey limiter (spec 002)
+  (user 5/20, machine 25/50). `LocalLimiter` is in-process only until the DynamoDB limiter (spec 001 Phase 1d)
 - `neptune.py` — `execute_query`: SigV4, timeout, `sparql_query` audit log
 - `query_service.py` — `run_query` = validate + admit + execute, for in-process callers (the agent)
 - Each limit is charged **once** per query: `POST /query` validates + admits at submit; the worker only executes
@@ -234,7 +234,12 @@ GET /ask/{job_id}  →  status.py  →  DynamoDB
 ### agent.py — SQS worker
 - SQS-triggered (batch size 1). Uses [Strands Agents SDK](https://strandsagents.com) with a `query_neptune` tool
 - Model: `us.anthropic.claude-sonnet-4-6` (cross-region inference profile)
-- Calls `POST /query` internally — keeps all query traffic through the single audit-logged chokepoint
+- Calls `sagebrain_core.query_service.run_query` **in-process** (spec 001 Phase 1c): validation, the caller's
+  `query` rate buckets and the `sparql_query` audit log (`source=agent`, `principal=<user_id>`) all come from
+  `sagebrain_core`. `_safe_sparql` (SELECT-only) runs first. Over-length / rate-limited queries become
+  `tool_result` error steps and the job continues. Runs in VPC with read-only `neptune-db` IAM + 8182 ingress
+- SQS message: new `{job_id, question, user_id, source_ip}` or legacy `{job_id, question, authorization}`
+  (run as `principal="legacy-apigw"`; the token is never used, logged or stored)
 - Writes `status=complete` (with `answer`/`steps`) or `status=error` to DynamoDB when done
 - **Logs every invocation** to CloudWatch: `job_id`, question, status, step count, duration
 - Concurrency capped at 10 — prevents Bedrock/Neptune overload under burst traffic
@@ -308,7 +313,7 @@ A default connection to Neptune is pre-configured, so the graph loads on first o
 
 ## Query Audit Logging
 
-All queries through `/query` are logged as `{"event": "sparql_query", ...}`. Agent invocations are logged as `{"event": "agent_invocation", ...}` in the agent Lambda log group. Use `"source": "agent"` vs `"source": "direct"` to distinguish callers.
+All queries (`/query` worker and the agent's in-process `run_query`) are logged as `{"event": "sparql_query", ...}`. Agent invocations are logged as `{"event": "agent_invocation", ...}` in the agent Lambda log group. Use `"source": "agent"` vs `"source": "direct"` to distinguish callers.
 
 CloudWatch Insights query:
 ```
@@ -348,6 +353,13 @@ API Gateway threshold is (re)enforced.
 - `tests/contract/test_cases_match_spec.py` — every expected body validates against the spec.
 - `tools/parity_probe.py` — replays the vectors against live deployments and diffs them.
 - Lint the spec: `npx @redocly/cli@2 lint api/openapi.yaml --config api/.redocly.yaml`
+- FastAPI service (spec 001 Phase 1b, not deployed yet): `app/sagebrain_api/`, tests in
+  `tests/unit/app/`. It reuses `sagebrain_core` for validation, limits and rate admission.
+  Image: `docker build --platform linux/arm64 -f app/Dockerfile .` (repo-root context, filtered
+  by `app/Dockerfile.dockerignore`); local run: `docker compose -f app/compose.yaml up --build`.
+- Pydantic models in `app/sagebrain_api/models/_generated.py` are generated from the spec, never
+  edited by hand. Drift check: `pre-commit run openapi-models --all-files`. The generator can't
+  share an env with aws-cdk-lib (typeguard pins), so it lives only in that hook's env.
 - Config: top-level merge of `base.yaml` + env file is **shallow** (an env `NEPTUNE:` block replaces
   base's entirely); only keys in `_DEEP_MERGE_KEYS` in `src/utils.py` (currently `API_APP`) deep-merge.
 
@@ -376,6 +388,6 @@ Tests live in `tests/unit/`. Lambda handler tests import from `src/lambda/` via 
 - **S3 bulk loader** is used for all data loading — not SPARQL INSERT batches. Neptune assumes `NeptuneLoadRole` (trusted by `rds.amazonaws.com`) to read from S3.
 - **Date-partitioned S3 layout** (`YYYY-MM-DD/schema/` and `YYYY-MM-DD/data/rdf/`) preserves a historical data lake. Each load is a full reset + reload from a chosen prefix.
 - **Both APIs are async (submit + poll)** — Neptune SPARQL on the 2.27M-triple graph takes 4–40s; synchronous API Gateway has a hard 29s limit. SQS + DynamoDB decouples HTTP from execution for both `/query` and `/ask`.
-- **Agent routes through `/query`** rather than calling Neptune directly. The `query_neptune` tool submits to `/query` and polls `/query/{job_id}` — keeps all query traffic through the single audit-logged chokepoint, and the agent inherits future ACLs for free.
+- **Agent calls the shared query service in-process** (`sagebrain_core.run_query`), not `/query` over HTTP. The chokepoint is the library, not the endpoint: the same validation, per-caller rate buckets and `sparql_query` audit log apply to every caller.
 - **Worker concurrency is capped** — query worker uncapped (SPARQL is read-only); agent worker capped at 10 concurrent invocations to prevent Bedrock rate-limit errors under burst traffic.
 - **Agent Lambda is ARM_64** — bundled with `platform=linux/arm64` to match compiled dependencies on Apple Silicon dev machines.

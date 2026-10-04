@@ -1,0 +1,22 @@
+# Local run of the API (the shared rate limiter is DynamoDB, tasks.md Phase 1d).
+#   docker compose -f app/compose.yaml up --build
+#   open http://localhost:8000/api
+# /healthz and /api work offline. Job endpoints need AWS credentials and the dev job
+# tables/queues: that's the `local-aws` profile (tasks.md T125-T128), not this file.
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: app/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      SYNAPSE_TEAM_ID: "3605470"
+      MACHINE_API_KEY: ${MACHINE_API_KEY:-}
+      PUBLIC_BASE_URL: http://localhost:8000
+      AWS_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+      QUERY_JOB_TABLE_NAME: local-query-jobs
+      QUERY_JOB_QUEUE_URL: http://localhost/query
+      ASK_JOB_TABLE_NAME: local-ask-jobs
+      ASK_JOB_QUEUE_URL: http://localhost/ask

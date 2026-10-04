@@ -24,7 +24,7 @@ SQS → agent worker Lambda (rc=10) → Strands agent → query_neptune tool
 sagebrain_core (shared by the app image, the query worker and the agent worker):
   limits.py         single source of the threshold values (== spec x-sagebrain-limits)
   query_service.py  validate_query, run_query (rate buckets, 60 s Neptune timeout, SigV4, audit log)
-  ratelimit.py      Valkey token buckets (+ local fail-open fallback)
+  ratelimit.py      DynamoDB token buckets (+ local fail-open fallback)
 ```
 
 ## Layout
@@ -42,9 +42,9 @@ sagebrain_core (shared by the app image, the query worker and the agent worker):
 | 1a | `sagebrain_core`: limits, `validate_query`, `run_query` (moved out of `src/lambda/query.py`), LocalLimiter. The query worker is refactored onto it with behaviour unchanged (the existing `test_query_handler.py` must still pass) | Lambda code only |
 | 1b | FastAPI app (local): codegen, routers, auth port, middleware, Dockerfile, drift and Schemathesis tests | none |
 | 1c | Agent tool calls `run_query` in-process (D-8/D-9); agent stack gets Neptune read IAM and 8182 ingress; the worker accepts both message shapes | agent Lambda + IAM/SG |
-| 2 | Valkey token bucket (spec 002) | none |
+| 1d | Shared DynamoDB token buckets (`DynamoLimiter`), also the cache for later governance/ReBAC lookups | DynamoDB table + IAM |
 | 3 | `NeptuneAppStack` behind `API_APP.enabled`; runs in parallel with API Gateway in dev | additive |
-| 4 | Monitoring for the ALB, ECS, WAF and Valkey | additive |
+| 4 | Monitoring for the ALB, ECS, WAF and the rate-limit table | additive |
 | 5 | Cutover dev → stage → prod (clients move host) (spec 003) | config |
 | 6a / 6b | Release the cross-stack exports, then delete the RestApi, authorizer and submit/status Lambdas | removal |
 | 7 | CLAUDE.md, README and docs | none |

@@ -147,3 +147,7 @@ def test_limits_extension_matches_schema_limits():
         schemas["AskRequest"]["properties"]["question"]["maxLength"]
         == limits["question_max_chars"]
     )
+    assert (
+        SPEC["components"]["parameters"]["XSource"]["schema"]["maxLength"]
+        == limits["source_max_chars"]
+    )

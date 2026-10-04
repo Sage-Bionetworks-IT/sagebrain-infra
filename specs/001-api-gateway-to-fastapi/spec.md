@@ -44,7 +44,8 @@ tests them.
   and may be at most 8000 characters after trimming. On success, the service stores the DynamoDB
   item `{job_id, status: pending, created_at, ttl: created_at + 86400}`, sends the SQS message
   `{job_id, query, source, source_ip, user_agent}`, and returns `202 {job_id, status}`.
-  `source` comes from `X-Source` and defaults to `"direct"`. The service logs `query_submitted`.
+  `source` comes from `X-Source`, defaults to `"direct"`, and may be at most 64 characters
+  (D-11). The service logs `query_submitted`.
   *Tests:* `cases.yaml` `query_submit_*`, `test_query_job_item_and_message_shape`.
 - **FR-2 Query status.** 404 `{"error":"Job not found"}` for unknown ids. 200 returns
   `{job_id, status}`. A `complete` job adds `results` (default `""`) and `content_type`
@@ -120,11 +121,12 @@ where each one is enforced and which test covers it is in [parity-matrix.md](par
 | D-3 (F6) | A blank `job_id` can't reach the handler (API Gateway answers first) | Blank or over 128 chars returns 400 `Missing job_id`; no `/query/` route (404) | Explicit input bounds | spec `JobId` parameter |
 | D-4 | `x-api-key` clients must also send `Authorization: ApiKey` | `x-api-key` alone is enough; `Authorization: ApiKey` is still accepted and ignored | The extra header was only there to satisfy API Gateway's identity source | Phase 1 auth tests |
 | D-5 | API Gateway accepts bodies up to 10 MB | 256 KiB returns 413 `{"message":"Request Too Long"}` | The largest valid body is about 8 KB; this narrows the abuse surface | Phase 1 body-limit tests |
-| D-6 | Throttle is per API only | Plus a per-principal bucket and a WAF per-IP rule | Stops one user starving everyone else | spec 002 |
+| D-6 | Throttle is per API only | Plus a per-principal bucket and a WAF per-IP rule | Stops one user starving everyone else | Phase 1d (DynamoDB) |
 | D-7 | URLs carry a `/prod` stage prefix on two hostnames | One hostname, no stage prefix | One service | spec 003 (optional temporary `/prod/*` alias) |
 | D-8 | `/ask` puts the caller's raw `Authorization` header in SQS; the agent re-presents it to `POST /query` over HTTPS and polls every 3 s | `/ask` enqueues `{job_id, question, user_id, source_ip}`; the agent calls `run_query` in-process, attributed to `user_id` with `source: agent` | Limits live server-side; no bearer tokens in queues; no HTTP loopback through the NAT, WAF or rate limiter; fixes F8 | `ask_submit_ok` |
 | D-9 | Agent queries go through the query SQS queue and worker (two hops), with a 70 s poll timeout | They run synchronously in the agent worker against the Neptune reader with a 60 s timeout. The agent worker gains read-only Neptune IAM and port 8182 ingress, and loses `NEPTUNE_QUERY_URL` | Fewer moving parts and lower latency | Phase 1 agent tool tests |
 | D-10 | Bad or non-member bearer returns 401 `{"message":"User is not authorized to access this resource with an explicit deny in an identity-based policy"}` (observed in dev) | Every auth failure returns 401 `{"message":"Unauthorized"}` | One body for clients; no IAM wording leaked | `query_bad_bearer` |
+| D-11 | `X-Source` of any length is accepted and written verbatim into the SQS message and the `sparql_query` audit log; the spec's `maxLength: 64` was unenforced | Over 64 characters returns 400 `'X-Source' exceeds maximum length of 64 characters` (`sagebrain_core.validate_source`) | A threshold must be enforced, not only documented (constitution III); bounds what callers can write into audit logs | `query_submit_source_too_long`, `query_submit_source_max_length` |
 
 ## Known issues
 - **F8 (resolved by D-8):** today, for a machine-key `/ask` call, only `Authorization: ApiKey`

@@ -37,6 +37,8 @@ jobs:
         run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Contract tests (spec <-> cases.yaml)
         run: python -m pytest tests/contract -v
+      - name: Generated models match the spec
+        run: pre-commit run openapi-models --all-files --show-diff-on-failure
   synth:
     runs-on: ubuntu-latest
     steps:
@@ -56,3 +58,33 @@ jobs:
           platforms: arm64
       - name: Generate cloudformation
         run: cdk synth --context env=${{ inputs.environment }} --no-lookups --debug --output ./cdk.out
+  api-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up QEMU for ARM64 Docker builds
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build API image (ARM64)
+        run: docker buildx build --platform linux/arm64 -f app/Dockerfile --load -t sagebrain-api:ci .
+      - name: Smoke test
+        run: |
+          test "$(docker run --rm --platform linux/arm64 --entrypoint id sagebrain-api:ci -u)" != 0
+          docker run -d --name api --platform linux/arm64 -p 8000:8000 \
+            -e SYNAPSE_TEAM_ID=0 -e AWS_DEFAULT_REGION=us-east-1 \
+            -e QUERY_JOB_TABLE_NAME=q -e QUERY_JOB_QUEUE_URL=q \
+            -e ASK_JOB_TABLE_NAME=a -e ASK_JOB_QUEUE_URL=a \
+            sagebrain-api:ci
+          for _ in $(seq 60); do curl -sf localhost:8000/healthz && break; sleep 2; done
+          curl -sf localhost:8000/healthz
+          curl -sf localhost:8000/api | grep -q SwaggerUIBundle
+          curl -sf localhost:8000/api/static/swagger-ui-bundle.js -o /dev/null
+          curl -sf localhost:8000/api/openapi.json | grep -q '"openapi":"3.1.0"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/query/x)" = 401
+      - name: Container logs
+        if: always()
+        run: docker logs api || true

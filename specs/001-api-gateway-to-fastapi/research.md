@@ -3,8 +3,7 @@
 ## Decisions
 - **R-1 Hosting: ECS Fargate behind ALB + WAF.** We rejected Lambda + Mangum behind API
   Gateway, because it keeps the 29 s ceiling and still splits the limits across two layers.
-  We rejected App Runner because we'd have less control over the VPC and network for Neptune
-  and Valkey. We reuse the setup in `src/neptune_viz_stack.py`.
+  We rejected App Runner because we'd have less control over the VPC and network for Neptune. We reuse the setup in `src/neptune_viz_stack.py`.
 - **R-2 Workers stay as SQS + Lambda.** This keeps the DLQs, retries and the agent's reserved
   concurrency of 10. The submit, status and authorizer functions move to FastAPI. The only
   change inside a worker is the agent tool (R-4).
@@ -17,7 +16,7 @@
   - The audit chokepoint becomes the service function, not the endpoint (constitution V).
   - No bearer token rides in SQS (D-8), and F8 disappears.
   - The agent worker needs read-only `neptune-db` IAM, port 8182 ingress into the Neptune SG,
-    and 6379 egress to Valkey. It no longer needs `NEPTUNE_QUERY_URL`, so the AgentStack →
+    and `UpdateItem` on the rate-limit table. It no longer needs `NEPTUNE_QUERY_URL`, so the AgentStack →
     ApiStack URL dependency and the cross-stack cycle risk go away.
   - We rejected two alternatives. An HTTP loopback through the ALB puts the limits at the edge,
     adds latency and hits WAF from the NAT IP. Enqueueing to the query SQS queue and polling
@@ -31,7 +30,7 @@
   The two Lambda assets use a bundling command that also copies `core/sagebrain_core`. That
   means changing the asset root to the repo with `exclude`, or using a shared Lambda layer
   (the layer is preferred: one build, versioned). Dependencies stay minimal (`requests`,
-  `botocore`, `redis`), so it fits the ARM64 agent and the x86 query worker alike.
+  `botocore`), so it fits the ARM64 agent and the x86 query worker alike.
 - **R-5 One service, two global buckets (`query`, `ask`).** This mirrors the two API Gateway
   stages.
 - **R-6 ARM64 image.** It builds natively on Apple Silicon, Graviton Fargate is cheaper, and it

@@ -1,7 +1,7 @@
 """Token-bucket admission shared by the HTTP API and in-process callers.
 
-Bucket keys carry a Redis Cluster hash tag per API (`{rl:query}`) so the Valkey-backed limiter
-(spec 002) can update a principal's and the global bucket in one slot.
+Bucket keys are namespaced per API (`{rl:query}:global`, `{rl:query}:u:<principal>`); the
+DynamoDB-backed limiter (tasks.md Phase 1d) stores one item per key.
 """
 
 import threading
@@ -27,7 +27,7 @@ class Limiter(Protocol):
 
 
 class LocalLimiter:
-    """In-process token buckets. Correct per process only; spec 002 adds the shared Valkey limiter."""
+    """In-process token buckets. Correct per process only; Phase 1d adds the shared DynamoDB limiter."""
 
     def __init__(self, clock: Callable[[], float] = time.monotonic):
         self._clock = clock
@@ -58,11 +58,14 @@ def default_limiter() -> Limiter:
 
 def admit(api: str, principal: str, limiter: Limiter | None = None) -> None:
     """Charge the API's global bucket, then the principal's bucket. Raises RateLimited."""
-    if api not in APIS:
-        raise ValueError(f"unknown api {api!r}; expected one of {APIS}")
-    limiter = limiter or default_limiter()
+    admit_global(api, limiter)
+    admit_principal(api, principal, limiter)
 
-    decision = limiter.acquire(
+
+def admit_global(api: str, limiter: Limiter | None = None) -> None:
+    """Charge only the API's global bucket. The HTTP layer calls this before auth."""
+    _check_api(api)
+    decision = (limiter or default_limiter()).acquire(
         f"{{rl:{api}}}:global",
         limits.GLOBAL_RATE_PER_API_RPS,
         limits.GLOBAL_BURST_PER_API,
@@ -70,10 +73,21 @@ def admit(api: str, principal: str, limiter: Limiter | None = None) -> None:
     if not decision.allowed:
         raise RateLimited("global", decision.retry_after)
 
+
+def admit_principal(api: str, principal: str, limiter: Limiter | None = None) -> None:
+    """Charge only the principal's bucket. The HTTP layer calls this after auth."""
+    _check_api(api)
     if principal == MACHINE_PRINCIPAL:
         rate, burst = limits.MACHINE_RATE_RPS, limits.MACHINE_BURST
     else:
         rate, burst = limits.USER_RATE_RPS, limits.USER_BURST
-    decision = limiter.acquire(f"{{rl:{api}}}:u:{principal}", rate, burst)
+    decision = (limiter or default_limiter()).acquire(
+        f"{{rl:{api}}}:u:{principal}", rate, burst
+    )
     if not decision.allowed:
         raise RateLimited("principal", decision.retry_after)
+
+
+def _check_api(api: str) -> None:
+    if api not in APIS:
+        raise ValueError(f"unknown api {api!r}; expected one of {APIS}")

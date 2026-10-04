@@ -4,7 +4,12 @@ import pytest
 
 from sagebrain_core import limits
 from sagebrain_core.errors import RateLimited
-from sagebrain_core.ratelimit import LocalLimiter, admit
+from sagebrain_core.ratelimit import (
+    LocalLimiter,
+    admit,
+    admit_global,
+    admit_principal,
+)
 
 
 class Clock:
@@ -95,3 +100,29 @@ def test_bucket_keys_use_hash_tags(limiter):
 def test_unknown_api_rejected(limiter):
     with pytest.raises(ValueError):
         admit("other", "alice", limiter)
+
+
+def test_admit_global_charges_only_the_global_bucket(limiter):
+    # HTTP charges the global bucket before auth, when the principal isn't known yet.
+    admit_global("query", limiter)
+    assert limiter.keys() == ["{rl:query}:global"]
+
+
+def test_admit_principal_charges_only_the_principal_bucket(limiter):
+    admit_principal("ask", "alice", limiter)
+    assert limiter.keys() == ["{rl:ask}:u:alice"]
+
+
+def test_admit_global_rejects_when_empty(limiter):
+    for _ in range(limits.GLOBAL_BURST_PER_API):
+        admit_global("query", limiter)
+    with pytest.raises(RateLimited) as exc:
+        admit_global("query", limiter)
+    assert exc.value.scope == "global"
+
+
+def test_split_admission_unknown_api_rejected(limiter):
+    with pytest.raises(ValueError):
+        admit_global("other", limiter)
+    with pytest.raises(ValueError):
+        admit_principal("other", "alice", limiter)

@@ -185,6 +185,31 @@ cases:
       enqueued_subset: { source: agent }
     legacy: { status: 202, enqueued_subset: { source: direct } }  # deviation F4
 
+  - id: query_submit_source_max_length
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      headers: { X-Source: "${repeat:s:64}" }
+      json: { query: "SELECT * WHERE { ?s ?p ?o } LIMIT 1" }
+    expect:
+      status: 202
+      enqueued_subset: { source: "${repeat:s:64}" }
+
+  - id: query_submit_source_too_long
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      headers: { X-Source: "${repeat:s:65}" }
+      json: { query: "SELECT * WHERE { ?s ?p ?o } LIMIT 1" }
+    expect:
+      status: 400
+      body: { error: "'X-Source' exceeds maximum length of 64 characters" }
+    legacy: { status: 202, enqueued_subset: { source: "${repeat:s:65}" } }  # deviation D-11
+
   # ---------------------------------------------------------------- GET /query/{job_id}
   - id: query_status_pending
     api: query

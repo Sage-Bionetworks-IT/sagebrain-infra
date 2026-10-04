@@ -1,0 +1,9 @@
+*
+!app/requirements.txt
+!app/sagebrain_api/
+!core/
+!api/openapi.yaml
+**/__pycache__
+**/*.pyc
+core/build
+core/*.egg-info

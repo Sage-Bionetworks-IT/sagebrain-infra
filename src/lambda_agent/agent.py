@@ -3,25 +3,24 @@ import os
 import random
 import re
 import time
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 import boto3
-import requests
+from sagebrain_core.query_service import run_query
+from sagebrain_core.errors import QueryRejected, RateLimited
 from strands import Agent, tool
 from strands.models.bedrock import BedrockModel
 
-NEPTUNE_QUERY_URL = os.environ["NEPTUNE_QUERY_URL"]
-# Base URL for polling: GET {NEPTUNE_QUERY_STATUS_URL}/{job_id}
-# Derived from NEPTUNE_QUERY_URL if not explicitly set (same API, different path)
-NEPTUNE_QUERY_STATUS_URL = os.environ.get("NEPTUNE_QUERY_STATUS_URL", NEPTUNE_QUERY_URL)
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 
-QUERY_POLL_INTERVAL = 3  # seconds between polls
-QUERY_POLL_TIMEOUT = (
-    70  # seconds before giving up; Neptune query worker has 75s timeout
-)
+# Legacy /ask Lambda messages carry the caller's raw token instead of a user_id (data-model.md).
+# The old authorizer already authenticated them; their queries are charged to this principal.
+LEGACY_PRINCIPAL = "legacy-apigw"
+UNKNOWN_SOURCE_IP = "unknown"
+
 # After stripping PREFIX declarations, the query must begin with SELECT.
 _PREFIX_STRIP_RE = re.compile(
     r"^\s*(PREFIX\s+\S+\s*<[^>]*>\s*(#[^\n]*)?\s*)*",
@@ -59,87 +58,60 @@ When a user asks a question:
 Always explain what you found and how confident you are in the answer.
 """
 
-# Module-level state reset per invocation.
-_steps: list = []
-_current_job_id: str = ""
-_auth_header: str = ""
+
+@dataclass
+class _Job:
+    """One agent job's caller context and step trace. Built per SQS message, never shared."""
+
+    job_id: str
+    principal: str
+    source_ip: str
+    steps: list = field(default_factory=list)
+
+    def record(self, step: dict):
+        """Append a step and write the trace so the polling client sees live progress."""
+        # TODO: steps grow with each tool call; a long-running agent can accumulate enough
+        # steps to push the item over DynamoDB's 400KB limit before the job even completes.
+        self.steps.append(step)
+        _update_job(self.job_id, steps=self.steps)
 
 
-def _flush_steps():
-    """Write current steps to DynamoDB so the polling client sees live progress."""
-    # TODO: steps grow with each tool call; a long-running agent can accumulate enough
-    # steps to push the item over DynamoDB's 400KB limit before the job even completes.
-    if _current_job_id:
-        _update_job(_current_job_id, steps=_steps)
+def _rejection_message(e: Exception) -> str:
+    if isinstance(e, RateLimited):
+        return f"Rate limit exceeded; retry after {e.retry_after:.1f}s"
+    return e.message
 
 
-@tool
-def query_neptune(sparql: str) -> str:
-    """Execute a SPARQL SELECT query against the Neptune biomedical knowledge graph.
-    Returns results as a JSON string with 'results.bindings' containing the rows.
-    Use standard SPARQL 1.1 syntax with PREFIX declarations."""
+def _query_neptune(job: _Job, sparql: str) -> str:
     sparql = _safe_sparql(sparql)
-    _steps.append({"type": "tool_call", "tool": "query_neptune", "sparql": sparql})
-    _flush_steps()
-    if _current_job_id:
-        _update_job(
-            _current_job_id,
-            status_detail=f"Executing SPARQL query (step {len(_steps)})...",
+    job.record({"type": "tool_call", "tool": "query_neptune", "sparql": sparql})
+    _update_job(
+        job.job_id,
+        status_detail=f"Executing SPARQL query (step {len(job.steps)})...",
+    )
+
+    # Validation, rate admission and the sparql_query audit log all live in run_query.
+    try:
+        result = run_query(
+            sparql,
+            principal=job.principal,
+            source="agent",
+            job_id=job.job_id,
+            source_ip=job.source_ip,
         )
+    except (QueryRejected, RateLimited) as e:
+        # A rejected query is the model's to fix (shorten it, slow down), not a job failure.
+        error_msg = _rejection_message(e)
+        job.record({"type": "tool_result", "tool": "query_neptune", "error": error_msg})
+        return f"Error: {error_msg}"
+    except Exception as e:
+        job.record({"type": "tool_result", "tool": "query_neptune", "error": str(e)})
+        raise RuntimeError(f"SPARQL query failed: {e}") from e
 
-    auth_headers = {"X-Source": "agent", "Authorization": _auth_header}
-
-    # Submit job
-    submit_response = requests.post(
-        NEPTUNE_QUERY_URL,
-        json={"query": sparql},
-        headers=auth_headers,
-        timeout=10,
+    job.record(
+        {"type": "tool_result", "tool": "query_neptune", "preview": result.text[:500]}
     )
-    submit_response.raise_for_status()
-    job_id = submit_response.json()["job_id"]
-
-    # Poll until complete or timeout
-    deadline = time.time() + QUERY_POLL_TIMEOUT
-    while time.time() < deadline:
-        time.sleep(QUERY_POLL_INTERVAL)
-        poll = requests.get(
-            f"{NEPTUNE_QUERY_STATUS_URL}/{job_id}",
-            headers=auth_headers,
-            timeout=10,
-        )
-        poll.raise_for_status()
-        data = poll.json()
-        status = data["status"]
-
-        if status == "complete":
-            result_text = data.get("results", "")
-            _steps.append(
-                {
-                    "type": "tool_result",
-                    "tool": "query_neptune",
-                    "preview": result_text[:500],
-                }
-            )
-            _flush_steps()
-            return result_text
-
-        if status == "error":
-            error_msg = data.get("error", "Unknown query error")
-            _steps.append(
-                {"type": "tool_result", "tool": "query_neptune", "error": error_msg}
-            )
-            _flush_steps()
-            raise RuntimeError(f"SPARQL query failed: {error_msg}")
-
-    timeout_msg = (
-        f"SPARQL query job {job_id} did not complete within {QUERY_POLL_TIMEOUT}s"
-    )
-    _steps.append(
-        {"type": "tool_result", "tool": "query_neptune", "error": timeout_msg}
-    )
-    _flush_steps()
-    raise TimeoutError(timeout_msg)
+    return result.text
 
 
 _SCHEMA_SPARQL_BASE = """\
@@ -181,24 +153,7 @@ KNOWN_NAMESPACES = {
 }
 
 
-@tool
-def get_schema(namespace: str) -> str:
-    """Return all classes and properties defined in the knowledge graph ontology
-    for a specific namespace.
-
-    Use this to discover the graph structure (available types and predicates)
-    before writing SPARQL queries.
-
-    Args:
-        namespace: The ontology namespace to inspect. Must be one of:
-            - "nf-osi" → http://nf-osi.github.com/terms#
-            - "obo"    → http://purl.obolibrary.org/obo/
-            - "efo"    → http://www.ebi.ac.uk/efo/
-            - "edam"   → http://edamontology.org/
-
-    Returns a JSON string with 'results.bindings' rows containing term, kind,
-    label, comment, domain, and range fields.
-    """
+def _schema_sparql(namespace: str) -> str:
     if namespace not in KNOWN_NAMESPACES:
         raise ValueError(
             f"Unknown namespace {namespace!r}. "
@@ -206,8 +161,40 @@ def get_schema(namespace: str) -> str:
         )
     prefix_iri = KNOWN_NAMESPACES[namespace]
     filter_clause = f'FILTER(STRSTARTS(STR(?term), "{prefix_iri}"))'
-    sparql = _SCHEMA_SPARQL_BASE.format(filter=filter_clause)
-    return query_neptune(sparql)
+    return _SCHEMA_SPARQL_BASE.format(filter=filter_clause)
+
+
+def _make_tools(job: _Job) -> list:
+    """The agent's tools, bound to one job so a warm instance can't mix callers."""
+
+    @tool
+    def query_neptune(sparql: str) -> str:
+        """Execute a SPARQL SELECT query against the Neptune biomedical knowledge graph.
+        Returns results as a JSON string with 'results.bindings' containing the rows.
+        Use standard SPARQL 1.1 syntax with PREFIX declarations."""
+        return _query_neptune(job, sparql)
+
+    @tool
+    def get_schema(namespace: str) -> str:
+        """Return all classes and properties defined in the knowledge graph ontology
+        for a specific namespace.
+
+        Use this to discover the graph structure (available types and predicates)
+        before writing SPARQL queries.
+
+        Args:
+            namespace: The ontology namespace to inspect. Must be one of:
+                - "nf-osi" → http://nf-osi.github.com/terms#
+                - "obo"    → http://purl.obolibrary.org/obo/
+                - "efo"    → http://www.ebi.ac.uk/efo/
+                - "edam"   → http://edamontology.org/
+
+        Returns a JSON string with 'results.bindings' rows containing term, kind,
+        label, comment, domain, and range fields.
+        """
+        return _query_neptune(job, _schema_sparql(namespace))
+
+    return [query_neptune, get_schema]
 
 
 def _update_job(job_id: str, **fields):
@@ -227,7 +214,7 @@ def _update_job(job_id: str, **fields):
     )
 
 
-def _invoke_agent_with_retry(agent, question: str, job_id: str):
+def _invoke_agent_with_retry(agent, question: str, job: _Job):
     """
     Call the Strands agent, retrying on transient Bedrock capacity errors.
     Wait 30s between attempts; 2 retries fit within the 300s Lambda budget.
@@ -237,11 +224,10 @@ def _invoke_agent_with_retry(agent, question: str, job_id: str):
 
     for attempt in range(MAX_ATTEMPTS):
         # Reset steps so a retry shows a clean trace
-        global _steps
-        _steps = []
-        _flush_steps()
+        job.steps = []
+        _update_job(job.job_id, steps=job.steps)
         _update_job(
-            job_id,
+            job.job_id,
             status_detail=f"Generating SPARQL query (attempt {attempt + 1}/{MAX_ATTEMPTS})...",
         )
         try:
@@ -250,7 +236,7 @@ def _invoke_agent_with_retry(agent, question: str, job_id: str):
             is_transient = "ServiceUnavailableException" in str(e)
             if is_transient and attempt < MAX_ATTEMPTS - 1:
                 _update_job(
-                    job_id,
+                    job.job_id,
                     status_detail=f"Model temporarily unavailable, retrying ({attempt + 2}/{MAX_ATTEMPTS})...",
                 )
                 jitter = random.uniform(0, 10)
@@ -259,7 +245,7 @@ def _invoke_agent_with_retry(agent, question: str, job_id: str):
                     json.dumps(
                         {
                             "event": "bedrock_retry",
-                            "job_id": job_id,
+                            "job_id": job.job_id,
                             "attempt": attempt + 1,
                             "wait_s": round(wait, 1),
                             "error": str(e)[:200],
@@ -271,12 +257,9 @@ def _invoke_agent_with_retry(agent, question: str, job_id: str):
                 raise
 
 
-def _process_job(job_id: str, question: str, authorization: str):
-    global _steps, _current_job_id, _auth_header
-    _steps = []
-    _current_job_id = job_id
-    _auth_header = authorization
+def _process_job(job: _Job, question: str):
     start = time.time()
+    job_id = job.job_id
 
     _update_job(job_id, status="running")
 
@@ -284,11 +267,11 @@ def _process_job(job_id: str, question: str, authorization: str):
     agent = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
-        tools=[query_neptune, get_schema],
+        tools=_make_tools(job),
     )
 
     try:
-        result = _invoke_agent_with_retry(agent, question, job_id)
+        result = _invoke_agent_with_retry(agent, question, job)
         duration = (time.time() - start) * 1000
         # TODO: answer + steps are stored in a single DynamoDB item; a verbose agent
         # response with many steps can exceed the 400KB item size limit.
@@ -297,7 +280,7 @@ def _process_job(job_id: str, question: str, authorization: str):
             job_id,
             status="complete",
             answer=str(result),
-            steps=_steps,
+            steps=job.steps,
             duration_ms=round(duration, 2),
         )
         print(
@@ -305,9 +288,10 @@ def _process_job(job_id: str, question: str, authorization: str):
                 {
                     "event": "agent_invocation",
                     "job_id": job_id,
+                    "principal": job.principal,
                     "question": question,
                     "status": "success",
-                    "step_count": len(_steps),
+                    "step_count": len(job.steps),
                     "duration_ms": round(duration, 2),
                     "timestamp": time.time(),
                 }
@@ -316,16 +300,17 @@ def _process_job(job_id: str, question: str, authorization: str):
     except Exception as e:
         duration = (time.time() - start) * 1000
         # TODO: steps written on error path can also exceed 400KB if the agent ran many iterations.
-        _update_job(job_id, status="error", error=str(e), steps=_steps)
+        _update_job(job_id, status="error", error=str(e), steps=job.steps)
         print(
             json.dumps(
                 {
                     "event": "agent_invocation",
                     "job_id": job_id,
+                    "principal": job.principal,
                     "question": question,
                     "status": "error",
                     "error": str(e),
-                    "step_count": len(_steps),
+                    "step_count": len(job.steps),
                     "duration_ms": round(duration, 2),
                     "timestamp": time.time(),
                 }
@@ -334,11 +319,34 @@ def _process_job(job_id: str, question: str, authorization: str):
         raise  # re-raise so SQS can retry via DLQ
 
 
+def _job_from_message(body: dict) -> _Job | None:
+    """Accept both agent-queue shapes (data-model.md). The `authorization` value is never kept."""
+    if body.get("user_id"):
+        return _Job(
+            job_id=body["job_id"],
+            principal=str(body["user_id"]),
+            source_ip=body.get("source_ip") or UNKNOWN_SOURCE_IP,
+        )
+    if "authorization" in body:
+        return _Job(
+            job_id=body["job_id"],
+            principal=LEGACY_PRINCIPAL,
+            source_ip=UNKNOWN_SOURCE_IP,
+        )
+    return None
+
+
 def handler(event, context):
     """SQS-triggered worker. Each record is one job."""
     for record in event["Records"]:
         body = json.loads(record["body"])
-        job_id = body["job_id"]
-        question = body["question"]
-        authorization = body.get("authorization", "")
-        _process_job(job_id, question, authorization)
+        job = _job_from_message(body)
+        if job is None:
+            # Retrying can't fix a message with no caller; fail the job instead of the batch.
+            _update_job(
+                body["job_id"],
+                status="error",
+                error="Agent job message has neither 'user_id' nor 'authorization'",
+            )
+            continue
+        _process_job(job, body["question"])

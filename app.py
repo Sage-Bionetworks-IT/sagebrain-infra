@@ -90,13 +90,20 @@ neptune_api_stack = NeptuneApiStack(
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies
 
+# TODO(spec 001 1c): the deployed agent stack still imports these two auto-generated exports
+# (its old NEPTUNE_QUERY_URL). Keep them until app-dev-neptune-agent has been deployed without
+# them, then delete these two lines; removing them first fails the neptune-api update.
+neptune_api_stack.export_value(neptune_api_stack.api.rest_api_id)
+neptune_api_stack.export_value(neptune_api_stack.api.deployment_stage.stage_name)
+
 # Bedrock Strands AI agent: async POST /ask + GET /ask/{job_id}
 neptune_agent_stack = NeptuneAgentStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-neptune-agent",
     vpc=network_stack.vpc,
-    neptune_query_url=f"{neptune_api_stack.api.url}query",
-    neptune_query_status_url=f"{neptune_api_stack.api.url}query",
+    neptune_read_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
+    neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
+    neptune_security_group=neptune_stack.neptune_security_group,
     synapse_team_id=config["AUTH"]["synapse_team_id"],
     machine_api_key=config["AUTH"].get("machine_api_key", ""),
     env=env,
