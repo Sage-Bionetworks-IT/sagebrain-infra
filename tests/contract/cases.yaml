@@ -1,0 +1,599 @@
+# Shared parity vectors for the job APIs.
+#
+# One list, three consumers:
+#   - tests/unit/test_job_api_handlers.py  — characterizes the current Lambda handlers (layer: handler)
+#   - tests/unit/app/ (Phase 1)            — the FastAPI app must satisfy every case
+#   - tools/parity_probe.py                — replays cases against live base URLs (skips cases with `given`)
+#
+# Fields:
+#   id        unique name
+#   api       query | ask
+#   layer     handler  — behaviour of the submit/status code itself
+#             gateway  — behaviour of the edge (auth, routing); only probe + FastAPI tests run these
+#   auth      valid (default) | none | bad_bearer — credentials the probe sends
+#   request   method, path ("{job_id}" is filled with given.item.job_id or a random uuid), headers, body
+#             body may be a raw string (`body`) or JSON-encoded from `json`
+#             strings "${repeat:<char>:<n>}" expand to <char> * n
+#   given     item: a DynamoDB item the status handler will find (omitted => not found)
+#   expect    status, body (exact match), body_subset (subset match), body_keys (exact key set),
+#             stored_subset (DynamoDB item), enqueued_subset / enqueued_keys (SQS message).
+#             enqueued `user_id` is the authenticated principal, which the harness supplies.
+#   undocumented  true for edge behaviour that isn't an OpenAPI operation (CORS preflight, unknown routes)
+#   legacy    how the CURRENT Lambda behaves when it differs from `expect` (an accepted deviation
+#             recorded in specs/001-api-gateway-to-fastapi/spec.md). Lambda tests assert `legacy`;
+#             FastAPI tests assert `expect`.
+#             `legacy: {absent: true}` = the endpoint doesn't exist on the current deployment (probe skips it).
+
+cases:
+  # ---------------------------------------------------------------- POST /query
+  - id: query_submit_ok
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      json: { query: "SELECT * WHERE { ?s ?p ?o } LIMIT 1" }
+    expect:
+      status: 202
+      body_subset: { status: pending }
+      body_keys: [job_id, status]
+
+  - id: query_submit_strips_whitespace
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      json: { query: "   SELECT * WHERE { ?s ?p ?o } LIMIT 1   \n" }
+    expect:
+      status: 202
+      body_subset: { status: pending }
+      enqueued_subset: { query: "SELECT * WHERE { ?s ?p ?o } LIMIT 1" }
+
+  - id: query_submit_exactly_max_length
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      json: { query: "${repeat:a:8000}" }
+    expect:
+      status: 202
+
+  - id: query_submit_max_length_after_strip
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      json: { query: "  ${repeat:a:8000}  " }
+    expect:
+      status: 202
+
+  - id: query_submit_too_long
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      json: { query: "${repeat:a:8001}" }
+    expect:
+      status: 400
+      body: { error: "Query exceeds maximum length of 8000 characters" }
+
+  - id: query_submit_missing_field
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      json: { sparql: "SELECT 1" }
+    expect:
+      status: 400
+      body: { error: "Missing 'query' field" }
+
+  - id: query_submit_blank
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      json: { query: "   " }
+    expect:
+      status: 400
+      body: { error: "Missing 'query' field" }
+
+  - id: query_submit_empty_body
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      body: ""
+    expect:
+      status: 400
+      body: { error: "Missing 'query' field" }
+
+  - id: query_submit_invalid_json
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      body: "{not json"
+    expect:
+      status: 400
+      body: { error: "Request body must be valid JSON" }
+
+  - id: query_submit_non_string
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      json: { query: 1 }
+    expect:
+      status: 400
+      body: { error: "'query' must be a string" }
+    legacy: { raises: AttributeError }  # deviation F5
+
+  - id: query_submit_non_object
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      body: "[]"
+    expect:
+      status: 400
+      body: { error: "Request body must be a JSON object" }
+    legacy: { raises: AttributeError }  # deviation F5
+
+  - id: query_submit_records_source_header
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      headers: { X-Source: agent, User-Agent: parity-probe/1.0 }
+      json: { query: "SELECT * WHERE { ?s ?p ?o } LIMIT 1" }
+    expect:
+      status: 202
+      enqueued_subset: { source: agent, user_agent: parity-probe/1.0 }
+
+  - id: query_submit_source_defaults_direct
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      json: { query: "SELECT * WHERE { ?s ?p ?o } LIMIT 1" }
+    expect:
+      status: 202
+      enqueued_subset: { source: direct }
+
+  - id: query_submit_lowercase_source_header
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      headers: { x-source: agent }
+      json: { query: "SELECT * WHERE { ?s ?p ?o } LIMIT 1" }
+    expect:
+      status: 202
+      enqueued_subset: { source: agent }
+    legacy: { status: 202, enqueued_subset: { source: direct } }  # deviation F4
+
+  # ---------------------------------------------------------------- GET /query/{job_id}
+  - id: query_status_pending
+    api: query
+    layer: handler
+    given:
+      item: { job_id: job-pending, status: pending, created_at: 1, ttl: 2 }
+    request: { method: GET, path: "/query/{job_id}" }
+    expect:
+      status: 200
+      body: { job_id: job-pending, status: pending }
+
+  - id: query_status_running
+    api: query
+    layer: handler
+    given:
+      item: { job_id: job-running, status: running }
+    request: { method: GET, path: "/query/{job_id}" }
+    expect:
+      status: 200
+      body: { job_id: job-running, status: running }
+
+  - id: query_status_complete
+    api: query
+    layer: handler
+    given:
+      item:
+        job_id: job-complete
+        status: complete
+        results: '{"head":{"vars":[]},"results":{"bindings":[]}}'
+        content_type: application/sparql-results+json
+        duration_ms: 12
+    request: { method: GET, path: "/query/{job_id}" }
+    expect:
+      status: 200
+      body:
+        job_id: job-complete
+        status: complete
+        results: '{"head":{"vars":[]},"results":{"bindings":[]}}'
+        content_type: application/sparql-results+json
+
+  - id: query_status_complete_defaults
+    api: query
+    layer: handler
+    given:
+      item: { job_id: job-complete-bare, status: complete }
+    request: { method: GET, path: "/query/{job_id}" }
+    expect:
+      status: 200
+      body:
+        job_id: job-complete-bare
+        status: complete
+        results: ""
+        content_type: application/sparql-results+json
+
+  - id: query_status_error
+    api: query
+    layer: handler
+    given:
+      item: { job_id: job-error, status: error, error: "Neptune said no" }
+    request: { method: GET, path: "/query/{job_id}" }
+    expect:
+      status: 200
+      body: { job_id: job-error, status: error, error: "Neptune said no" }
+
+  - id: query_status_error_default_message
+    api: query
+    layer: handler
+    given:
+      item: { job_id: job-error-bare, status: error }
+    request: { method: GET, path: "/query/{job_id}" }
+    expect:
+      status: 200
+      body: { job_id: job-error-bare, status: error, error: "Unknown error" }
+
+  - id: query_status_not_found
+    api: query
+    layer: handler
+    request: { method: GET, path: "/query/{job_id}" }
+    expect:
+      status: 404
+      body: { error: "Job not found" }
+
+  # ---------------------------------------------------------------- POST /ask
+  - id: ask_submit_ok
+    api: ask
+    layer: handler
+    request:
+      method: POST
+      path: /ask
+      headers: { Authorization: "Bearer caller-token" }
+      json: { question: "What is NF1?" }
+    expect:
+      status: 202
+      body_subset: { status: pending }
+      body_keys: [job_id, status]
+      stored_subset: { status: pending, question: "What is NF1?" }
+      enqueued_subset: { question: "What is NF1?" }
+      enqueued_keys: [job_id, question, user_id, source_ip]
+    legacy:  # deviation D-8: the raw Authorization header used to ride along in SQS
+      status: 202
+      enqueued_subset: { question: "What is NF1?", authorization: "Bearer caller-token" }
+      enqueued_keys: [job_id, question, authorization]
+
+  - id: ask_submit_strips_whitespace
+    api: ask
+    layer: handler
+    request:
+      method: POST
+      path: /ask
+      json: { question: "  What is NF1?\n" }
+    expect:
+      status: 202
+      stored_subset: { question: "What is NF1?" }
+
+  - id: ask_submit_exactly_max_length
+    api: ask
+    layer: handler
+    request:
+      method: POST
+      path: /ask
+      json: { question: "${repeat:q:2000}" }
+    expect:
+      status: 202
+
+  - id: ask_submit_too_long
+    api: ask
+    layer: handler
+    request:
+      method: POST
+      path: /ask
+      json: { question: "${repeat:q:2001}" }
+    expect:
+      status: 400
+      body: { error: "Question exceeds maximum length of 2000 characters" }
+
+  - id: ask_submit_missing_field
+    api: ask
+    layer: handler
+    request:
+      method: POST
+      path: /ask
+      json: { query: "What is NF1?" }
+    expect:
+      status: 400
+      body: { error: "Missing 'question' field" }
+
+  - id: ask_submit_invalid_json
+    api: ask
+    layer: handler
+    request:
+      method: POST
+      path: /ask
+      body: "{not json"
+    expect:
+      status: 400
+      body: { error: "Request body must be valid JSON" }
+
+  - id: ask_submit_non_string
+    api: ask
+    layer: handler
+    request:
+      method: POST
+      path: /ask
+      json: { question: ["a"] }
+    expect:
+      status: 400
+      body: { error: "'question' must be a string" }
+    legacy: { raises: AttributeError }  # deviation F5
+
+  - id: ask_submit_non_object
+    api: ask
+    layer: handler
+    request:
+      method: POST
+      path: /ask
+      body: '"just a string"'
+    expect:
+      status: 400
+      body: { error: "Request body must be a JSON object" }
+    legacy: { raises: AttributeError }  # deviation F5
+
+  # ---------------------------------------------------------------- GET /ask/{job_id}
+  - id: ask_status_pending
+    api: ask
+    layer: handler
+    given:
+      item: { job_id: ask-pending, status: pending, question: "q", created_at: 1, ttl: 2 }
+    request: { method: GET, path: "/ask/{job_id}" }
+    expect:
+      status: 200
+      body: { job_id: ask-pending, status: pending }
+
+  - id: ask_status_running_with_steps
+    api: ask
+    layer: handler
+    given:
+      item:
+        job_id: ask-running
+        status: running
+        status_detail: "Executing SPARQL query (step 1)..."
+        steps:
+          - { type: tool_call, tool: query_neptune, sparql: "SELECT 1" }
+    request: { method: GET, path: "/ask/{job_id}" }
+    expect:
+      status: 200
+      body:
+        job_id: ask-running
+        status: running
+        status_detail: "Executing SPARQL query (step 1)..."
+        steps:
+          - { type: tool_call, tool: query_neptune, sparql: "SELECT 1" }
+
+  - id: ask_status_empty_steps_omitted
+    api: ask
+    layer: handler
+    given:
+      item: { job_id: ask-nosteps, status: running, steps: [] }
+    request: { method: GET, path: "/ask/{job_id}" }
+    expect:
+      status: 200
+      body: { job_id: ask-nosteps, status: running }
+
+  - id: ask_status_complete
+    api: ask
+    layer: handler
+    given:
+      item:
+        job_id: ask-complete
+        status: complete
+        answer: "NF1 is a gene."
+        steps:
+          - { type: tool_call, tool: query_neptune, sparql: "SELECT 1" }
+          - { type: tool_result, tool: query_neptune, preview: "{}" }
+        duration_ms: 1234
+    request: { method: GET, path: "/ask/{job_id}" }
+    expect:
+      status: 200
+      body:
+        job_id: ask-complete
+        status: complete
+        answer: "NF1 is a gene."
+        steps:
+          - { type: tool_call, tool: query_neptune, sparql: "SELECT 1" }
+          - { type: tool_result, tool: query_neptune, preview: "{}" }
+
+  - id: ask_status_error
+    api: ask
+    layer: handler
+    given:
+      item:
+        job_id: ask-error
+        status: error
+        error: "SPARQL query failed: boom"
+        steps:
+          - { type: tool_result, tool: query_neptune, error: boom }
+    request: { method: GET, path: "/ask/{job_id}" }
+    expect:
+      status: 200
+      body:
+        job_id: ask-error
+        status: error
+        error: "SPARQL query failed: boom"
+        steps:
+          - { type: tool_result, tool: query_neptune, error: boom }
+
+  - id: ask_status_complete_default_answer
+    api: ask
+    layer: handler
+    given:
+      item: { job_id: ask-complete-bare, status: complete }
+    request: { method: GET, path: "/ask/{job_id}" }
+    expect:
+      status: 200
+      body: { job_id: ask-complete-bare, status: complete, answer: "" }
+
+  - id: ask_status_not_found
+    api: ask
+    layer: handler
+    request: { method: GET, path: "/ask/{job_id}" }
+    expect:
+      status: 404
+      body: { error: "Job not found" }
+
+  # ---------------------------------------------------------------- edge / gateway
+  # Bodies for these are confirmed against the live API Gateway by tools/parity_probe.py
+  # and recorded in specs/001-api-gateway-to-fastapi/research.md before being relied on.
+  - id: query_no_credentials
+    api: query
+    layer: gateway
+    auth: none
+    request:
+      method: POST
+      path: /query
+      json: { query: "SELECT * WHERE { ?s ?p ?o } LIMIT 1" }
+    expect:
+      status: 401
+      body: { message: "Unauthorized" }
+      headers: { access-control-allow-origin: "*" }
+
+  - id: query_bad_bearer
+    api: query
+    layer: gateway
+    auth: bad_bearer
+    request:
+      method: POST
+      path: /query
+      json: { query: "SELECT * WHERE { ?s ?p ?o } LIMIT 1" }
+    expect:
+      status: 401
+      body: { message: "Unauthorized" }
+      headers: { access-control-allow-origin: "*" }
+    legacy:  # deviation D-10 (observed in dev 2026-10-03)
+      status: 401
+      body: { message: "User is not authorized to access this resource with an explicit deny in an identity-based policy" }
+      headers: { access-control-allow-origin: "*" }
+
+  - id: query_preflight
+    api: query
+    layer: gateway
+    undocumented: true  # not an operation in api/openapi.yaml
+    auth: none
+    request:
+      method: OPTIONS
+      path: /query
+      headers:
+        Origin: "https://example.org"
+        Access-Control-Request-Method: POST
+        Access-Control-Request-Headers: "content-type,authorization,x-source,x-api-key"
+    expect:
+      status: 200
+      headers: { access-control-allow-origin: "*" }
+    legacy:  # observed: API Gateway mock integration answers 204
+      status: 204
+      headers:
+        access-control-allow-origin: "*"
+        access-control-allow-methods: "POST,GET,OPTIONS"
+        access-control-allow-headers: "Content-Type,Authorization,X-Source,x-api-key"
+
+  - id: unknown_route
+    api: query
+    layer: gateway
+    undocumented: true  # not an operation in api/openapi.yaml
+    request: { method: GET, path: /does-not-exist }
+    expect:
+      status: 404
+      body: { message: "Not Found" }
+      headers: { access-control-allow-origin: "*" }
+    legacy: { status: 403 }  # deviation D-3: SigV4 parse error body, no CORS
+
+  # ---------------------------------------------------------------- API docs (FR-9)
+  - id: docs_ui
+    api: query
+    layer: gateway
+    auth: none
+    request: { method: GET, path: /api }
+    expect:
+      status: 200
+      headers: { content-type: "text/html; charset=utf-8" }
+    legacy: { absent: true }
+
+  - id: docs_openapi_json
+    api: query
+    layer: gateway
+    auth: none
+    request: { method: GET, path: /api/openapi.json }
+    expect:
+      status: 200
+      body_subset: { openapi: "3.1.0" }
+      headers: { content-type: "application/json" }
+    legacy: { absent: true }
+
+  - id: docs_openapi_yaml
+    api: query
+    layer: gateway
+    auth: none
+    request: { method: GET, path: /api/openapi.yaml }
+    expect:
+      status: 200
+    legacy: { absent: true }
+
+  - id: ask_no_credentials
+    api: ask
+    layer: gateway
+    auth: none
+    request:
+      method: GET
+      path: "/ask/{job_id}"
+    expect:
+      status: 401
+      body: { message: "Unauthorized" }
+      headers: { access-control-allow-origin: "*" }
+
+  - id: query_status_not_found_live
+    api: query
+    layer: gateway
+    request: { method: GET, path: "/query/{job_id}" }
+    expect:
+      status: 404
+      body: { error: "Job not found" }
+      headers: { access-control-allow-origin: "*" }
+
+  - id: query_submit_ok_live
+    api: query
+    layer: gateway
+    request:
+      method: POST
+      path: /query
+      json: { query: "SELECT * WHERE { ?s ?p ?o } LIMIT 1" }
+    expect:
+      status: 202
+      body_keys: [job_id, status]
+      headers: { access-control-allow-origin: "*" }

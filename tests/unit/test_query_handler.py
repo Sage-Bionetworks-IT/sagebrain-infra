@@ -70,9 +70,9 @@ def default_job(**overrides):
 # ---------------------------------------------------------------------------
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_sets_running_before_neptune_call(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
@@ -86,9 +86,9 @@ def test_sets_running_before_neptune_call(
     assert first_values[":status"] == "running"
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_sets_complete_with_results_on_success(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
@@ -103,9 +103,9 @@ def test_sets_complete_with_results_on_success(
     assert json.loads(final_values[":results"]) == result_body
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_sets_complete_with_content_type(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
@@ -119,9 +119,9 @@ def test_sets_complete_with_content_type(
     assert final_values[":content_type"] == "application/sparql-results+json"
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_sets_error_on_neptune_http_error(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
@@ -143,9 +143,9 @@ def test_sets_error_on_neptune_http_error(
     assert "bad request" in final_values[":error"]
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_sets_error_on_unexpected_exception(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
@@ -166,9 +166,9 @@ def test_sets_error_on_unexpected_exception(
 # ---------------------------------------------------------------------------
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_update_item_uses_correct_job_id(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
@@ -185,9 +185,9 @@ def test_update_item_uses_correct_job_id(
 # ---------------------------------------------------------------------------
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_neptune_called_with_sparql_query(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
@@ -205,9 +205,9 @@ def test_neptune_called_with_sparql_query(
     assert query_str in unquote_plus(sent_body)
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_sigv4_auth_applied(mock_session, mock_sigv4, mock_post, handler, mock_table):
     mock_post.return_value = sparql_response({"results": {"bindings": []}})
 
@@ -217,9 +217,9 @@ def test_sigv4_auth_applied(mock_session, mock_sigv4, mock_post, handler, mock_t
     mock_sigv4.return_value.add_auth.assert_called_once()
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_neptune_url_uses_endpoint_env_var(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
@@ -234,9 +234,9 @@ def test_neptune_url_uses_endpoint_env_var(
     )
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_duration_ms_stored_as_decimal(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
@@ -258,9 +258,9 @@ def test_duration_ms_stored_as_decimal(
 # ---------------------------------------------------------------------------
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_missing_optional_fields_default(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):
@@ -282,9 +282,9 @@ def test_missing_optional_fields_default(
 # ---------------------------------------------------------------------------
 
 
-@patch("query.requests.post")
-@patch("query.SigV4Auth")
-@patch("query.botocore.session.Session")
+@patch("sagebrain_core.neptune.requests.post")
+@patch("sagebrain_core.neptune.SigV4Auth")
+@patch("sagebrain_core.neptune.botocore.session.Session")
 def test_processes_multiple_records(
     mock_session, mock_sigv4, mock_post, handler, mock_table
 ):

@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sagebrain-core"
+version = "0.1.0"
+description = "Shared server-side query service for Sage Brain: limits, validation, rate limiting, Neptune execution and audit logging."
+requires-python = ">=3.11"
+# botocore ships with the Lambda runtime; requests is bundled by each consumer.
+dependencies = ["botocore", "requests"]
+
+[tool.setuptools.packages.find]
+include = ["sagebrain_core*"]

@@ -22,6 +22,21 @@ jobs:
           platforms: arm64
       - name: Run unit tests
         run: python -m pytest tests/ -s -v
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+      - name: Lint OpenAPI contract
+        run: npx --yes @redocly/cli@2 lint api/openapi.yaml --config api/.redocly.yaml
+      - name: Set up Python
+        uses: actions/setup-python@v6
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Contract tests (spec <-> cases.yaml)
+        run: python -m pytest tests/contract -v
   synth:
     runs-on: ubuntu-latest
     steps:

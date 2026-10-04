@@ -1,0 +1,11 @@
+extends:
+  - recommended
+
+rules:
+  # Placeholder server URL until per-env hostnames exist.
+  no-server-example.com: off
+  # /healthz legitimately has no 4xx; every job operation does.
+  operation-4xx-response: warn
+  operation-operationId-unique: error
+  no-unused-components: error
+  security-defined: error

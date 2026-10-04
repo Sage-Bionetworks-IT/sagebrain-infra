@@ -274,3 +274,36 @@ def test_cloudwatch_role_configured(template):
 
 def test_api_url_output_exists(template):
     template.has_output("ApiUrl", {})
+
+
+# ---------------------------------------------------------------------------
+# sagebrain_core layer (spec 001 T106)
+# ---------------------------------------------------------------------------
+
+
+def test_core_layer_created_for_both_architectures(template):
+    template.has_resource_properties(
+        "AWS::Lambda::LayerVersion",
+        {
+            "CompatibleRuntimes": ["python3.11"],
+            "CompatibleArchitectures": ["x86_64", "arm64"],
+        },
+    )
+
+
+def test_query_worker_uses_core_layer(template):
+    layer_id = next(iter(template.find_resources("AWS::Lambda::LayerVersion")))
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"Handler": "query.handler", "Layers": [{"Ref": layer_id}]},
+    )
+
+
+def test_only_query_worker_uses_core_layer(template):
+    functions = template.find_resources("AWS::Lambda::Function")
+    with_layers = [
+        f["Properties"]["Handler"]
+        for f in functions.values()
+        if f["Properties"].get("Layers")
+    ]
+    assert with_layers == ["query.handler"]

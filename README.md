@@ -116,7 +116,7 @@ AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-api --context env=dev
 
 ### Direct SPARQL (`POST /query`)
 
-A read-only SPARQL endpoint is available over HTTPS. Requests must include a Synapse Personal Access Token (PAT) and the caller must be a member of Synapse team [273957](https://www.synapse.org/Team:273957).
+A read-only SPARQL endpoint is available over HTTPS. Requests must include a Synapse Personal Access Token (PAT) and the caller must be a member of Synapse team [3605470](https://www.synapse.org/Team:3605470) (configured as `AUTH.synapse_team_id` in `config/base.yaml`).
 
 Get the API URL from CDK outputs after deployment:
 

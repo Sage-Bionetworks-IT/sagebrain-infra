@@ -4,10 +4,18 @@ AWS CDK (Python) infrastructure for the Sage Brain project. Deploys an Amazon Ne
 
 ## AWS Profile
 
-All AWS CLI and CDK commands require `--profile sagebrain`. Login first:
+Each environment has its own AWS account and profile:
+
+| Env | Profile | Stacks |
+|---|---|---|
+| dev | `--profile sagebrain-dev` | `app-dev-*` |
+| prod | `--profile sagebrain` | `app-prod-*` |
+
+Examples below use `sagebrain`. Substitute `sagebrain-dev` (and `app-dev-*`) for dev. Log in first:
 
 ```bash
-aws --profile sagebrain sso login
+aws --profile sagebrain-dev sso login   # dev
+aws --profile sagebrain sso login       # prod
 ```
 
 ## Stacks
@@ -167,10 +175,23 @@ Three Lambdas + SQS + DynamoDB — mirrors the agent's async pattern.
 
 ### query.py — SQS worker
 - SQS-triggered (batch size 1), runs in VPC to reach Neptune
+- Thin wrapper: job state (running → complete/error) in DynamoDB; the Neptune call itself is
+  `sagebrain_core.neptune.execute_query` from the **`sagebrain_core` Lambda layer** (`core/`,
+  built by `src/core_layer.py`)
 - Signs requests with SigV4 (`neptune-db` service)
-- **60s Neptune timeout** — handles 40s+ complex queries on the 2.27M-triple graph
+- **60s Neptune timeout** (`sagebrain_core.limits.NEPTUNE_QUERY_TIMEOUT_SECONDS`) — handles 40s+ complex queries on the 2.27M-triple graph
 - Only has `ReadDataViaQuery`, `GetEngineStatus`, `GetQueryStatus` IAM permissions
-- **Logs every query** to CloudWatch as structured JSON: `job_id`, `source`, IP, user agent, duration, status
+- **Logs every query** to CloudWatch as structured JSON: `job_id`, `source`, `principal`, IP, user agent, duration, status
+
+### core/sagebrain_core — shared server-side query service
+- `limits.py` — every threshold value; a test asserts it equals `api/openapi.yaml` `x-sagebrain-limits`
+- `validation.py` — `validate_query` / `validate_question` (trim, type, length; contract error strings)
+- `ratelimit.py` — `admit(api, principal)`: global bucket (50/100) then per-principal bucket
+  (user 5/20, machine 25/50). `LocalLimiter` is in-process only until the Valkey limiter (spec 002)
+- `neptune.py` — `execute_query`: SigV4, timeout, `sparql_query` audit log
+- `query_service.py` — `run_query` = validate + admit + execute, for in-process callers (the agent)
+- Each limit is charged **once** per query: `POST /query` validates + admits at submit; the worker only executes
+- Tests: `tests/unit/core/`; `tests/conftest.py` puts `core/` on `sys.path`
 
 Get endpoints from CloudFormation:
 ```bash
@@ -277,7 +298,7 @@ A default connection to Neptune is pre-configured, so the graph loads on first o
 - **Access logs**: CloudWatch log group with 1-month retention (every request, structured JSON)
 - **Execution logs**: ERROR level only
 - **CloudWatch role**: set via `cloud_watch_role=True` on `RestApi`
-- **Auth**: Synapse token authorizer (Lambda) — caller must present a valid Synapse PAT/OAuth token and be a member of Synapse team 273957. Result cached 5 min per token.
+- **Auth**: Synapse token authorizer (Lambda) — caller must present a valid Synapse PAT/OAuth token and be a member of Synapse team 3605470 (`AUTH.synapse_team_id`). Successful results are cached 5 min per token **inside the authorizer Lambda** (API Gateway's own authorizer cache is off, TTL 0).
 
 ### app-dev-neptune-agent (`POST /ask`, `GET /ask/{job_id}`)
 - **Throttling**: 50 RPS steady-state, 100 burst (lightweight — no Bedrock/Neptune calls inline)
@@ -308,6 +329,28 @@ fields @timestamp, source, query, duration_ms
 Environments are selected via CDK context: `--context env=dev` (default: `dev`).
 Config files live in `config/`. `base.yaml` is merged with the env-specific file.
 
+## Spec-Driven Development
+
+The HTTP contract is [api/openapi.yaml](api/openapi.yaml) — change it **first**, then the code.
+Rules are in [.specify/memory/constitution.md](.specify/memory/constitution.md); each feature gets
+`specs/NNN-name/{spec,plan,tasks}.md` (copy `specs/_template/`). Active feature:
+[specs/001-api-gateway-to-fastapi](specs/001-api-gateway-to-fastapi/spec.md) — moving the
+submit/status/authorizer Lambdas to a FastAPI service on Fargate; see its
+[parity-matrix.md](specs/001-api-gateway-to-fastapi/parity-matrix.md) for where every
+API Gateway threshold is (re)enforced.
+
+- **Limits are server-side.** In the FastAPI design the agent calls the shared `sagebrain_core` query
+  service in-process (not `POST /query` over HTTP), so every query limit and the `sparql_query`
+  audit log live in that service — never only in HTTP middleware, ALB or WAF.
+- `tests/contract/cases.yaml` — shared request/response vectors. The current Lambdas are pinned
+  by `tests/unit/test_job_api_handlers.py`; the FastAPI app must pass the same vectors. Accepted
+  deviations carry a `legacy:` entry.
+- `tests/contract/test_cases_match_spec.py` — every expected body validates against the spec.
+- `tools/parity_probe.py` — replays the vectors against live deployments and diffs them.
+- Lint the spec: `npx @redocly/cli@2 lint api/openapi.yaml --config api/.redocly.yaml`
+- Config: top-level merge of `base.yaml` + env file is **shallow** (an env `NEPTUNE:` block replaces
+  base's entirely); only keys in `_DEEP_MERGE_KEYS` in `src/utils.py` (currently `API_APP`) deep-merge.
+
 ## Testing
 
 ```bash
@@ -329,7 +372,7 @@ Tests live in `tests/unit/`. Lambda handler tests import from `src/lambda/` via 
 - Neptune security group has **no broad ingress rules**. Each consumer stack (Lambda) adds a targeted SG-to-SG `CfnSecurityGroupIngress` rule on port 8182 to avoid cross-stack cyclic references.
 - The API Lambda uses the **read endpoint** only, scoped to read-only IAM actions.
 - The API is **POST only** — GET was removed to avoid URL length limits for complex SPARQL queries.
-- **Synapse team-gated auth** — both APIs require a valid Synapse PAT/OAuth token and membership in team 273957. The Lambda authorizer validates via Synapse's `/userProfile` + `/team/{id}/member/{userId}/membershipStatus` endpoints; results are cached 5 min by API Gateway.
+- **Synapse team-gated auth** — both APIs require a valid Synapse PAT/OAuth token and membership in team 3605470 (`AUTH.synapse_team_id`). The Lambda authorizer validates via Synapse's `/userProfile` + `/team/{id}/member/{userId}/membershipStatus` endpoints; successful results are cached 5 min in the authorizer Lambda's memory (API Gateway caching is off).
 - **S3 bulk loader** is used for all data loading — not SPARQL INSERT batches. Neptune assumes `NeptuneLoadRole` (trusted by `rds.amazonaws.com`) to read from S3.
 - **Date-partitioned S3 layout** (`YYYY-MM-DD/schema/` and `YYYY-MM-DD/data/rdf/`) preserves a historical data lake. Each load is a full reset + reload from a chosen prefix.
 - **Both APIs are async (submit + poll)** — Neptune SPARQL on the 2.27M-triple graph takes 4–40s; synchronous API Gateway has a hard 29s limit. SQS + DynamoDB decouples HTTP from execution for both `/query` and `/ask`.
