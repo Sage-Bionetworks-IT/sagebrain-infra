@@ -7,7 +7,7 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 
 from sagebrain_core import limits
-from sagebrain_core.ratelimit import Limiter, default_limiter
+from sagebrain_core.ratelimit import Limiter, make_limiter
 
 from .auth import Authenticator
 from .errors import install_exception_handlers
@@ -72,7 +72,9 @@ def create_app(
     )
 
     machine_key = settings.machine_api_key
-    app.state.limiter = limiter or default_limiter()
+    app.state.limiter = limiter or make_limiter(
+        settings.rate_limit_table_name, settings.rate_limit_fallback_instances
+    )
     app.state.authenticator = Authenticator(
         client=http_client,
         team_id=settings.synapse_team_id,

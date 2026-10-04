@@ -93,6 +93,11 @@ tests them.
 
   Limit values come from one module (`sagebrain_core.limits`). A test asserts they equal the
   spec's `x-sagebrain-limits`.
+
+  The buckets are shared by every instance of every caller (a DynamoDB table, Phase 1d), so
+  the limits hold across ECS tasks and Lambda instances. If DynamoDB is unreachable, each
+  process fails open to its own buckets at `rate / instances` and logs `ratelimit_degraded`;
+  a rate check never turns into a 500.
 - **FR-8 Health.** `GET /healthz` returns 200 `{"status":"ok"}`. It needs no auth and is not
   rate limited.
 
@@ -127,6 +132,7 @@ where each one is enforced and which test covers it is in [parity-matrix.md](par
 | D-9 | Agent queries go through the query SQS queue and worker (two hops), with a 70 s poll timeout | They run synchronously in the agent worker against the Neptune reader with a 60 s timeout. The agent worker gains read-only Neptune IAM and port 8182 ingress, and loses `NEPTUNE_QUERY_URL` | Fewer moving parts and lower latency | Phase 1 agent tool tests |
 | D-10 | Bad or non-member bearer returns 401 `{"message":"User is not authorized to access this resource with an explicit deny in an identity-based policy"}` (observed in dev) | Every auth failure returns 401 `{"message":"Unauthorized"}` | One body for clients; no IAM wording leaked | `query_bad_bearer` |
 | D-11 | `X-Source` of any length is accepted and written verbatim into the SQS message and the `sparql_query` audit log; the spec's `maxLength: 64` was unenforced | Over 64 characters returns 400 `'X-Source' exceeds maximum length of 64 characters` (`sagebrain_core.validate_source`) | A threshold must be enforced, not only documented (constitution III); bounds what callers can write into audit logs | `query_submit_source_too_long`, `query_submit_source_max_length` |
+| D-12 | Agent queries go through `POST /query` with the caller's token, so only the per-API stage throttle applies | Agent jobs from the legacy `/ask` Lambda (`{authorization}` messages, no user id) are all charged to one principal, `legacy-apigw`, which gets the **machine** bucket (25 rps / 50 burst) shared across instances. New `{user_id}` jobs are charged to the caller's user bucket (5 / 20) | With shared buckets a 5 / 20 user bucket would throttle every legacy agent job together (10 concurrent workers); this keeps the old headroom until the `/ask` cutover (spec 003) retires the legacy shape. Conflicts with T132, which must keep the machine limits until then | `test_legacy_agent_principal_uses_machine_limits`, `test_legacy_jobs_share_the_machine_bucket_across_instances` |
 
 ## Known issues
 - **F8 (resolved by D-8):** today, for a machine-key `/ask` call, only `Authorization: ApiKey`

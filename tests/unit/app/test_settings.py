@@ -67,3 +67,23 @@ def test_runtime_requirements_are_pinned():
     assert reqs, "app/requirements.txt is empty"
     for req in reqs:
         assert re.fullmatch(r"[A-Za-z0-9_.\-\[\]]+==[0-9][\w.]*", req), req
+
+
+def test_rate_limit_settings_default_to_the_local_limiter(env):
+    settings = Settings()
+    assert settings.rate_limit_table_name is None
+    assert settings.rate_limit_fallback_instances == 2
+
+
+def test_rate_limit_settings_from_environment(env):
+    env.setenv("RATE_LIMIT_TABLE_NAME", "app-dev-rate-limits")
+    env.setenv("RATE_LIMIT_FALLBACK_INSTANCES", "3")
+    settings = Settings()
+    assert settings.rate_limit_table_name == "app-dev-rate-limits"
+    assert settings.rate_limit_fallback_instances == 3
+
+
+def test_rate_limit_fallback_instances_must_be_positive(env):
+    env.setenv("RATE_LIMIT_FALLBACK_INSTANCES", "0")
+    with pytest.raises(ValidationError):
+        Settings()

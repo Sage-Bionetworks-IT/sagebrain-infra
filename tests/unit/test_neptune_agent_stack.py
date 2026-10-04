@@ -6,6 +6,7 @@ from aws_cdk import aws_ec2 as ec2
 from aws_cdk.assertions import Match, Template
 
 from src.neptune_agent_stack import NeptuneAgentStack
+from src.rate_limit_stack import RateLimitStack
 
 READ_ENDPOINT = "test-neptune.cluster-ro.us-east-1.neptune.amazonaws.com"
 
@@ -22,6 +23,8 @@ def template():
         sg_stack, "TestNeptuneSG", vpc=vpc, description="Test Neptune SG"
     )
 
+    rate_limit_stack = RateLimitStack(app, "TestRateLimitStack")
+
     stack = NeptuneAgentStack(
         app,
         "TestNeptuneAgentStack",
@@ -29,6 +32,7 @@ def template():
         neptune_read_endpoint=READ_ENDPOINT,
         neptune_cluster_resource_id="cluster-ABCDEFGHIJKLMNOP",
         neptune_security_group=neptune_sg,
+        rate_limit_table=rate_limit_stack.table,
         synapse_team_id="273957",
     )
     return Template.from_stack(stack)
@@ -328,3 +332,64 @@ def test_logical_ids_unchanged(template):
         if not k.startswith("NeptuneAgentApiDeployment")
     }
     assert added == {"AWS::Lambda::LayerVersion", "AWS::EC2::SecurityGroupIngress"}
+
+
+# ---------------------------------------------------------------------------
+# Spec 001 T147 — the worker charges the shared DynamoDB rate-limit table
+# ---------------------------------------------------------------------------
+
+
+def _statements(template):
+    for policy_id, policy in template.find_resources("AWS::IAM::Policy").items():
+        for stmt in policy["Properties"]["PolicyDocument"]["Statement"]:
+            yield policy_id, policy, stmt
+
+
+def _on_rate_limit_table(stmt):
+    return "RateLimitTable" in str(stmt["Resource"])
+
+
+def test_worker_env_has_the_rate_limit_table(template):
+    env = _worker(template)["Environment"]["Variables"]
+    # The table lives in the rate-limit stack: imported, not created here.
+    assert "Fn::ImportValue" in env["RATE_LIMIT_TABLE_NAME"]
+    assert "TestRateLimitStack" in str(env["RATE_LIMIT_TABLE_NAME"])
+    # Each of the 10 concurrent instances gets rate / 10 if DynamoDB is unreachable.
+    assert env["RATE_LIMIT_FALLBACK_INSTANCES"] == str(
+        _worker(template)["ReservedConcurrentExecutions"]
+    )
+
+
+def test_only_the_worker_knows_the_rate_limit_table(template):
+    for fn in template.find_resources("AWS::Lambda::Function").values():
+        if fn["Properties"]["Handler"] != "agent.handler":
+            env = fn["Properties"].get("Environment", {}).get("Variables", {})
+            assert "RATE_LIMIT_TABLE_NAME" not in env
+
+
+def test_worker_may_only_update_items_in_the_rate_limit_table(template):
+    grants = [
+        (policy, stmt)
+        for _, policy, stmt in _statements(template)
+        if _on_rate_limit_table(stmt)
+    ]
+    ((policy, stmt),) = grants
+    assert stmt["Effect"] == "Allow"
+    assert stmt["Action"] == "dynamodb:UpdateItem"  # no Get/Put/Delete/Scan/Query
+    # The table ARN itself: no index or stream sub-resources.
+    assert not isinstance(stmt["Resource"], list)
+    assert "Fn::ImportValue" in stmt["Resource"]
+    assert policy["Properties"]["Roles"] == [
+        {"Ref": next(iter(_worker_role(template)))}
+    ]
+
+
+def test_no_wildcard_dynamodb_actions(template):
+    for _, _, stmt in _statements(template):
+        actions = (
+            stmt["Action"] if isinstance(stmt["Action"], list) else [stmt["Action"]]
+        )
+        assert "dynamodb:*" not in actions
+        if _on_rate_limit_table(stmt):
+            for denied in ("dynamodb:Scan", "dynamodb:Query", "dynamodb:DeleteItem"):
+                assert denied not in actions

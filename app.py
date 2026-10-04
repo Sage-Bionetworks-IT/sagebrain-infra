@@ -8,6 +8,7 @@ from src.neptune_api_stack import NeptuneApiStack
 from src.neptune_pipeline_stack import NeptunePipelineStack
 from src.neptune_stack import NeptuneStack
 from src.neptune_viz_stack import NeptuneVizStack
+from src.rate_limit_stack import RateLimitStack
 from src.monitoring_stack import MonitoringStack
 from src.utils import load_context_config
 
@@ -96,6 +97,14 @@ neptune_api_stack = NeptuneApiStack(
 neptune_api_stack.export_value(neptune_api_stack.api.rest_api_id)
 neptune_api_stack.export_value(neptune_api_stack.api.deployment_stage.stage_name)
 
+# Shared token buckets (spec 001 Phase 1d). The agent worker charges them now; the FastAPI
+# task (Phase 3) will too. Referencing the table auto-exports its name and ARN from here.
+rate_limit_stack = RateLimitStack(
+    scope=cdk_app,
+    construct_id=f"{STACK_NAME_PREFIX}-rate-limits",
+    env=env,
+)
+
 # Bedrock Strands AI agent: async POST /ask + GET /ask/{job_id}
 neptune_agent_stack = NeptuneAgentStack(
     scope=cdk_app,
@@ -104,6 +113,7 @@ neptune_agent_stack = NeptuneAgentStack(
     neptune_read_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
     neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
     neptune_security_group=neptune_stack.neptune_security_group,
+    rate_limit_table=rate_limit_stack.table,
     synapse_team_id=config["AUTH"]["synapse_team_id"],
     machine_api_key=config["AUTH"].get("machine_api_key", ""),
     env=env,

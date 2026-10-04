@@ -32,6 +32,20 @@ The same columns as the query jobs table, plus:
     The worker still runs the job through `run_query`, attributing it to
     `principal="legacy-apigw"`, because the old authorizer already authenticated it.
 
+## Rate-limit table — `app-{env}-rate-limits` (PK `key`, TTL attr `expires_at`; Phase 1d)
+New in this feature; ephemeral (no PITR, deleted with its stack). One item per token bucket,
+written only by `sagebrain_core.ratelimit.DynamoLimiter` with conditional `UpdateItem`.
+| Attribute | Notes |
+|---|---|
+| key | `{rl:<api>}:global` or `{rl:<api>}:u:<principal>` (`api` is `query` or `ask`) |
+| tat | epoch seconds (decimal, 1 ns resolution): when the bucket is full again. Admits while `tat <= now + (burst - 1) / rate`; each admission adds `1 / rate` |
+| expires_at | epoch seconds (int): `ceil(now + burst / rate) + 3600`, written on every admission. TTL only ever deletes full buckets, and reads never rely on it |
+
+## `ratelimit_degraded` event (DynamoDB unreachable; at most once a minute per process)
+`{event, table, key, error, instances, fallback_rate, fallback_burst, suppressed, timestamp}`.
+`error` is the DynamoDB error code (`ThrottlingException`, …) or the botocore exception class
+(`ReadTimeoutError`, …); `suppressed` counts the degraded calls not logged since the last line.
+
 ## `sparql_query` audit event (emitted by `run_query` for every caller)
 `{event, job_id, query, query_length, source, principal, source_ip, user_agent, status_code,
 duration_ms, timestamp}`. This is today's field set plus `principal`. Agent calls carry

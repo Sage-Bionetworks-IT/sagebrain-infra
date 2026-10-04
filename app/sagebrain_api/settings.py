@@ -6,8 +6,10 @@ x-sagebrain-limits), so they can't drift per deployment.
 
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from sagebrain_core.ratelimit import DEFAULT_FALLBACK_INSTANCES
 
 # Repo layout, mirrored in the image: <root>/app/sagebrain_api, <root>/api/openapi.yaml.
 DEFAULT_SPEC_PATH = Path(__file__).parents[2] / "api" / "openapi.yaml"
@@ -24,6 +26,11 @@ class Settings(BaseSettings):
     query_job_queue_url: str
     ask_job_table_name: str
     ask_job_queue_url: str
+
+    # The shared DynamoDB token buckets. Unset: in-process buckets (tests, offline profile).
+    rate_limit_table_name: str | None = None
+    # Tasks sharing the buckets; each gets rate / this when DynamoDB is unreachable.
+    rate_limit_fallback_instances: int = Field(DEFAULT_FALLBACK_INSTANCES, ge=1)
 
     # Written into `servers` of /api/openapi.json so "Try it out" targets this deployment.
     public_base_url: str = "http://localhost:8000"

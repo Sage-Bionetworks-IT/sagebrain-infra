@@ -519,3 +519,63 @@ def test_over_length_agent_query_never_reaches_neptune(
     assert job["status"] == "complete"
     # Rejected before admission: no bucket was charged.
     assert limiter.keys() == []
+
+
+def test_legacy_principal_is_the_one_the_limiter_gives_machine_limits(agent):
+    assert agent.LEGACY_PRINCIPAL == ratelimit.LEGACY_AGENT_PRINCIPAL
+
+
+@pytest.fixture
+def shared_limiter(monkeypatch, rate_limit_table):
+    """The worker builds its limiter from RATE_LIMIT_TABLE_NAME, as in Lambda (moto table)."""
+    from tests.conftest import RATE_LIMIT_TABLE
+
+    monkeypatch.setenv("RATE_LIMIT_TABLE_NAME", RATE_LIMIT_TABLE)
+    monkeypatch.setattr(ratelimit, "_default_limiter", None)
+    built = ratelimit.default_limiter()
+    assert isinstance(built, ratelimit.DynamoLimiter)
+    assert built.table_name == RATE_LIMIT_TABLE
+    # Same backend, frozen clock, so buckets don't refill while the test runs.
+    clock = lambda: 1000.0  # noqa: E731
+    monkeypatch.setattr(
+        ratelimit,
+        "_default_limiter",
+        ratelimit.DynamoLimiter(RATE_LIMIT_TABLE, clock=clock),
+    )
+    # Another process on the same table: the app task that serves POST /query.
+    return ratelimit.DynamoLimiter(RATE_LIMIT_TABLE, clock=clock)
+
+
+def test_parity_row2_agent_drains_the_callers_shared_bucket(
+    agent, monkeypatch, shared_limiter, neptune
+):
+    _use_agent(agent, monkeypatch, _queries(limits.USER_BURST + 1))
+
+    job = _run(agent, NEW_MESSAGE)
+
+    assert neptune.call_count == limits.USER_BURST
+    results = [s for s in job["steps"] if s["type"] == "tool_result"]
+    assert results[-1]["error"].startswith("Rate limit exceeded")
+    assert job["status"] == "complete"
+    # The caller's bucket is empty for every other instance too (e.g. the app's POST /query)...
+    with pytest.raises(RateLimited) as exc:
+        ratelimit.admit_principal("query", "3412345", shared_limiter)
+    assert exc.value.scope == "principal"
+    # ...while another caller's is untouched.
+    ratelimit.admit_principal("query", "999", shared_limiter)
+
+
+def test_legacy_jobs_share_the_machine_bucket_across_instances(
+    agent, monkeypatch, shared_limiter, neptune
+):
+    """Open question from 1c: legacy jobs get machine limits, not a 5 rps / 20 burst user bucket."""
+    _use_agent(agent, monkeypatch, _queries(limits.USER_BURST + 1))
+
+    job = _run(agent, LEGACY_MESSAGE)
+
+    assert neptune.call_count == limits.USER_BURST + 1
+    assert job["status"] == "complete"
+    for _ in range(limits.MACHINE_BURST - limits.USER_BURST - 1):
+        ratelimit.admit_principal("query", "legacy-apigw", shared_limiter)
+    with pytest.raises(RateLimited):
+        ratelimit.admit_principal("query", "legacy-apigw", shared_limiter)

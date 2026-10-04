@@ -27,6 +27,7 @@ aws --profile sagebrain sso login       # prod
 | NeptuneApiStack | `app-dev-neptune-api` | API Gateway + Lambda read-only SPARQL API |
 | NeptuneAgentStack | `app-dev-neptune-agent` | Bedrock Strands AI agent — async NL-to-SPARQL via `POST /ask` + `GET /ask/{job_id}` |
 | NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only) |
+| RateLimitStack | `app-dev-rate-limits` | Shared DynamoDB token-bucket table (`sagebrain_core.ratelimit.DynamoLimiter`); deploy before the agent stack |
 | NeptunePipelineStack | `app-dev-neptune-pipeline` | Append-only ingestion — S3 `manifest.ttl` → EventBridge → Step Functions → Neptune bulk loader (one named graph per snapshot) |
 
 ## S3 Data Bucket
@@ -187,7 +188,10 @@ Three Lambdas + SQS + DynamoDB — mirrors the agent's async pattern.
 - `limits.py` — every threshold value; a test asserts it equals `api/openapi.yaml` `x-sagebrain-limits`
 - `validation.py` — `validate_query` / `validate_question` (trim, type, length; contract error strings)
 - `ratelimit.py` — `admit(api, principal)`: global bucket (50/100) then per-principal bucket
-  (user 5/20, machine 25/50). `LocalLimiter` is in-process only until the DynamoDB limiter (spec 001 Phase 1d)
+  (user 5/20, machine and `legacy-apigw` 25/50). `DynamoLimiter` shares the buckets across every instance via
+  the `app-{env}-rate-limits` table (one conditional UpdateItem per charge, GCRA `tat` per item); `LocalLimiter`
+  is in-process. `RATE_LIMIT_TABLE_NAME` unset → `LocalLimiter`. A DynamoDB outage fails open to a local bucket
+  at rate ÷ `RATE_LIMIT_FALLBACK_INSTANCES` and logs `ratelimit_degraded` (design: spec 001 plan.md, Phase 1d)
 - `neptune.py` — `execute_query`: SigV4, timeout, `sparql_query` audit log
 - `query_service.py` — `run_query` = validate + admit + execute, for in-process callers (the agent)
 - Each limit is charged **once** per query: `POST /query` validates + admits at submit; the worker only executes
@@ -237,7 +241,8 @@ GET /ask/{job_id}  →  status.py  →  DynamoDB
 - Calls `sagebrain_core.query_service.run_query` **in-process** (spec 001 Phase 1c): validation, the caller's
   `query` rate buckets and the `sparql_query` audit log (`source=agent`, `principal=<user_id>`) all come from
   `sagebrain_core`. `_safe_sparql` (SELECT-only) runs first. Over-length / rate-limited queries become
-  `tool_result` error steps and the job continues. Runs in VPC with read-only `neptune-db` IAM + 8182 ingress
+  `tool_result` error steps and the job continues. Runs in VPC with read-only `neptune-db` IAM + 8182 ingress.
+  Charges the shared buckets in `app-{env}-rate-limits` (`RATE_LIMIT_TABLE_NAME`; IAM `dynamodb:UpdateItem` only)
 - SQS message: new `{job_id, question, user_id, source_ip}` or legacy `{job_id, question, authorization}`
   (run as `principal="legacy-apigw"`; the token is never used, logged or stored)
 - Writes `status=complete` (with `answer`/`steps`) or `status=error` to DynamoDB when done

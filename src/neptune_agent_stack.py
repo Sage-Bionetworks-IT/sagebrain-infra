@@ -11,6 +11,10 @@ from constructs import Construct
 
 from src.core_layer import sagebrain_core_layer
 
+# Caps Bedrock/Neptune load under burst traffic; also the instance count the shared rate
+# limiter divides by if DynamoDB is unreachable.
+WORKER_RESERVED_CONCURRENCY = 10
+
 
 def _bundling(runtime):
     return cdk.BundlingOptions(
@@ -44,6 +48,7 @@ class NeptuneAgentStack(cdk.Stack):
         neptune_read_endpoint: str,
         neptune_cluster_resource_id: str,
         neptune_security_group: ec2.SecurityGroup,
+        rate_limit_table: dynamodb.ITable,
         synapse_team_id: str,
         machine_api_key: str = "",
         bedrock_model_id: str = "us.anthropic.claude-sonnet-4-6",
@@ -178,15 +183,26 @@ class NeptuneAgentStack(cdk.Stack):
                 "NEPTUNE_ENDPOINT": neptune_read_endpoint,
                 "BEDROCK_MODEL_ID": bedrock_model_id,
                 "JOB_TABLE_NAME": self.job_table.table_name,
+                # Shared token buckets (sagebrain_core.ratelimit.DynamoLimiter)
+                "RATE_LIMIT_TABLE_NAME": rate_limit_table.table_name,
+                "RATE_LIMIT_FALLBACK_INSTANCES": str(WORKER_RESERVED_CONCURRENCY),
             },
             timeout=cdk.Duration.seconds(
                 300
             ),  # several 60s Neptune queries + Bedrock overhead
             memory_size=512,
             # Cap concurrency to avoid overwhelming Bedrock/Neptune under burst traffic
-            reserved_concurrent_executions=10,
+            reserved_concurrent_executions=WORKER_RESERVED_CONCURRENCY,
         )
         self.job_table.grant_read_write_data(self.agent_fn)
+        # One conditional UpdateItem per bucket charge; the limiter never reads or deletes.
+        self.agent_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["dynamodb:UpdateItem"],
+                resources=[rate_limit_table.table_arn],
+            )
+        )
         self.agent_fn.add_event_source(
             lambda_event_sources.SqsEventSource(
                 self.job_queue,

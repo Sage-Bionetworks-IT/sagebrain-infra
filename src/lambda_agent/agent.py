@@ -8,6 +8,7 @@ from decimal import Decimal
 
 import boto3
 from sagebrain_core.query_service import run_query
+from sagebrain_core.ratelimit import LEGACY_AGENT_PRINCIPAL
 from sagebrain_core.errors import QueryRejected, RateLimited
 from strands import Agent, tool
 from strands.models.bedrock import BedrockModel
@@ -17,8 +18,9 @@ REGION = os.environ.get("AWS_REGION", "us-east-1")
 DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 
 # Legacy /ask Lambda messages carry the caller's raw token instead of a user_id (data-model.md).
-# The old authorizer already authenticated them; their queries are charged to this principal.
-LEGACY_PRINCIPAL = "legacy-apigw"
+# The old authorizer already authenticated them; their queries are charged to this principal,
+# which sagebrain_core gives the machine bucket (spec 001 D-12).
+LEGACY_PRINCIPAL = LEGACY_AGENT_PRINCIPAL
 UNKNOWN_SOURCE_IP = "unknown"
 
 # After stripping PREFIX declarations, the query must begin with SELECT.
