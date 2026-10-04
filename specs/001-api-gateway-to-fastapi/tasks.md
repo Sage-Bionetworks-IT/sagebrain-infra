@@ -71,7 +71,13 @@ for SPARQL results. The limiter lives in this phase, not a separate spec.
 - [x] T145 Settings: `RATE_LIMIT_TABLE_NAME` (unset means `LocalLimiter`, for tests and the offline profile). `default_limiter()` picks the backend
 - [x] T146 Compose and tests: remove the `valkey` service and `VALKEY_URL` from `app/compose.yaml`; `tests/unit/app/test_dockerfile.py::test_compose_runs_api_with_valkey` → `test_compose_runs_api_only`
 - [x] T147 CDK: on-demand `rate-limits` table (PK `key`, TTL `expires_at`). Grant `UpdateItem` to the app task role (Phase 3) and the agent worker role (1c). Point-in-time recovery off, because the data is ephemeral. Stack tests. Done: `src/rate_limit_stack.py` (`app-{env}-rate-limits`) and the agent worker grant/env. **The app task role grant is a Phase 3 TODO** (plan.md, Phase 1d)
-- [ ] T148 Live check: `tools/throttle_test.py` against the local app (`local-aws` profile), pointed at a dev rate-limit table. The 101st request in a burst gets 429, and per-user 5/20 holds. **Blocked:** needs T125–T128 (settings audit, stack outputs, `tools/local_env.sh`, the `local-aws` profile) and `app-dev-rate-limits` deployed. It also needs `throttle_test.py` to send `Authorization: Bearer $SYNAPSE_AUTH_TOKEN` (add a `--token` option); today it sends none, so against the app it would only see 401/429
+- [x] T148 Live check: `tools/throttle_test.py` against the local app, pointed at the dev rate-limit table. The 101st request in a burst gets 429, and per-user 5/20 holds. **Ran 2026-10-04** against a two-instance ad-hoc compose (T128's `local-aws` profile doesn't exist yet), `RATE_LIMIT_TABLE_NAME=app-dev-rate-limits`. The load generator ran inside the compose network: from the host, Docker Desktop's port forwarding capped arrivals at about 41 rps. The tool gained `--token`/`--token-from-env`, `--mode status` (404 = admitted, no jobs), repeated `--url`, `--burst` and `--rps/--duration`. Results (expected in brackets):
+  - per-user, 1 instance, 100 req at 10 rps: 65 admitted [20 + 5 × 9 = 65]
+  - per-user, 2 instances, burst of 40: 22 admitted [20 + refill; two buckets would give ~40]
+  - global, 2 instances, burst of 300 in 2.15 s: 140 admitted [100 + refill; two buckets ≥ 200]
+  - global, 2 instances, 150 rps for 6 s: 366 of 900 admitted [100 + 50 × 5 = 350]
+  - outage (nonexistent table): no 500s; one `ratelimit_degraded` per instance (`fallback_rate` 25, `fallback_burst` 50)
+  - 429s carry `Retry-After: 1` (2 when deep in deficit)
 
 ## Later phases
 The shared rate limiter is Phase 1d above (there is no Phase 2). Cutover and decommission
@@ -80,6 +86,10 @@ tracked in this file once Phase 1 lands. Carried forward from 1d:
 - Phase 3: the app task role gets one `dynamodb:UpdateItem` statement on the rate-limit table
   ARN, plus `RATE_LIMIT_TABLE_NAME` and `RATE_LIMIT_FALLBACK_INSTANCES` (= max task count),
   with a least-privilege stack test (plan.md, Phase 1d).
+- Phase 3, from T148: an outage still pays a DynamoDB round trip (up to the 2 s connect / 5 s
+  read timeouts) on every request before falling back. Consider a short circuit-breaker (skip
+  DynamoDB for a few seconds after a failure). Also raise botocore's `max_pool_connections`
+  (default 10) to the threadpool size (40) for the limiter's client.
 - Phase 4: alarm on `ratelimit_degraded` log lines (a metric filter on the agent and app log
   groups), and add the rate-limit table's throttles/errors to the dashboard.
 
