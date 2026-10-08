@@ -9,6 +9,12 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
+from src.core_layer import sagebrain_core_layer
+
+# Caps Bedrock/Neptune load under burst traffic; also the instance count the shared rate
+# limiter divides by if DynamoDB is unreachable.
+WORKER_RESERVED_CONCURRENCY = 10
+
 
 def _bundling(runtime):
     return cdk.BundlingOptions(
@@ -39,11 +45,13 @@ class NeptuneAgentStack(cdk.Stack):
         scope: Construct,
         construct_id: str,
         vpc: ec2.Vpc,
-        neptune_query_url: str,
-        neptune_query_status_url: str,
+        neptune_read_endpoint: str,
+        neptune_cluster_resource_id: str,
+        neptune_security_group: ec2.SecurityGroup,
+        rate_limit_table: dynamodb.ITable,
+        bedrock_model_id: str,
         synapse_team_id: str,
         machine_api_key: str = "",
-        bedrock_model_id: str = "us.anthropic.claude-sonnet-4-6",
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -87,6 +95,17 @@ class NeptuneAgentStack(cdk.Stack):
             vpc=vpc,
             description="Security group for Neptune agent Lambdas",
             allow_all_outbound=True,
+        )
+
+        # The worker calls Neptune in-process via sagebrain_core.run_query (spec 001 Phase 1c)
+        ec2.CfnSecurityGroupIngress(
+            self,
+            "AgentToNeptuneIngress",
+            group_id=neptune_security_group.security_group_id,
+            ip_protocol="tcp",
+            from_port=8182,
+            to_port=8182,
+            source_security_group_id=self.agent_sg.security_group_id,
         )
 
         vpc_kwargs = dict(
@@ -146,6 +165,7 @@ class NeptuneAgentStack(cdk.Stack):
         # -------------------
         # Worker Lambda — SQS-triggered agent
         # -------------------
+        self.core_layer = sagebrain_core_layer(self)
         self.agent_fn = lambda_.Function(
             self,
             "NeptuneAgentWorkerFunction",
@@ -156,25 +176,52 @@ class NeptuneAgentStack(cdk.Stack):
                 bundling=_bundling(lambda_.Runtime.PYTHON_3_11),
             ),
             architecture=lambda_.Architecture.ARM_64,
+            layers=[self.core_layer],
             **vpc_kwargs,
             environment={
-                "NEPTUNE_QUERY_URL": neptune_query_url,
-                "NEPTUNE_QUERY_STATUS_URL": neptune_query_status_url,
+                # AWS_REGION (also read by NeptuneConfig.from_env) is set by the Lambda runtime
+                "NEPTUNE_ENDPOINT": neptune_read_endpoint,
                 "BEDROCK_MODEL_ID": bedrock_model_id,
                 "JOB_TABLE_NAME": self.job_table.table_name,
+                # Shared token buckets (sagebrain_core.ratelimit.DynamoLimiter)
+                "RATE_LIMIT_TABLE_NAME": rate_limit_table.table_name,
+                "RATE_LIMIT_FALLBACK_INSTANCES": str(WORKER_RESERVED_CONCURRENCY),
             },
             timeout=cdk.Duration.seconds(
                 300
-            ),  # up to 3 Neptune queries × 80s poll each + Bedrock overhead
+            ),  # several 60s Neptune queries + Bedrock overhead
             memory_size=512,
             # Cap concurrency to avoid overwhelming Bedrock/Neptune under burst traffic
-            reserved_concurrent_executions=10,
+            reserved_concurrent_executions=WORKER_RESERVED_CONCURRENCY,
         )
         self.job_table.grant_read_write_data(self.agent_fn)
+        # One conditional UpdateItem per bucket charge; the limiter never reads or deletes.
+        self.agent_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["dynamodb:UpdateItem"],
+                resources=[rate_limit_table.table_arn],
+            )
+        )
         self.agent_fn.add_event_source(
             lambda_event_sources.SqsEventSource(
                 self.job_queue,
                 batch_size=1,  # one job per invocation
+            )
+        )
+
+        # IAM: read-only Neptune access scoped to this cluster (same set as the query worker)
+        self.agent_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "neptune-db:ReadDataViaQuery",
+                    "neptune-db:GetEngineStatus",
+                    "neptune-db:GetQueryStatus",
+                ],
+                resources=[
+                    f"arn:{self.partition}:neptune-db:{self.region}:{self.account}:{neptune_cluster_resource_id}/*"
+                ],
             )
         )
 

@@ -1,2 +1,6 @@
 pre-commit~=4.3.0
 pytest==8.4.2
+jsonschema==4.26.0
+-r app/requirements.txt
+schemathesis==4.29.1
+moto[dynamodb]==5.2.3

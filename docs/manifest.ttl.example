@@ -1,0 +1,23 @@
+# Example snapshot manifest for the append-only ingestion pipeline.
+#
+# Written LAST to a snapshot folder, e.g.:
+#   s3://<NeptuneDataBucketName>/nf/2026-04-25/data/*.ttl   ← the Turtle snapshot
+#   s3://<NeptuneDataBucketName>/nf/2026-04-25/manifest.ttl ← this file, written last
+#
+# Its ObjectCreated event triggers a Neptune bulk load of the sibling data/ prefix into
+# the named graph urn:sagebrain:nf:2026-04-25. The loader does NOT parse this file — it is
+# purely the completion sentinel, and it sits outside data/ so it is not itself loaded
+# (Neptune's bulk loader has no file filter and would parse it as snapshot data).
+# Keep it valid Turtle anyway, for humans and for a future delta mode.
+
+@prefix sgb:     <urn:sagebrain:vocab:> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:sagebrain:nf:2026-04-25>
+    a               sgb:Snapshot ;
+    sgb:portal      "nf" ;
+    dcterms:created "2026-04-25T00:00:00Z"^^xsd:dateTime ;
+    sgb:tripleCount 2270000 ;
+    sgb:generator   "nf-transform-pipeline vX.Y" ;
+    sgb:files       "data_type_1.ttl", "data_type_2.ttl" .

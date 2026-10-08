@@ -6,6 +6,7 @@ the start of a task; open only the files whose hook matches it.
 
 | File | Read it when… |
 |---|---|
+| [constitution.md](constitution.md) | you are writing a spec/plan or changing the API, limits, IAM or query path — the non-negotiable **rules**; this bank holds the why and the exceptions |
 | [decisions.md](decisions.md) | you are about to change architecture, ingestion, auth or the query path — what was decided, in which PR, and why |
 | [open-work.md](open-work.md) | you are picking up work or wondering "is this known?" — open threads grouped by theme, with issue numbers |
 | [gotchas.md](gotchas.md) | something fails in a way that looks environmental (IAM, networking, timeouts, tooling) |

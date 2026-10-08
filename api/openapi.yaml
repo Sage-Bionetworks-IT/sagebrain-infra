@@ -1,0 +1,545 @@
+openapi: 3.1.0
+info:
+  title: Sage Brain API
+  version: 1.0.0
+  summary: Async SPARQL query and natural-language agent API over the Sage Brain knowledge graph.
+  description: |
+    THIS FILE IS THE CONTRACT. Change it first, then regenerate models and implement
+    (see specs/001-api-gateway-to-fastapi/spec.md and docs/memory/constitution.md).
+
+    Both APIs are asynchronous: submit a job (202 + job_id), then poll its status.
+    All job endpoints require either a Synapse bearer token belonging to a member of
+    the configured Synapse team, or the machine `x-api-key`.
+
+    Limits (`x-sagebrain-limits`) are enforced server-side in the shared query service, not
+    only at the HTTP edge, because agent-originated SPARQL never passes through HTTP. The
+    edge (WAF/ALB) is an additional layer, never the only one.
+
+    Error body conventions:
+      - `{"error": "..."}`   — application errors (validation, not found)
+      - `{"message": "..."}` — edge/gateway errors (auth, throttling, size, timeout),
+        matching the API Gateway default gateway-response bodies.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  x-sagebrain-limits:
+    query_max_chars: 8000
+    neptune_query_timeout_seconds: 60
+    question_max_chars: 2000
+    source_max_chars: 64
+    global_rate_per_api_rps: 50
+    global_burst_per_api: 100
+    user_rate_rps: 5
+    user_burst: 20
+    machine_rate_rps: 25
+    machine_burst: 50
+    max_body_bytes: 262144
+    request_timeout_seconds: 10
+    auth_timeout_seconds: 10
+    synapse_call_timeout_seconds: 5
+    auth_cache_ttl_seconds: 300
+    job_ttl_seconds: 86400
+
+servers:
+  - url: https://api.sagebrain.example.org
+    description: Placeholder — real hostname is per-environment (CloudFormation output ApiBaseUrl).
+
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+
+tags:
+  - name: query
+    description: Raw SPARQL (read-only) against Neptune.
+  - name: ask
+    description: Natural-language questions answered by the Bedrock agent.
+  - name: health
+    description: Liveness.
+  - name: docs
+    description: Interactive API documentation generated from this file.
+
+paths:
+  /query:
+    post:
+      tags: [query]
+      operationId: submitQuery
+      summary: Submit a SPARQL query job
+      description: |
+        Validates the query, records a `pending` job and enqueues it for the query worker.
+        The query is trimmed before the length check.
+      parameters:
+        - $ref: "#/components/parameters/XSource"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryRequest"
+            examples:
+              simple:
+                value:
+                  query: "SELECT * WHERE { ?s ?p ?o } LIMIT 5"
+      responses:
+        "202":
+          $ref: "#/components/responses/JobAccepted"
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+              examples:
+                invalidJson:
+                  value: { error: "Request body must be valid JSON" }
+                missing:
+                  value: { error: "Missing 'query' field" }
+                tooLong:
+                  value: { error: "Query exceeds maximum length of 8000 characters" }
+                wrongType:
+                  value: { error: "'query' must be a string" }
+                notObject:
+                  value: { error: "Request body must be a JSON object" }
+                sourceTooLong:
+                  value: { error: "'X-Source' exceeds maximum length of 64 characters" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+
+  /query/{job_id}:
+    get:
+      tags: [query]
+      operationId: getQueryJob
+      summary: Get a SPARQL query job's status and results
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Current job state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryJobStatus"
+              examples:
+                pending:
+                  value: { job_id: "4f1c6a52-0f0e-4d8e-9a59-3c2b1e7f0a11", status: pending }
+                complete:
+                  value:
+                    job_id: "4f1c6a52-0f0e-4d8e-9a59-3c2b1e7f0a11"
+                    status: complete
+                    results: '{"head":{"vars":["s"]},"results":{"bindings":[]}}'
+                    content_type: application/sparql-results+json
+                error:
+                  value:
+                    job_id: "4f1c6a52-0f0e-4d8e-9a59-3c2b1e7f0a11"
+                    status: error
+                    error: "400 Client Error: Bad Request"
+        "400":
+          $ref: "#/components/responses/BadJobId"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+
+  /ask:
+    post:
+      tags: [ask]
+      operationId: submitQuestion
+      summary: Submit a natural-language question to the agent
+      description: |
+        Validates the question, records a `pending` job (including the question) and
+        enqueues it for the agent worker together with the authenticated caller's user_id.
+        No credential is forwarded: the agent runs its SPARQL through the shared server-side
+        query service (not over HTTP), which applies the same limits, rate buckets and
+        `sparql_query` audit logging as `POST /query`, attributed to the original caller
+        with `source: agent`. The question is trimmed before the length check.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskRequest"
+            examples:
+              simple:
+                value:
+                  question: "What types of biological entities are in this knowledge graph?"
+      responses:
+        "202":
+          $ref: "#/components/responses/JobAccepted"
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+              examples:
+                invalidJson:
+                  value: { error: "Request body must be valid JSON" }
+                missing:
+                  value: { error: "Missing 'question' field" }
+                tooLong:
+                  value: { error: "Question exceeds maximum length of 2000 characters" }
+                wrongType:
+                  value: { error: "'question' must be a string" }
+                notObject:
+                  value: { error: "Request body must be a JSON object" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+
+  /ask/{job_id}:
+    get:
+      tags: [ask]
+      operationId: getAskJob
+      summary: Get an agent job's status, steps and answer
+      description: |
+        `steps` is returned at every status (when non-empty) so callers can watch the
+        agent's SPARQL calls while the job is still running.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Current job state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskJobStatus"
+              examples:
+                running:
+                  value:
+                    job_id: "9b2d5e1c-7a3f-4c1e-8b6d-2f4a9c0e5d77"
+                    status: running
+                    status_detail: "Executing SPARQL query (step 1)..."
+                    steps:
+                      - { type: tool_call, tool: query_neptune, sparql: "SELECT ..." }
+                complete:
+                  value:
+                    job_id: "9b2d5e1c-7a3f-4c1e-8b6d-2f4a9c0e5d77"
+                    status: complete
+                    answer: "The graph contains ..."
+                    steps:
+                      - { type: tool_call, tool: query_neptune, sparql: "SELECT ..." }
+                      - { type: tool_result, tool: query_neptune, preview: "{\"head\": ..." }
+        "400":
+          $ref: "#/components/responses/BadJobId"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+
+  /healthz:
+    get:
+      tags: [health]
+      operationId: healthz
+      summary: Liveness probe (unauthenticated, not rate limited)
+      security: []
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /api:
+    get:
+      tags: [docs]
+      operationId: apiDocs
+      summary: Interactive API documentation (Swagger UI)
+      description: |
+        Public (no auth, not charged to rate-limit buckets; WAF per-IP limits still apply).
+        Renders `/api/openapi.json`. Swagger UI assets are served by this service, not a
+        third-party CDN. "Try it out" calls this same host; click **Authorize** and paste a
+        Synapse PAT (bearerAuth) or the machine key (apiKeyAuth).
+      security: []
+      responses:
+        "200":
+          description: Swagger UI HTML page.
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /api/openapi.json:
+    get:
+      tags: [docs]
+      operationId: openapiJson
+      summary: This contract as JSON
+      description: |
+        The committed `api/openapi.yaml`, served verbatim except that `servers` is replaced
+        with this deployment's public base URL, so generated clients and "Try it out" target
+        the right host.
+      security: []
+      responses:
+        "200":
+          description: OpenAPI 3.1 document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenApiDocument"
+
+  /api/openapi.yaml:
+    get:
+      tags: [docs]
+      operationId: openapiYaml
+      summary: This contract as YAML
+      description: Same document as `/api/openapi.json`, in YAML.
+      security: []
+      responses:
+        "200":
+          description: OpenAPI 3.1 document.
+          content:
+            application/yaml:
+              schema:
+                $ref: "#/components/schemas/OpenApiDocument"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Synapse personal access token or OAuth access token. Caller must be a member of the configured Synapse team.
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Machine API key. Checked before the bearer token; a wrong key is rejected even if a valid bearer token is also sent.
+
+  parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      description: Job identifier returned by the submit endpoint.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    XSource:
+      name: X-Source
+      in: header
+      required: false
+      description: Caller tag recorded in the SPARQL audit log (`agent` for agent-originated queries). Defaults to `direct`. Longer than 64 characters is a 400.
+      schema:
+        type: string
+        maxLength: 64
+
+  schemas:
+    QueryRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: SPARQL query. Leading/trailing whitespace is stripped; must be non-empty and at most 8000 characters after stripping.
+          minLength: 1
+          maxLength: 8000
+          x-strip-before-validate: true
+
+    AskRequest:
+      type: object
+      required: [question]
+      properties:
+        question:
+          type: string
+          description: Natural-language question. Leading/trailing whitespace is stripped; must be non-empty and at most 2000 characters after stripping.
+          minLength: 1
+          maxLength: 2000
+          x-strip-before-validate: true
+
+    JobState:
+      type: string
+      enum: [pending, running, complete, error]
+
+    JobAccepted:
+      type: object
+      required: [job_id, status]
+      additionalProperties: false
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: pending
+
+    QueryJobStatus:
+      type: object
+      required: [job_id, status]
+      additionalProperties: false
+      properties:
+        job_id:
+          type: string
+        status:
+          $ref: "#/components/schemas/JobState"
+        results:
+          type: string
+          description: Raw Neptune response body (present when status is complete).
+        content_type:
+          type: string
+          description: Content type of `results` (present when status is complete).
+          default: application/sparql-results+json
+        error:
+          type: string
+          description: Error message (present when status is error).
+
+    AgentStep:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [tool_call, tool_result]
+        tool:
+          type: string
+        sparql:
+          type: string
+        preview:
+          type: string
+          description: First 500 characters of the tool result.
+        error:
+          type: string
+
+    AskJobStatus:
+      type: object
+      required: [job_id, status]
+      additionalProperties: false
+      properties:
+        job_id:
+          type: string
+        status:
+          $ref: "#/components/schemas/JobState"
+        status_detail:
+          type: string
+          description: Human-readable progress message.
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentStep"
+        answer:
+          type: string
+          description: Agent answer (present when status is complete).
+        error:
+          type: string
+          description: Error message (present when status is error).
+
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    GatewayError:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    OpenApiDocument:
+      type: object
+      description: An OpenAPI 3.1 document (this contract), as JSON or YAML.
+      required: [openapi, info, paths]
+      properties:
+        openapi:
+          type: string
+        info:
+          type: object
+        paths:
+          type: object
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+
+  responses:
+    JobAccepted:
+      description: Job accepted; poll the status endpoint with the returned job_id.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/JobAccepted"
+    BadJobId:
+      description: job_id is blank or too long.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+          example: { error: "Missing job_id" }
+    JobNotFound:
+      description: No job with this id (unknown, or expired after 24h).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+          example: { error: "Job not found" }
+    Unauthorized:
+      description: Missing, invalid or non-team-member credentials.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GatewayError"
+          example: { message: "Unauthorized" }
+    PayloadTooLarge:
+      description: Request body exceeds max_body_bytes.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GatewayError"
+          example: { message: "Request Too Long" }
+    TooManyRequests:
+      description: Rate limit exceeded (global per-API bucket or per-principal bucket).
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GatewayError"
+          example: { message: "Too Many Requests" }
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GatewayError"
+          example: { message: "Internal server error" }
+    GatewayTimeout:
+      description: Request exceeded request_timeout_seconds.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GatewayError"
+          example: { message: "Endpoint request timed out" }

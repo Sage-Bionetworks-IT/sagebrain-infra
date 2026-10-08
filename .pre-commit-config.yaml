@@ -43,3 +43,17 @@ repos:
     hooks:
       - id: check-github-workflows
       - id: check-github-actions
+  # Generated pydantic models must match api/openapi.yaml (constitution, article I).
+  # Isolated env: datamodel-code-generator can't share one with aws-cdk-lib (typeguard pins).
+  - repo: local
+    hooks:
+      - id: openapi-models
+        name: Pydantic models match api/openapi.yaml
+        language: python
+        entry: python tools/gen_models.py --check
+        files: ^(api/openapi\.yaml|app/sagebrain_api/models/_generated\.py|tools/gen_models\.py)$
+        pass_filenames: false
+        additional_dependencies:
+          - datamodel-code-generator==0.83.0
+          - black==26.5.1
+          - isort==8.0.1

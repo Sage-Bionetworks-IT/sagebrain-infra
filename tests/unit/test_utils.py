@@ -226,3 +226,57 @@ class TestLoadContextConfig:
 
             with pytest.raises(expected_exception):
                 load_context_config("dev", temp_dir)
+
+
+class TestSectionMerge:
+    """Shallow top-level merge, except allow-listed sections (API_APP) which deep-merge."""
+
+    def _load(self, base: dict, env: dict) -> dict:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / "base.yaml").write_text(yaml.dump(base))
+            (Path(temp_dir) / "dev.yaml").write_text(yaml.dump(env))
+            return load_context_config("dev", temp_dir)
+
+    def test_neptune_section_still_replaced_wholesale(self):
+        """Existing behaviour that dev.yaml relies on — must not silently change."""
+        result = self._load(
+            {"NEPTUNE": {"engine_version": "1.3.2.1", "iam_auth_enabled": True}},
+            {"NEPTUNE": {"serverless_max_capacity": 4.0}},
+        )
+        assert result["NEPTUNE"] == {"serverless_max_capacity": 4.0}
+
+    def test_api_app_section_deep_merged(self):
+        result = self._load(
+            {
+                "API_APP": {
+                    "enabled": False,
+                    "cpu": 512,
+                    "rate_limits": {"global_rate": 50, "global_burst": 100},
+                }
+            },
+            {"API_APP": {"enabled": True, "rate_limits": {"global_rate": 25}}},
+        )
+        assert result["API_APP"] == {
+            "enabled": True,
+            "cpu": 512,
+            "rate_limits": {"global_rate": 25, "global_burst": 100},
+        }
+
+    def test_api_app_only_in_base(self):
+        result = self._load({"API_APP": {"enabled": False}}, {"OTHER": 1})
+        assert result["API_APP"] == {"enabled": False}
+
+    def test_api_app_only_in_env(self):
+        result = self._load({"OTHER": 1}, {"API_APP": {"enabled": True}})
+        assert result["API_APP"] == {"enabled": True}
+
+    def test_real_configs_unchanged_for_existing_sections(self):
+        """Loading the committed configs gives the same NEPTUNE/VIZ/AUTH as a plain shallow merge."""
+        config_dir = Path(__file__).parents[2] / "config"
+        base = yaml.safe_load((config_dir / "base.yaml").read_text())
+        for env in ("dev", "stage", "prod"):
+            env_cfg = yaml.safe_load((config_dir / f"{env}.yaml").read_text()) or {}
+            shallow = {**base, **env_cfg}
+            result = load_context_config(env, str(config_dir))
+            for key in set(shallow) - {"API_APP"}:
+                assert result[key] == shallow[key], (env, key)
