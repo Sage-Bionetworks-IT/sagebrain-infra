@@ -33,6 +33,8 @@ jobs:
         run: npx --yes @redocly/cli@2 lint api/openapi.yaml --config api/.redocly.yaml
       - name: Set up Python
         uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"  # pre-commit default_language_version
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Contract tests (spec <-> cases.yaml)
