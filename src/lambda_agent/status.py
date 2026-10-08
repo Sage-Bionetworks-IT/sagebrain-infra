@@ -11,6 +11,11 @@ CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
 }
 
+GENERIC_ERROR_MESSAGE = (
+    "Request failed while generating an answer. "
+    "Please retry later and reference this job ID if the issue persists."
+)
+
 
 def handler(event, context):
     job_id = (event.get("pathParameters") or {}).get("job_id", "").strip()
@@ -45,7 +50,8 @@ def handler(event, context):
     if status == "complete":
         result["answer"] = item.get("answer", "")
     elif status == "error":
-        result["error"] = item.get("error", "Unknown error")
+        result["error"] = GENERIC_ERROR_MESSAGE
+        result["correlation_id"] = job_id
 
     return {
         "statusCode": 200,
