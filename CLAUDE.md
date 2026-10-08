@@ -348,7 +348,7 @@ Config files live in `config/`. `base.yaml` is merged with the env-specific file
 ## Spec-Driven Development
 
 The HTTP contract is [api/openapi.yaml](api/openapi.yaml) — change it **first**, then the code.
-Rules are in [.specify/memory/constitution.md](.specify/memory/constitution.md); each feature gets
+Rules are in [docs/memory/constitution.md](docs/memory/constitution.md); each feature gets
 `specs/NNN-name/{spec,plan,tasks}.md` (copy `specs/_template/`). Active feature:
 [specs/001-api-gateway-to-fastapi](specs/001-api-gateway-to-fastapi/spec.md) — moving the
 submit/status/authorizer Lambdas to a FastAPI service on Fargate; see its

@@ -5,7 +5,7 @@ info:
   summary: Async SPARQL query and natural-language agent API over the Sage Brain knowledge graph.
   description: |
     THIS FILE IS THE CONTRACT. Change it first, then regenerate models and implement
-    (see specs/001-api-gateway-to-fastapi/spec.md and .specify/memory/constitution.md).
+    (see specs/001-api-gateway-to-fastapi/spec.md and docs/memory/constitution.md).
 
     Both APIs are asynchronous: submit a job (202 + job_id), then poll its status.
     All job endpoints require either a Synapse bearer token belonging to a member of

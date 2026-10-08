@@ -1,7 +1,7 @@
 # 001 — Tasks
 
 ## Phase 0 — contract & characterization (no infra change)
-- [x] T001 Constitution: `.specify/memory/constitution.md`
+- [x] T001 Constitution: `docs/memory/constitution.md`
 - [x] T002 Spec templates: `specs/_template/`
 - [x] T003 `specs/001-*/spec.md`, `plan.md`, `research.md`, `data-model.md`, `parity-matrix.md`
 - [x] T004 Hand-write `api/openapi.yaml` and `api/.redocly.yaml`; lint is clean
@@ -128,7 +128,7 @@ limiters), T141 (no Valkey/Redis wording left anywhere in the repo) and T146 (co
 the API only; `test_compose_runs_api_only` passes) are verified and ticked. T118 is re-verified and ticked.
 
 Read these first, in this order:
-1. `.specify/memory/constitution.md`: the rules. Contract first, limits server-side,
+1. `docs/memory/constitution.md`: the rules. Contract first, limits server-side,
    every threshold tested.
 2. `specs/001-api-gateway-to-fastapi/spec.md`: requirements FR-1..9, deviations D-1..12.
    `plan.md` "Phase 1d" has the rate-limiter design, stack choice and deploy order.

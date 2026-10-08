@@ -24,14 +24,17 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   temporary bastion ([runbook](runbooks/direct-neptune-access.md)). **Reverted: cost anomaly
   alerts** (#55 → #57).
 - **Graph Explorer queries Neptune directly** (#36), so they bypass the `/query` audit log. Its
-  access control is the ALB's IP allow-list.
+  access control is the ALB's IP allow-list. A standing exception to constitution article V, as is
+  the temporary bastion (#67): both are operator/VPN-only, not user-facing query paths.
 
 ## API / auth
 - **Both APIs are async (submit + poll)**, because SPARQL takes 4–40s and API Gateway caps at 29s (#18).
 - **Synapse team-gated authorizer** (#31, #40). Dev and prod use different teams (#63, issue #62).
-- **Spec-driven development + FastAPI on Fargate** (spec 001, #64). Under it, `api/openapi.yaml` is
-  the contract, and `sagebrain_core` is the single in-process query chokepoint for limits and audit
-  logging. Until #64 merges, `dev` has none of this.
+- **Spec-driven development + FastAPI on Fargate** (spec 001, #64). The rules it introduced (contract
+  first, parity before improvement, every threshold tested, one query chokepoint) are the articles in
+  [constitution.md](constitution.md); this file records why and any exceptions, not the rules
+  themselves. Chokepoint is a library (`sagebrain_core`), not an endpoint, so the agent's in-process
+  queries get the same limits and audit log as `POST /query` without an HTTP loop-back.
 
 ## Governance
 - **Access requirements first, then ACLs** (spec 002, #66; it builds on #64). It replaces earlier
