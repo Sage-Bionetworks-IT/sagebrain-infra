@@ -2,6 +2,10 @@
 
 AWS CDK (Python) infrastructure for the Sage Brain project. Deploys an Amazon Neptune graph database with a Synapse-authenticated read-only API (API Gateway + Lambda) and a Bedrock Strands AI agent API.
 
+**Memory bank:** start with [docs/memory/README.md](docs/memory/README.md). It holds the decisions
+and their PRs, open work by theme, gotchas, and runbooks (e.g. direct Neptune access via a
+temporary bastion). Update it in the same PR that changes a fact it records.
+
 ## AWS Profile
 
 Each environment has its own AWS account and profile:
