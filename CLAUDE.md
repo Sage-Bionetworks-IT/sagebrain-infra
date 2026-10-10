@@ -312,6 +312,11 @@ fields @timestamp, source, query, duration_ms
 Environments are selected via CDK context: `--context env=dev` (default: `dev`).
 Config files live in `config/`. `base.yaml` is merged with the env-specific file.
 
+## KG Governance (draft)
+
+[specs/002-kg-governance-rebac](specs/002-kg-governance-rebac/spec.md) — per-caller KG governance
+(Stage 1: ingest gate admits only content AUTHENTICATED_USERS can download + query-time access-requirement checks in Cedar/AVP over governanceDUO's graph in a private Neptune cluster; Stage 2: query-time ACLs).
+
 ## Testing
 
 ```bash
