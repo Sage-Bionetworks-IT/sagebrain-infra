@@ -9,6 +9,8 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
+from src.core_layer import sagebrain_core_layer
+
 _BUNDLING = cdk.BundlingOptions(
     image=lambda_.Runtime.PYTHON_3_11.bundling_image,
     command=[
@@ -135,12 +137,14 @@ class NeptuneApiStack(cdk.Stack):
         # -------------------
         # Worker Lambda — SQS-triggered SPARQL executor (needs VPC)
         # -------------------
+        self.core_layer = sagebrain_core_layer(self)
         self.query_fn = lambda_.Function(
             self,
             "NeptuneQueryFunction",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="query.handler",
             code=lambda_.Code.from_asset("src/lambda", bundling=_BUNDLING),
+            layers=[self.core_layer],
             vpc=vpc,
             security_groups=[self.lambda_sg],
             vpc_subnets=ec2.SubnetSelection(

@@ -38,6 +38,12 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 - **Synapse bearer tokens are the only API credential (2026-10-12, #74).** The authorizer's
   `x-api-key` machine-key path was configured in no environment, and the agent no longer needs a
   machine credential once it calls the query service in-process.
+- **The query chokepoint is a library, `sagebrain_core`, not an endpoint** (#71). The agent's
+  in-process queries get the same limits and `sparql_query` audit log as `POST /query`, with no HTTP
+  loop-back and no bearer token in SQS.
+- **Rate-limit buckets live in DynamoDB, not Valkey/ElastiCache** (#71). At 50 rps with 4–40s
+  queries a 5–10 ms check doesn't matter, and DynamoDB needs no VPC or SGs. Legacy API Gateway
+  `/ask` jobs (no caller id) share one `legacy-apigw` bucket until the `/ask` cutover (spec 001 D-12).
 
 ## Governance
 - **Access requirements first, then ACLs** (spec 002, #66; it builds on spec 001: #74, #73, #71, #72). It replaces earlier
