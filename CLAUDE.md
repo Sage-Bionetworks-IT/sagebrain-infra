@@ -299,6 +299,7 @@ Config files live in `config/`. `base.yaml` is merged with the env-specific file
 
 ## Spec-Driven Development
 
+The HTTP contract is [api/openapi.yaml](api/openapi.yaml) — change it **first**, then the code.
 Rules are in [docs/memory/constitution.md](docs/memory/constitution.md); each feature gets
 `specs/NNN-name/{spec,plan,tasks}.md` (copy `specs/_template/`). Active feature:
 [specs/001-api-gateway-to-fastapi](specs/001-api-gateway-to-fastapi/spec.md) — moving the
@@ -309,6 +310,7 @@ API Gateway threshold is (re)enforced.
 - **Limits are server-side.** In the FastAPI design the agent calls the shared query service
   in-process (not `POST /query` over HTTP), so every query limit and the `sparql_query`
   audit log live in that service — never only in HTTP middleware, ALB or WAF.
+- Lint the spec: `npx @redocly/cli@2 lint api/openapi.yaml --config api/.redocly.yaml`
 
 ## Testing
 

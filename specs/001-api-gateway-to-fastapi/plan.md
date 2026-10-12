@@ -28,6 +28,7 @@ Shared query service (one package, used by the service, the query worker and the
   threshold in `info.x-sagebrain-limits`. Synapse bearer is its only security scheme (D-4), and
   `servers` stays a placeholder until the hostname is decided. CI lints it and fails a PR that
   makes a breaking change. The service's request/response models are generated from it.
+  It lands in its own PR, right after this plan.
 - **Shared query service.** The single enforcement point for every query limit and the audit
   log (constitution V). It's bundled into the service image and both worker Lambdas.
 - **Shared rate-limit store.** One DynamoDB table in its own stack, so the buckets hold across
