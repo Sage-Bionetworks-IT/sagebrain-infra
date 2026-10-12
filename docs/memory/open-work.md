@@ -21,6 +21,8 @@ resolves it.
 - Agent hardening: sanitize `/ask` errors (#22, PR #53); avoid logging full questions (#21);
   CORS / abuse protections (#23); `get_schema` can be unbounded (#30).
 - Normalize header keys in the query Lambda's logs (#20).
+- **Custom domain for the unified API** (spec 001 R-16): needs a certificate and DNS from IT, and
+  one more client URL change. Deferred until someone needs a stable vanity URL.
 
 ## Infra hygiene
 - Narrow Neptune SG egress to the S3 prefix list (#15). Make the endpoint configurable per env (#14).
