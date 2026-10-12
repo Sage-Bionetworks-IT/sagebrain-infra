@@ -8,10 +8,18 @@ temporary bastion). Update it in the same PR that changes a fact it records.
 
 ## AWS Profile
 
-All AWS CLI and CDK commands require `--profile sagebrain`. Login first:
+Each environment has its own AWS account and profile:
+
+| Env | Profile | Stacks |
+|---|---|---|
+| dev | `--profile sagebrain-dev` | `app-dev-*` |
+| prod | `--profile sagebrain` | `app-prod-*` |
+
+Examples below use `sagebrain`. Substitute `sagebrain-dev` (and `app-dev-*`) for dev. Log in first:
 
 ```bash
-aws --profile sagebrain sso login
+aws --profile sagebrain-dev sso login   # dev
+aws --profile sagebrain sso login       # prod
 ```
 
 ## Stacks
@@ -258,7 +266,7 @@ A default connection to Neptune is pre-configured, so the graph loads on first o
 - **Access logs**: CloudWatch log group with 1-month retention (every request, structured JSON)
 - **Execution logs**: ERROR level only
 - **CloudWatch role**: set via `cloud_watch_role=True` on `RestApi`
-- **Auth**: Synapse token authorizer (Lambda) — caller must present a valid Synapse PAT/OAuth token and be a member of the environment's Synapse team (dev: 273957, prod: 3605470). Result cached 5 min per token.
+- **Auth**: Synapse token authorizer (Lambda) — caller must present a valid Synapse PAT/OAuth token and be a member of Synapse team (dev: 273957, prod: 3605470) (`AUTH.synapse_team_id`). Successful results are cached 5 min per token **inside the authorizer Lambda** (API Gateway's own authorizer cache is off, TTL 0).
 
 ### app-dev-neptune-agent (`POST /ask`, `GET /ask/{job_id}`)
 - **Throttling**: 50 RPS steady-state, 100 burst (lightweight — no Bedrock/Neptune calls inline)
@@ -289,6 +297,19 @@ fields @timestamp, source, query, duration_ms
 Environments are selected via CDK context: `--context env=dev` (default: `dev`).
 Config files live in `config/`. `base.yaml` is merged with the env-specific file.
 
+## Spec-Driven Development
+
+Rules are in [docs/memory/constitution.md](docs/memory/constitution.md); each feature gets
+`specs/NNN-name/{spec,plan,tasks}.md` (copy `specs/_template/`). Active feature:
+[specs/001-unified-api](specs/001-unified-api/spec.md) — merging the two REST APIs into one
+API Gateway endpoint (`/query`, `/ask`, public docs at `/api`) with an OpenAPI contract; see its
+[parity-matrix.md](specs/001-unified-api/parity-matrix.md) for where every threshold is enforced.
+
+- **Query limits are server-side.** The agent calls the shared query service in-process (not
+  `POST /query` over HTTP), so every query limit and the `sparql_query` audit log live in that
+  service — never only in API Gateway. Rate is the exception: API Gateway throttles HTTP callers
+  and the agent worker's reserved concurrency bounds the agent.
+
 ## Testing
 
 ```bash
@@ -310,7 +331,7 @@ Tests live in `tests/unit/`. Lambda handler tests import from `src/lambda/` via 
 - Neptune security group has **no broad ingress rules**. Each consumer stack (Lambda) adds a targeted SG-to-SG `CfnSecurityGroupIngress` rule on port 8182 to avoid cross-stack cyclic references.
 - The API Lambda uses the **read endpoint** only, scoped to read-only IAM actions.
 - The API is **POST only** — GET was removed to avoid URL length limits for complex SPARQL queries.
-- **Synapse team-gated auth** — both APIs require a valid Synapse PAT/OAuth token and membership in the environment's Synapse team (dev: 273957, prod: 3605470). The Lambda authorizer validates via Synapse's `/userProfile` + `/team/{id}/member/{userId}/membershipStatus` endpoints; results are cached 5 min by API Gateway.
+- **Synapse team-gated auth** — both APIs require a valid Synapse PAT/OAuth token and membership in the environment's Synapse team (dev: 273957, prod: 3605470) (`AUTH.synapse_team_id`). The Lambda authorizer validates via Synapse's `/userProfile` + `/team/{id}/member/{userId}/membershipStatus` endpoints; successful results are cached 5 min in the authorizer Lambda's memory (API Gateway caching is off).
 - **S3 bulk loader** is used for all data loading — not SPARQL INSERT batches. Neptune assumes `NeptuneLoadRole` (trusted by `rds.amazonaws.com`) to read from S3.
 - **Date-partitioned S3 layout** (`{portal}/YYYY-MM-DD/data/`) preserves a historical data lake. Each snapshot loads append-only into its own named graph; nothing resets Neptune.
 - **Both APIs are async (submit + poll)** — Neptune SPARQL on the 2.27M-triple graph takes 4–40s; synchronous API Gateway has a hard 29s limit. SQS + DynamoDB decouples HTTP from execution for both `/query` and `/ask`.
