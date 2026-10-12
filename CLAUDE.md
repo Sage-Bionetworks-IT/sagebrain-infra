@@ -299,18 +299,16 @@ Config files live in `config/`. `base.yaml` is merged with the env-specific file
 
 ## Spec-Driven Development
 
-The HTTP contract is [api/openapi.yaml](api/openapi.yaml) — change it **first**, then the code.
 Rules are in [docs/memory/constitution.md](docs/memory/constitution.md); each feature gets
 `specs/NNN-name/{spec,plan,tasks}.md` (copy `specs/_template/`). Active feature:
-[specs/001-api-gateway-to-fastapi](specs/001-api-gateway-to-fastapi/spec.md) — moving the
-submit/status/authorizer Lambdas to a FastAPI service on Fargate; see its
-[parity-matrix.md](specs/001-api-gateway-to-fastapi/parity-matrix.md) for where every
-API Gateway threshold is (re)enforced.
+[specs/001-unified-api](specs/001-unified-api/spec.md) — merging the two REST APIs into one
+API Gateway endpoint (`/query`, `/ask`, public docs at `/api`) with an OpenAPI contract; see its
+[parity-matrix.md](specs/001-unified-api/parity-matrix.md) for where every threshold is enforced.
 
-- **Limits are server-side.** In the FastAPI design the agent calls the shared query service
-  in-process (not `POST /query` over HTTP), so every query limit and the `sparql_query`
-  audit log live in that service — never only in HTTP middleware, ALB or WAF.
-- Lint the spec: `npx @redocly/cli@2 lint api/openapi.yaml --config api/.redocly.yaml`
+- **Query limits are server-side.** The agent calls the shared query service in-process (not
+  `POST /query` over HTTP), so every query limit and the `sparql_query` audit log live in that
+  service — never only in API Gateway. Rate is the exception: API Gateway throttles HTTP callers
+  and the agent worker's reserved concurrency bounds the agent.
 
 ## Testing
 
