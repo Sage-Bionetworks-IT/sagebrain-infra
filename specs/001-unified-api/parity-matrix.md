@@ -18,7 +18,8 @@ reads the value from `x-sagebrain-limits`.
 | 1 | Stage throttle, per API | 50 rps steady, 100 burst | http | Stage throttle on the one API. It applies per method, so `POST /query`, `POST /ask` and the docs routes each keep 50 / 100. CDK assertion + burst probe |
 | 1s | (new, D-17) status throttle | 100 rps steady, 200 burst | http | Method override on `GET /query/{job_id}` and `GET /ask/{job_id}`. CDK assertion + load probe |
 | 1p | (new, D-15) minimum poll interval | 2 s | http | `Retry-After` on `pending` / `running` status responses. Unit test |
-| 1q | (new, D-14) query worker concurrency | 20 | all | Query worker reserved concurrency. CDK assertion |
+| 1q | (new, D-14) query worker concurrency | dev 5, prod 10 | all | Query worker reserved concurrency from `NEPTUNE_API.query_worker_concurrency`. CDK assertion per env |
+| 1t | (new, D-18) throttled response | 429 + `Retry-After: 1` + ACAO | http | `THROTTLED` gateway response. CDK assertion + burst probe |
 | 1a | (no equivalent: agent queries went through `POST /query`) | 10 concurrent, 60 s each | agent | Agent worker reserved concurrency (unchanged) + the shared service's Neptune timeout (row 4q) |
 | 4 | Lambda integration timeout | 10 s | http | Integration timeout on every method; AWS client timeouts in the handlers below it. CDK assertion |
 | 4q | Neptune query timeout (query worker 60 s; agent poll 70 s) | 60 s | all | The shared service's Neptune call, for every caller |

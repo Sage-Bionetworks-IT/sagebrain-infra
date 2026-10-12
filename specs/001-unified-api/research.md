@@ -55,9 +55,11 @@
   stage keeps 50 / 100 for each method with no extra config. The two status methods get
   100 / 200, because polling at the 100-user design target is 50 rps at worst (D-17). Agent
   queries skip API Gateway, but at most 10 agent workers run at once, and the query worker is
-  capped at 20 (D-14); every query is capped at 60 s. A test covers each bound. We deferred per-principal buckets and the shared
-  DynamoDB rate-limit store from the earlier draft (D-6, D-12): they're worth building when
-  one user actually starves others, not before.
+    capped per env at dev 5 / prod 10 (D-14); every query is capped at 60 s. A test covers each
+  bound. The caps are per env because Neptune Serverless scales up one instance to a per-env
+  maximum (dev 4, prod 16 NCU), so one value can't suit both. We deferred per-principal
+  buckets and the shared DynamoDB rate-limit store from the earlier draft (D-6, D-12): they're
+  worth building when one user actually starves others, not before.
 - **R-6 One edge stack.** The `RestApi`, authorizer, submit/status Lambdas and docs Lambda
   live together in `app-{env}-api`. Adding methods to one API from several stacks invites
   cyclic references and export locks.

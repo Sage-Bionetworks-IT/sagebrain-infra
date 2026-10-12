@@ -105,14 +105,15 @@ beyond the team.
 
   Callers:
   - The `POST /query` submit Lambda validates, then enqueues the job.
-  - The query worker runs the already-admitted job, at most 20 at once (D-14).
+  - The query worker runs the already-admitted job, under a per-env cap (dev 5, prod 10) on concurrent jobs
+    (D-14).
   - The agent tool runs its queries synchronously with `source="agent"` and the caller's
     `user_id`, after its existing SELECT-only check.
 
   Rate limits are not in the service (R-5): HTTP callers are throttled by API Gateway, query
-  jobs are bounded by the query worker's reserved concurrency of 20 (D-14), and agent queries
-  by the agent worker's reserved concurrency of 10. Every query also has the 60 s timeout. Limit values are defined once and a test asserts they equal the contract's
-  `x-sagebrain-limits`.
+  jobs are bounded by the query worker's reserved concurrency (D-14), and agent queries by the
+  agent worker's reserved concurrency of 10. Every query also has the 60 s timeout. Limit
+  values are defined once and a test asserts they equal the contract's `x-sagebrain-limits`.
 - **FR-8 API docs at `/api`.** Public, no authorizer, served by a small docs Lambda:
   - `GET /api` serves Swagger UI. Its assets are bundled in the Lambda, not loaded from a CDN.
   - `GET /api/openapi.json` serves the committed `api/openapi.yaml` as JSON, except that
@@ -155,10 +156,11 @@ retired with the move away from FastAPI ([R-5](research.md)).
 | D-10 | Bad or non-member bearer returns 401 `{"message":"User is not authorized to access this resource with an explicit deny in an identity-based policy"}` (observed in dev) | Every auth failure returns 401 `{"message":"Unauthorized"}` | One body for clients; no IAM wording leaked |
 | D-11 | `X-Source` of any length is accepted and written verbatim into the SQS message and the `sparql_query` audit log | Over 64 characters returns 400 `'X-Source' exceeds maximum length of 64 characters` | A threshold must be enforced, not only documented (constitution III); bounds what callers can write into audit logs |
 | D-13 | A transient authorizer error (Synapse down) returns 500 (`AUTHORIZER_FAILURE`) | Gateway response maps `AUTHORIZER_FAILURE` to 503 with `Retry-After` | A Synapse outage shouldn't look like a service bug |
-| D-14 | The query worker has no concurrency cap | Reserved concurrency of 20; extra jobs wait in SQS | Bounds load on Neptune, and stops the worker from draining the account's Lambda concurrency, which the authorizer and API Lambdas share. Names the query path's rate bound (constitution V) |
+| D-14 | The query worker has no concurrency cap | Reserved concurrency from per-env config `NEPTUNE_API.query_worker_concurrency`: dev 5, prod 10. Extra jobs wait in SQS | A safety bound, needed at today's usage: one script submitting hundreds of queries would otherwise push the single Neptune instance to max NCU, time out everyone's queries, and drain the account's Lambda concurrency that the API Lambdas share. Names the query path's rate bound (constitution V). Tuning it against measured NCU is scaling-path work |
 | D-15 | Status responses don't say how often to poll | `pending` / `running` responses carry `Retry-After: 2` | Polling is most of the traffic; this sizes it at the design target |
 | D-16 | A result over DynamoDB's 400 KB item limit fails the worker's write, though Neptune succeeded (`src/lambda/query.py`) | Results over 350 KB mark the job `error` with an actionable message | A limit that exists only as a DynamoDB error breaks constitution III. Offloading big results to S3 is a separate spec |
 | D-17 | Status methods share the 50 / 100 stage throttle | `GET /query/{job_id}` and `GET /ask/{job_id}` get 100 rps / 200 burst; the POSTs stay 50 / 100 | At the design target, worst-case polling is 50 rps, exactly the old limit |
+| D-18 | A throttled request gets API Gateway's default 429, with no CORS header and no retry hint | The `THROTTLED` gateway response adds `Retry-After: 1` and `Access-Control-Allow-Origin: *` | Browser clients can read the 429, and polling clients back off instead of retrying at once |
 
 ## Known issues
 - **F8 (resolved by D-8):** today, the agent re-presents the caller's `Authorization` header to
@@ -179,12 +181,14 @@ retired with the move away from FastAPI ([R-5](research.md)).
 ## Success criteria
 - The unit, contract and characterization tests pass.
 - A parity probe run against the old APIs and the new one shows 0 failures and 0 unexplained
-  differences in dev, stage and prod before cutover.
+  differences in dev and prod before cutover. (`config/stage.yaml` exists but no stage
+  environment is deployed, so stage is not in this rollout.)
 - A burst of 300 requests to `POST /query` gets about 100 accepted and the rest 429.
 - A load probe in dev at the design target passes: 100 simulated users each submit a cheap
   `LIMIT 1` query and poll every 2 s for 10 minutes. The status methods return 0 429s, and the
   query queue's oldest message stays under 5 minutes. The cheap query keeps the probe a test of
   the API, not of Neptune.
 - `/api` loads in a browser, and "Try it out" with a PAT returns 202 for `POST /query`.
-- In each environment, the old APIs' `Count` stays at about 0 for 7 days before they are
-  deleted.
+- In each environment, the old APIs are deleted only when both hold: their `Count` has stayed
+  at about 0 for 7 days, and it is at least 30 days after the sunset date announced to the
+  Synapse team at prod cutover. Request counts alone would miss a client that runs monthly.

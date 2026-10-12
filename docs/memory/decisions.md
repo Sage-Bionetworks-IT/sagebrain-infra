@@ -48,7 +48,10 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 - **Design target: 100 concurrent users (2026-10-12, #74).** Prod's team gate has 9 members.
   Status polling dominates traffic and is billed per request; the break-even with a fixed-cost
   front door is ~1M requests/day, which is the alarm that reopens the hosting decision. The query
-  worker is capped at 20 concurrent (it was uncapped and could drain the account's Lambda pool).
+  worker gets a per-env safety cap (dev 5, prod 10): it was uncapped, so one script could push
+  the single serverless Neptune instance to max NCU and drain the account's Lambda pool. Neptune
+  Serverless scales up one instance, not out, so the cap is per env. Stage isn't deployed, so
+  rollout is dev → prod; old URLs retire after 7 quiet days and 30 days past an announced sunset.
 - **Constitution I and IV amended for Lambda (2026-10-12, #74).** Article I no longer requires
   generated Pydantic models (pydantic's compiled deps complicate the x86 Lambdas); routes and
   responses are tested against the contract instead. Article IV no longer says "ECS secrets".
