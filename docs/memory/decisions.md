@@ -30,13 +30,13 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 ## API / auth
 - **Both APIs are async (submit + poll)**, because SPARQL takes 4–40s and API Gateway caps at 29s (#18).
 - **Synapse team-gated authorizer** (#31, #40). Dev and prod use different teams (#63, issue #62).
-- **Spec-driven development + FastAPI on Fargate** (spec 001, #64). The rules it introduced (contract
+- **Spec-driven development + FastAPI on Fargate** (spec 001: #70 plan, #71 core, #72 FastAPI). The rules it introduced (contract
   first, parity before improvement, every threshold tested, one query chokepoint) are the articles in
   [constitution.md](constitution.md); this file records why and any exceptions, not the rules
   themselves. Chokepoint is a library (`sagebrain_core`), not an endpoint, so the agent's in-process
   queries get the same limits and audit log as `POST /query` without an HTTP loop-back.
 
 ## Governance
-- **Access requirements first, then ACLs** (spec 002, #66; it builds on #64). It replaces earlier
+- **Access requirements first, then ACLs** (spec 002, #66; it builds on spec 001, #70–#72). It replaces earlier
   explorations: #54 (ReBAC concept + AVP) and #58 (policy engine + query rewriter). Issue #16 is
   the original question.
