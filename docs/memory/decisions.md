@@ -11,9 +11,9 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   still not built.
 - **Only `{portal}/{date}/data/` is loaded.** The bulk loader parses every object under its prefix
   as Turtle, and `failOnError=TRUE` means one stray README fails the whole snapshot (#42).
-- **`DefaultNamedGraph` was legacy data and was removed (2026-10-08, #60).** `tools/load_kg.py`
-  doesn't set `namedGraphUri`, so anything it loads lands there and silently joins the union. Prefer
-  the pipeline. If you must use `load_kg.py`, expect to clean up afterwards.
+- **`DefaultNamedGraph` was legacy data and was removed (2026-10-08, #60).** The old manual
+  loader, `tools/load_kg.py`, didn't set `namedGraphUri`, so what it loaded landed there and silently
+  joined the union. It has been removed (#68): every load now goes through the pipeline.
 - **Load errors are captured per file on failure** (#49, issue #46): the loader fetches
   `?errors=TRUE&details=TRUE`, so you rarely need direct Neptune access to see what broke.
 
@@ -24,16 +24,22 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   temporary bastion ([runbook](runbooks/direct-neptune-access.md)). **Reverted: cost anomaly
   alerts** (#55 → #57).
 - **Graph Explorer queries Neptune directly** (#36), so they bypass the `/query` audit log. Its
-  access control is the ALB's IP allow-list.
+  access control is the ALB's IP allow-list. A standing exception to constitution article V, as is
+  the temporary bastion (#67): both are operator/VPN-only, not user-facing query paths.
 
 ## API / auth
 - **Both APIs are async (submit + poll)**, because SPARQL takes 4–40s and API Gateway caps at 29s (#18).
 - **Synapse team-gated authorizer** (#31, #40). Dev and prod use different teams (#63, issue #62).
-- **Spec-driven development + FastAPI on Fargate** (spec 001, #64). Under it, `api/openapi.yaml` is
-  the contract, and `sagebrain_core` is the single in-process query chokepoint for limits and audit
-  logging. Until #64 merges, `dev` has none of this.
+- **Spec-driven development + FastAPI on Fargate** (spec 001). The contract comes first: a hand-written
+  OpenAPI 3.1 file, right after the plan and before any code (spec 001 R-0). Split into a stack:
+  spec and plan #70, contract #73, core #71, FastAPI #72. The rules it introduced (contract first, parity before improvement,
+  every threshold tested, one query chokepoint) are the articles in [constitution.md](constitution.md);
+  this file records why and any exceptions, not the rules themselves.
+- **Synapse bearer tokens are the only API credential (2026-10-12, #70).** The authorizer's
+  `x-api-key` machine-key path was configured in no environment, and the agent no longer needs a
+  machine credential once it calls the query service in-process.
 
 ## Governance
-- **Access requirements first, then ACLs** (spec 002, #66; it builds on #64). It replaces earlier
+- **Access requirements first, then ACLs** (spec 002, #66; it builds on spec 001, #70–#72). It replaces earlier
   explorations: #54 (ReBAC concept + AVP) and #58 (policy engine + query rewriter). Issue #16 is
   the original question.

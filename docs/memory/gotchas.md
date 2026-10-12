@@ -24,7 +24,5 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   but it would time out a synchronous API Gateway call.
 
 ## Tooling
-- **`tools/load_kg.py` (and `delete_graph.py`, added in #64) → `ModuleNotFoundError: aws_requests_auth`** in the
-  `neptune` conda env: `pip install aws-requests-auth`. Those tools still need VPC access, though.
 - **Copilot coding agent fails to start on issues** with "insufficient GitHub AI Credits". It's a
   billing problem, not a bug in the issue.
