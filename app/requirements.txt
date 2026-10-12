@@ -1,0 +1,11 @@
+# Runtime dependencies of the FastAPI service (sagebrain_api). Pinned exactly; the image also
+# pip-installs core/ (sagebrain_core). Test-only tools live in requirements-dev.txt.
+fastapi==0.142.2
+starlette==1.7.0
+uvicorn==0.54.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+httpx==0.28.1
+boto3==1.42.80
+requests==2.33.1
+pyyaml==6.0.3

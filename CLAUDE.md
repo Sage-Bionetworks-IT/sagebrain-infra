@@ -341,6 +341,15 @@ API Gateway threshold is (re)enforced.
 - `tests/contract/test_cases_match_spec.py` — every expected body validates against the spec.
 - `tools/parity_probe.py` — replays the vectors against live deployments and diffs them.
 - Lint the spec: `npx @redocly/cli@2 lint api/openapi.yaml --config api/.redocly.yaml`
+- FastAPI service (spec 001 Phase 1b, not deployed yet): `app/sagebrain_api/`, tests in
+  `tests/unit/app/`. It reuses `sagebrain_core` for validation, limits and rate admission.
+  Image: `docker build --platform linux/arm64 -f app/Dockerfile .` (repo-root context, filtered
+  by `app/Dockerfile.dockerignore`); local run: `docker compose -f app/compose.yaml up --build`.
+- Pydantic models in `app/sagebrain_api/models/_generated.py` are generated from the spec, never
+  edited by hand. Drift check: `pre-commit run openapi-models --all-files`. The generator can't
+  share an env with aws-cdk-lib (typeguard pins), so it lives only in that hook's env.
+- Config: top-level merge of `base.yaml` + env file is **shallow** (an env `NEPTUNE:` block replaces
+  base's entirely); only keys in `_DEEP_MERGE_KEYS` in `src/utils.py` (currently `API_APP`) deep-merge.
 
 ## Testing
 

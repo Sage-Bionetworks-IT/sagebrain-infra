@@ -34,5 +34,12 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
 - **CDK Docker bundling mounts the raw source directory**, so `exclude=` doesn't filter what the
   bundling command sees. Clean up inside the command (see `src/core_layer.py`).
 - **`pre-commit run --all-files` only checks tracked files.** `git add` new files first.
+- **`datamodel-code-generator` can't share a venv with aws-cdk-lib**: it needs `typeguard>=4`, and
+  jsii pins `typeguard==2.13.3`. Check drift with `pre-commit run openapi-models --all-files`; to
+  regenerate, run `python tools/gen_models.py` in a venv with the hook's pinned versions.
+- **FastAPI 0.142 wraps included routers in `app.routes`.** Walk `.original_router.routes` to list
+  the real routes (see `tests/unit/app/test_routes_match_spec.py`).
+- **The `swagger-ui-bundle` wheel ships Swagger UI 4.15.5, which can't render OpenAPI 3.1.** The
+  image takes 5.x from the npm `swagger-ui-dist` tarball, pinned by sha256 in `app/Dockerfile`.
 - **Copilot coding agent fails to start on issues** with "insufficient GitHub AI Credits". It's a
   billing problem, not a bug in the issue.

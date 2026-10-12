@@ -9,8 +9,8 @@ exclude =
 	.venv,
 	.pytest_cache
 max-complexity = 12
-#per-file-ignores =
-#	docs/_api/conf.py: E265
-#	integration-tests/steps/*: E501,F811,F403,F405
+# Generated from api/openapi.yaml (tools/gen_models.py); spec descriptions are long lines.
+per-file-ignores =
+	app/sagebrain_api/models/_generated.py: E501
 extend-ignore = E203
 max-line-length = 120

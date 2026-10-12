@@ -9,7 +9,7 @@
 - [x] T006 Characterization tests for the current submit/status Lambdas, `tests/unit/test_job_api_handlers.py`
 - [x] T007 Spec ↔ cases agreement test, `tests/contract/test_cases_match_spec.py`
 - [x] T008 `tools/parity_probe.py` (with `--legacy` mode)
-- [ ] T009 `API_APP` allowlist deep merge in `src/utils.py`, with tests
+- [x] T009 `API_APP` allowlist deep merge in `src/utils.py`, with tests
 - [x] T010 CI `contract` job: redocly lint and `oasdiff breaking` (#73), contract tests (this PR)
 - [x] T011 Run the parity probe against dev API Gateway (`--profile sagebrain-dev`) and record the results in `research.md`
 
@@ -22,15 +22,15 @@
 - [x] T106 Bundle `sagebrain_core` into the Lambda assets (shared layer); CDK test checks that the layer is attached
 
 ## Phase 1b — FastAPI app (local)
-- [ ] T111 `app/` skeleton, pinned requirements (`app/requirements.txt`), pydantic-settings; depends on `sagebrain_core`
-- [ ] T112 Codegen `models/_generated.py` from the spec (`tools/gen_models.py`); CI and pre-commit (`openapi-models` hook) fail on drift
-- [ ] T113 Test: drift between `app.routes` and the spec → implement the routers
-- [ ] T114 Test: every `cases.yaml` vector (`expect`, not `legacy`) → implement the handlers and `jobs.py` (`/ask` enqueues `user_id`, D-8)
-- [ ] T115 Test: authorizer cases ported from `tests/unit/test_authorizer.py` → implement `auth/`
-- [ ] T116 Tests: CORS, body limit (413), timeout (504), 500 handler, access log fields → implement the middleware
-- [ ] T117 Schemathesis conformance
-- [ ] T117a Test: `/api` returns Swagger UI HTML with no external asset hosts; `/api/openapi.json` equals the committed YAML with `servers` set to `settings.public_base_url`; `/api/openapi.yaml` is served; `/docs`, `/redoc` and `/openapi.json` return 404 → implement the docs router (FR-9)
-- [ ] T118 Dockerfile (ARM64, non-root), docker compose, CI image build. Re-verified 2026-10-04 after the Valkey removal: the image builds, compose runs the API only, `/healthz` and `/api` serve, and a `/query` job completes through the dev worker
+- [x] T111 `app/` skeleton, pinned requirements (`app/requirements.txt`), pydantic-settings; depends on `sagebrain_core`
+- [x] T112 Codegen `models/_generated.py` from the spec (`tools/gen_models.py`); CI and pre-commit (`openapi-models` hook) fail on drift
+- [x] T113 Test: drift between `app.routes` and the spec → implement the routers
+- [x] T114 Test: every `cases.yaml` vector (`expect`, not `legacy`) → implement the handlers and `jobs.py` (`/ask` enqueues `user_id`, D-8)
+- [x] T115 Test: authorizer cases ported from `tests/unit/test_authorizer.py` → implement `auth/`
+- [x] T116 Tests: CORS, body limit (413), timeout (504), 500 handler, access log fields → implement the middleware
+- [x] T117 Schemathesis conformance
+- [x] T117a Test: `/api` returns Swagger UI HTML with no external asset hosts; `/api/openapi.json` equals the committed YAML with `servers` set to `settings.public_base_url`; `/api/openapi.yaml` is served; `/docs`, `/redoc` and `/openapi.json` return 404 → implement the docs router (FR-9)
+- [x] T118 Dockerfile (ARM64, non-root), docker compose, CI image build. Re-verified 2026-10-04 after the Valkey removal: the image builds, compose runs the API only, `/healthz` and `/api` serve, and a `/query` job completes through the dev worker
 
 ## Phase 1c — agent calls the service in-process
 - [x] T121 Test: the `query_neptune` tool calls `run_query(source="agent", principal=user_id)`, makes no HTTP calls, and records the same steps → rewrite the tool
@@ -55,10 +55,10 @@ These tasks build on the 1b pydantic-settings (T111) and docker compose (T118). 
 Swagger UI at `/api` renders the committed `api/openapi.yaml`, not FastAPI's generated schema
 (FastAPI's `/docs` is disabled). So whatever it shows, including the docs paths and the
 Authorize dialog, comes from the spec file.
-- [ ] T132 Remove machine-key auth (`x-api-key`). It isn't configured in any deployed authorizer, and after 1c the agent calls `run_query` in-process instead of needing a machine credential (D-4, R-11).
+- [x] T132 Remove machine-key auth (`x-api-key`). It isn't configured in any deployed authorizer, and after 1c the agent calls `run_query` in-process instead of needing a machine credential (D-4, R-11).
   - [x] Contract (#73): no `apiKeyAuth`; the machine limits are `legacy_agent_rate_rps` / `legacy_agent_burst` (D-12).
   - [x] Core (this PR): `MACHINE_PRINCIPAL` removed; `limits.LEGACY_AGENT_*`; `"machine"` is an ordinary user principal (`test_machine_is_an_ordinary_user_principal`).
-  - [ ] App (#72): drop `MACHINE_API_KEY` from `settings.py` and `app/compose.yaml`, the x-api-key path in `auth/`, and the x-api-key cases. Tests: x-api-key alone returns 401, and the Authorize dialog lists only `bearerAuth`.
+  - [x] App (this PR): dropped `MACHINE_API_KEY` from `settings.py` and `app/compose.yaml`, the x-api-key path in `auth/`, and the x-api-key cases. Tests: x-api-key alone returns 401, and the Authorize dialog lists only `bearerAuth`.
   - The legacy Lambda authorizer keeps its unused key path until 5b.
 - [ ] T133 Hide the docs routes from the docs. Mark `/api`, `/api/openapi.json` and `/api/openapi.yaml` with `x-internal: true` in the spec, and remove the `docs` tag. The docs router strips `x-internal` paths (and any tag left unused) from the published copy. The committed YAML keeps them, so the T113 route-drift test still passes. Update the T117a assertion to "equals the committed YAML except `servers` and `x-internal` paths". This only hides them from the *listing*: `/api` (Swagger UI), `/api/openapi.json` and `/api/openapi.yaml` stay live and public. Tests: the published JSON has no `/api*` paths and `/healthz` stays; `GET /api` still returns 200 with the Swagger UI, and the two spec URLs still return 200
 
@@ -73,9 +73,9 @@ for SPARQL results. The limiter lives in this phase, not a separate spec.
 - [x] T143 Test: on DynamoDB errors or throttling, fall back to a per-process `LocalLimiter` at rate ÷ instances and log `ratelimit_degraded` (parity row 3) → implement it
 - [x] T144 Bucket items carry `expires_at` so TTL removes idle per-principal buckets. Reads never trust TTL, because deletion is lazy
 - [x] T145 Settings: `RATE_LIMIT_TABLE_NAME` (unset means `LocalLimiter`, for tests and the offline profile). `default_limiter()` picks the backend
-- [ ] T146 Compose and tests: remove the `valkey` service and `VALKEY_URL` from `app/compose.yaml`; `tests/unit/app/test_dockerfile.py::test_compose_runs_api_with_valkey` → `test_compose_runs_api_only`
+- [x] T146 Compose and tests: remove the `valkey` service and `VALKEY_URL` from `app/compose.yaml`; `tests/unit/app/test_dockerfile.py::test_compose_runs_api_with_valkey` → `test_compose_runs_api_only`
 - [x] T147 CDK: on-demand `rate-limits` table (PK `key`, TTL `expires_at`). Grant `UpdateItem` to the app task role (Phase 2) and the agent worker role (1c). Point-in-time recovery off, because the data is ephemeral. Stack tests. Done: `src/rate_limit_stack.py` (`app-{env}-rate-limits`) and the agent worker grant/env. **The app task role grant is a Phase 2 TODO** (the `DynamoLimiter` docstring)
-- [ ] T148 Live check: `tools/throttle_test.py` against the local app, pointed at the dev rate-limit table. The 101st request in a burst gets 429, and per-user 5/20 holds. **Ran 2026-10-04** against a two-instance ad-hoc compose (T128's `local-aws` profile doesn't exist yet), `RATE_LIMIT_TABLE_NAME=app-dev-rate-limits`. The load generator ran inside the compose network: from the host, Docker Desktop's port forwarding capped arrivals at about 41 rps. The tool gained `--token`/`--token-from-env`, `--mode status` (404 = admitted, no jobs), repeated `--url`, `--burst` and `--rps/--duration`. Results (expected in brackets):
+- [x] T148 Live check: `tools/throttle_test.py` against the local app, pointed at the dev rate-limit table. The 101st request in a burst gets 429, and per-user 5/20 holds. **Ran 2026-10-04** against a two-instance ad-hoc compose (T128's `local-aws` profile doesn't exist yet), `RATE_LIMIT_TABLE_NAME=app-dev-rate-limits`. The load generator ran inside the compose network: from the host, Docker Desktop's port forwarding capped arrivals at about 41 rps. The tool gained `--token`/`--token-from-env`, `--mode status` (404 = admitted, no jobs), repeated `--url`, `--burst` and `--rps/--duration`. Results (expected in brackets):
   - per-user, 1 instance, 100 req at 10 rps: 65 admitted [20 + 5 × 9 = 65]
   - per-user, 2 instances, burst of 40: 22 admitted [20 + refill; two buckets would give ~40]
   - global, 2 instances, burst of 300 in 2.15 s: 140 admitted [100 + refill; two buckets ≥ 200]

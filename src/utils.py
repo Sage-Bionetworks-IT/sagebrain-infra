@@ -66,4 +66,25 @@ def load_context_config(env_name: str, config_dir: str = "config") -> Dict[str, 
     env_config = read_file(env_files[0])
     merged_config = {**base_config, **env_config}
 
+    # Top-level merge is shallow on purpose: existing env files (e.g. dev.yaml NEPTUNE)
+    # rely on replacing the whole base section. Only keys listed here are deep-merged.
+    for key in _DEEP_MERGE_KEYS:
+        if isinstance(base_config.get(key), dict) and isinstance(
+            env_config.get(key), dict
+        ):
+            merged_config[key] = _deep_merge(base_config[key], env_config[key])
+
     return merged_config
+
+
+_DEEP_MERGE_KEYS = {"API_APP"}
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
