@@ -4,36 +4,44 @@ info:
   version: 1.0.0
   summary: Async SPARQL query and natural-language agent API over the Sage Brain knowledge graph.
   description: |
-    THIS FILE IS THE CONTRACT. Change it first, then the code
-    (see specs/001-unified-api/spec.md and docs/memory/constitution.md).
+    Run read-only SPARQL queries, or ask natural-language questions, against the Sage Brain
+    knowledge graph.
 
-    Both APIs are asynchronous: submit a job (202 + job_id), then poll its status no more
-    often than the `Retry-After` header on `pending` / `running` responses says.
-    All job endpoints require a Synapse bearer token belonging to a member of the
-    configured Synapse team.
+    **Asynchronous jobs.** `POST /query` and `POST /ask` accept a job and return
+    `202 {"job_id", "status": "pending"}`. Poll `GET /query/{job_id}` or `GET /ask/{job_id}`
+    until `status` is `complete` or `error`. While a job is `pending` or `running`, the
+    response's `Retry-After` header gives the minimum number of seconds before the next poll.
+    Jobs expire 24 hours after they're submitted.
 
-    Query limits (`x-sagebrain-limits`) are enforced server-side in the shared query service,
-    not only in API Gateway, because agent-originated SPARQL never passes through HTTP.
-    Request rate is the exception: API Gateway throttles HTTP callers per method, and the
-    agent is bounded by its worker's reserved concurrency (`agent_worker_concurrency`). The
-    query worker's concurrency cap is per environment, so it lives in config
-    (`NEPTUNE_API.query_worker_concurrency`), not here.
+    **Authentication.** Every `/query` and `/ask` request needs `Authorization: Bearer <token>`,
+    where the token is a Synapse personal access token or OAuth access token whose user is a
+    member of the deployment's Synapse team. The `/api` documentation routes are public.
 
-    Unknown paths and methods return 404 `{"message": "Not Found"}`.
+    **Agent queries.** The agent answers a question by running its own SPARQL queries. They
+    are subject to the same query limits and audit logging as `POST /query`, attributed to
+    the caller who asked. `GET /ask/{job_id}` lists them in `steps`.
 
-    Error body conventions:
-      - `{"error": "..."}`   — application errors (validation, not found)
-      - `{"message": "..."}` — gateway errors (auth, throttling, size, timeout),
-        matching the API Gateway gateway-response bodies.
+    **Limits.** Requests are throttled per operation and return 429 with `Retry-After` when
+    over the limit. Every limit is listed in `info.x-sagebrain-limits`.
+
+    **Errors.**
+      - `{"error": "..."}`: application errors (validation, job not found).
+      - `{"message": "..."}`: errors from the API's front door (auth, throttling, request
+        size, timeouts, unknown paths). Unknown paths and methods return
+        404 `{"message": "Not Found"}`.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
+  # Spec 001 (specs/001-unified-api) maps each limit to where it is enforced. Query limits
+  # are enforced in the shared server-side query service, so they also cover the agent's
+  # queries. The query worker's concurrency cap differs per env, so it lives in config
+  # (NEPTUNE_API.query_worker_concurrency), not here.
   x-sagebrain-limits:
     query_max_chars: 8000
     neptune_query_timeout_seconds: 60
     question_max_chars: 2000
     source_max_chars: 64
-    # API Gateway stage throttle, applied per method.
+    # Throttle applied to each operation.
     method_rate_rps: 50
     method_burst: 100
     # Override on GET /query/{job_id} and GET /ask/{job_id}.
@@ -72,7 +80,7 @@ paths:
       operationId: submitQuery
       summary: Submit a SPARQL query job
       description: |
-        Validates the query, records a `pending` job and enqueues it for the query worker.
+        Validates the query and creates a `pending` job that runs it.
         The query is trimmed before the length check.
       parameters:
         - $ref: "#/components/parameters/XSource"
@@ -178,12 +186,10 @@ paths:
       operationId: submitQuestion
       summary: Submit a natural-language question to the agent
       description: |
-        Validates the question, records a `pending` job (including the question) and
-        enqueues it for the agent worker together with the authenticated caller's user_id.
-        No credential is forwarded: the agent runs its SPARQL through the shared server-side
-        query service (not over HTTP), which applies the same query limits and
-        `sparql_query` audit logging as `POST /query`, attributed to the original caller
-        with `source: agent`. The question is trimmed before the length check.
+        Validates the question and creates a `pending` job for the agent to answer.
+        The agent's SPARQL queries get the same query limits and audit logging as
+        `POST /query`, attributed to the caller with `source: agent`. The question is
+        trimmed before the length check.
       requestBody:
         required: true
         content:
@@ -284,10 +290,9 @@ paths:
       operationId: apiDocs
       summary: Interactive API documentation (Swagger UI)
       description: |
-        Public (no auth), with the same per-method throttle as every other route.
-        Renders `/api/openapi.json`. Swagger UI assets are bundled in the docs Lambda, not
-        loaded from a third-party CDN. "Try it out" calls this same host; click **Authorize** and paste a
-        Synapse PAT.
+        Public (no auth), throttled like every other operation. Renders `/api/openapi.json`.
+        Swagger UI assets are served by the API, not loaded from a third-party CDN.
+        "Try it out" calls this same host; click **Authorize** and paste a Synapse PAT.
       security: []
       responses:
         "200":
@@ -525,7 +530,7 @@ components:
             $ref: "#/components/schemas/GatewayError"
           example: { message: "Request Too Long" }
     TooManyRequests:
-      description: The method's API Gateway throttle was exceeded.
+      description: This operation's rate limit was exceeded.
       headers:
         Retry-After:
           description: Seconds to wait before retrying (`throttled_retry_after_seconds`).
