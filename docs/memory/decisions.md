@@ -45,6 +45,10 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   queries skip API Gateway but are bounded by the worker's reserved concurrency of 10 and the 60 s
   timeout. This amended constitution article V (rate is no longer one of the service's limits) and
   shelves #71's DynamoDB rate limiter until one user actually starves others (spec 001 R-5).
+- **Design target: 100 concurrent users (2026-10-12, #74).** Prod's team gate has 9 members.
+  Status polling dominates traffic and is billed per request; the break-even with a fixed-cost
+  front door is ~1M requests/day, which is the alarm that reopens the hosting decision. The query
+  worker is capped at 20 concurrent (it was uncapped and could drain the account's Lambda pool).
 - **Constitution I and IV amended for Lambda (2026-10-12, #74).** Article I no longer requires
   generated Pydantic models (pydantic's compiled deps complicate the x86 Lambdas); routes and
   responses are tested against the contract instead. Article IV no longer says "ECS secrets".

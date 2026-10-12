@@ -6,14 +6,14 @@ Implementation detail lives in the code PRs.
 ## Architecture
 ```
 Client ─HTTPS→ API Gateway REST API, stage prod (edge stack, one hostname)
-               throttle 50 rps / 100 burst per method · gateway responses (401/404/503 + CORS)
+               throttle per method: POSTs 50 / 100, status 100 / 200 · gateway responses (401/404/503 + CORS)
                ├ POST /query        → authorizer → query submit Lambda  → shared service: validate → SQS
                ├ GET  /query/{id}   → authorizer → query status Lambda  → query job table
                ├ POST /ask          → authorizer → ask submit Lambda    → SQS {job_id, question, user_id, source_ip}
                ├ GET  /ask/{id}     → authorizer → ask status Lambda    → ask job table
                └ GET  /api, /api/openapi.{json,yaml} → docs Lambda (no authorizer)
 
-SQS → query worker Lambda → shared query service → Neptune reader
+SQS → query worker Lambda (concurrency 20) → shared query service → Neptune reader
 SQS → agent worker Lambda (concurrency 10) → Strands agent → query_neptune tool
                                            → shared query service → Neptune reader   (no HTTP loopback)
 
@@ -40,24 +40,57 @@ query validation, the 60 s SigV4 Neptune call, the sparql_query audit log
   - the docs Lambda for `/api` (R-15);
   - gateway responses: `ACCESS_DENIED` and `UNAUTHORIZED` → 401, `MISSING_AUTHENTICATION_TOKEN`
     → 404, `AUTHORIZER_FAILURE` → 503 + `Retry-After`, `DEFAULT_4XX` / `DEFAULT_5XX` with CORS;
-  - the stage throttle (50 / 100, applied per method), method-level metrics, and an access-log
-    group with 1-month retention.
+  - the stage throttle (50 / 100, applied per method) with a 100 / 200 override on the two
+    status methods (D-17), method-level metrics, and an access-log group with 1-month retention.
 
   It sits behind `API_EDGE.enabled`, so it runs alongside the two old APIs until cutover.
-- **Workers.** Unchanged, except that the agent tool calls the shared service (D-8/D-9), and
-  the agent worker accepts both message shapes until the old `/ask` API is deleted.
+- **Workers.** Unchanged, except that the query worker gets reserved concurrency of 20 and the
+  350 KB result check (D-14, D-16), the agent tool calls the shared service (D-8/D-9), and the
+  agent worker accepts both message shapes until the old `/ask` API is deleted.
 
 ## Phases (each independently mergeable)
 | Phase | Scope | Infra change |
 |---|---|---|
 | 0 | This spec and plan; then the contract with CI lint and breaking-change checks; characterization tests of today's submit/status Lambdas; a parity probe that runs the same cases against old and new base URLs | none |
-| 1a | Shared query service: limits, validation, Neptune call, audit log. The query worker moves onto it with behaviour unchanged | Lambda code + layer |
+| 1a | Shared query service: limits, validation, Neptune call, audit log. The query worker moves onto it, with reserved concurrency 20 (D-14) and the result-size check (D-16) | Lambda code + layer + concurrency |
 | 1b | The agent tool calls the shared service in-process (D-8/D-9); the agent worker gets read-only Neptune IAM and 8182 ingress, and accepts both message shapes | agent Lambda + IAM/SG |
-| 2 | Edge stack behind `API_EDGE.enabled`, deployed in parallel with the old APIs in dev: authorizer, submit/status Lambdas (with D-1, D-2, D-5, D-11), docs Lambda, gateway responses, route-vs-contract test | additive |
-| 3 | Alarms and a dashboard for the edge stack (5XX, latency, 429s per method), at least matching what the old APIs have (constitution VII) | additive |
+| 2 | Edge stack behind `API_EDGE.enabled`, deployed in parallel with the old APIs in dev: authorizer, submit/status Lambdas (with D-1, D-2, D-5, D-11, D-15), docs Lambda, gateway responses, status throttle override (D-17), route-vs-contract test, then the load probe | additive |
+| 3 | Alarms and a dashboard for the edge stack (5XX, latency, 429s per method), at least matching what the old APIs have (constitution VII), plus the two scaling signals below: total requests above 1M/day, and the oldest message in the query or agent queue above 5 minutes | additive |
 | 4 | Cutover dev → stage → prod: clients move to the new base URL | config |
 | 5 | Release the cross-stack exports, then delete the two old RestApis, their authorizers and the old submit/status Lambdas; retire the legacy agent message shape | removal |
 | 6 | CLAUDE.md, README and docs | none |
+
+## Scaling path
+This lists what breaks first beyond the design target, and what it costs. It flags; it does
+not choose fixes. Each fix gets decided, with real numbers, when its signal fires.
+
+**1. Status polling is most of the traffic, and it is billed per request.** A job is one POST
+plus a GET every 2 s until it finishes: about 10 GETs for a 20 s query and 30 for a 60 s agent
+question. Each GET runs API Gateway, the authorizer Lambda, the status Lambda and a DynamoDB
+read, about **$4.10 per million polls** (API Gateway about $3.50, Lambda about $0.60).
+
+| Usage | Polls / month | Polling cost / month |
+|---|---|---|
+| 100 users polling around the clock (worst case) | ~130M | ~$540 |
+| 100 users, 8 h on weekdays, a job in flight half the time | ~14M | ~$60 |
+| Today (9 prod members) | < 1M | < $5 |
+
+For comparison, a self-hosted front door (2 Fargate tasks, ALB, WAF) costs roughly
+$100–150/month whatever the traffic. The break-even is about 25M polls/month, a sustained
+~10 polls/s or **~1M requests/day**. That is the threshold of the request-volume alarm, and a
+week above it reopens [R-1](research.md).
+
+Signal: the request-volume alarm, or 429s on the status methods.
+
+**2. Other limits, flagged in the order they are likely to bite:**
+- **Neptune throughput.** 20 query workers at ~20 s a query finish about 1 query/s; a backlog
+  grows as queue age. Signal: the queue-age alarm on the query queue.
+- **Agent throughput.** 10 agent workers at 30–120 s a question finish 5–20 answers a minute.
+  Signal: the queue-age alarm on the agent queue, or Bedrock throttling errors.
+- **Authorizer load.** With API Gateway's authorizer cache off, every poll invokes the
+  authorizer, and cold instances call Synapse. Signal: authorizer duration or errors.
+- **Fairness.** All callers share each method's budget, so one heavy user can take it.
+  Signal: 429s concentrated on one principal in the access logs.
 
 ## Open decisions
 - **Custom domain (deferred).** Not needed to ship: API Gateway's `execute-api` URL is HTTPS.

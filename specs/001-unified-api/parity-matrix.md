@@ -15,7 +15,10 @@ reads the value from `x-sagebrain-limits`.
 
 | # | Old APIs today | Value | Scope | New enforcement |
 |---|---|---|---|---|
-| 1 | Stage throttle, per API | 50 rps steady, 100 burst | http | Stage throttle on the one API. It applies per method, so each of `POST /query`, `POST /ask` and the status/docs routes keeps 50 / 100. CDK assertion + burst probe |
+| 1 | Stage throttle, per API | 50 rps steady, 100 burst | http | Stage throttle on the one API. It applies per method, so `POST /query`, `POST /ask` and the docs routes each keep 50 / 100. CDK assertion + burst probe |
+| 1s | (new, D-17) status throttle | 100 rps steady, 200 burst | http | Method override on `GET /query/{job_id}` and `GET /ask/{job_id}`. CDK assertion + load probe |
+| 1p | (new, D-15) minimum poll interval | 2 s | http | `Retry-After` on `pending` / `running` status responses. Unit test |
+| 1q | (new, D-14) query worker concurrency | 20 | all | Query worker reserved concurrency. CDK assertion |
 | 1a | (no equivalent: agent queries went through `POST /query`) | 10 concurrent, 60 s each | agent | Agent worker reserved concurrency (unchanged) + the shared service's Neptune timeout (row 4q) |
 | 4 | Lambda integration timeout | 10 s | http | Integration timeout on every method; AWS client timeouts in the handlers below it. CDK assertion |
 | 4q | Neptune query timeout (query worker 60 s; agent poll 70 s) | 60 s | all | The shared service's Neptune call, for every caller |
@@ -36,6 +39,7 @@ reads the value from `x-sagebrain-limits`.
 | 17 | Question length | 2000 after trim | http | `/ask` submit validation |
 | 17s | (new, D-11) `X-Source` length | 64 | http | `POST /query` submit validation; the agent passes `source="agent"` in-process |
 | 18 | Job item and SQS message shapes; job TTL | TTL 86400 s | — | Unchanged shapes (spec, Constraints) |
+| 18r | (new, D-16) stored result size; today only DynamoDB's 400 KB item limit | 350000 bytes | all | Query worker check before the write; marks the job `error`. Unit test |
 | 19 | Workers: DLQ max receive 2, visibility 90 / 360 s, agent reserved concurrency 10, timeouts 75 / 300 s | — | — | Unchanged stacks |
 
 Rows 2 and 3 of the earlier draft (per-principal buckets, rate-limiter outage) and 1e and 20

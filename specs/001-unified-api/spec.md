@@ -30,6 +30,13 @@ caller's bearer token, which `/ask` puts in the SQS message (F8), then polls eve
 Not a goal: moving off API Gateway. FastAPI on Fargate was considered and deferred
 ([R-1](research.md)).
 
+## Design target
+**100 concurrent users**, each with one job in flight, polling status every 2 s (the
+`Retry-After` hint, D-15). That is about 50 status requests per second at the worst case.
+Today the prod team gate has 9 members and dev has 101. Beyond this target, see the scaling
+path in [plan.md](plan.md); thousands of users is a future spec, after spec 002 opens access
+beyond the team.
+
 ## User stories
 - As a **researcher with a Synapse PAT**, I submit SPARQL or a question and poll for the
   result, exactly as today, at one base URL for both.
@@ -54,7 +61,8 @@ Not a goal: moving off API Gateway. FastAPI on Fargate was considered and deferr
 - **FR-2 Query status.** 404 `{"error":"Job not found"}` for unknown ids. 200 returns
   `{job_id, status}`. A `complete` job adds `results` (default `""`) and `content_type`
   (default `application/sparql-results+json`). An `error` job adds `error`
-  (default `"Unknown error"`).
+  (default `"Unknown error"`). A `pending` or `running` job's response carries
+  `Retry-After: 2`, the minimum poll interval (D-15).
 - **FR-3 Submit question.** Same as FR-1, but the field is `question`, the maximum is 2000, and
   the stored item also contains `question`. The SQS message is
   `{job_id, question, user_id, source_ip}`, where `user_id` is the authorizer's
@@ -92,15 +100,18 @@ Not a goal: moving off API Gateway. FastAPI on Fargate was considered and deferr
     event. The event keeps today's fields (`job_id, query, query_length, source, source_ip,
     user_agent, status_code, duration_ms, timestamp`) and adds `principal`.
 
+  A result larger than 350 KB (350000 bytes, `max_result_bytes`) is not stored: the job is
+  marked `error` with `"Result exceeds 350 KB; add LIMIT or narrow the query"` (D-16).
+
   Callers:
   - The `POST /query` submit Lambda validates, then enqueues the job.
-  - The query worker runs the already-admitted job.
+  - The query worker runs the already-admitted job, at most 20 at once (D-14).
   - The agent tool runs its queries synchronously with `source="agent"` and the caller's
     `user_id`, after its existing SELECT-only check.
 
-  Rate limits are not in the service (R-5): HTTP callers are throttled by API Gateway, and
-  agent queries are bounded by the agent worker's reserved concurrency of 10 and the 60 s
-  timeout. Limit values are defined once and a test asserts they equal the contract's
+  Rate limits are not in the service (R-5): HTTP callers are throttled by API Gateway, query
+  jobs are bounded by the query worker's reserved concurrency of 20 (D-14), and agent queries
+  by the agent worker's reserved concurrency of 10. Every query also has the 60 s timeout. Limit values are defined once and a test asserts they equal the contract's
   `x-sagebrain-limits`.
 - **FR-8 API docs at `/api`.** Public, no authorizer, served by a small docs Lambda:
   - `GET /api` serves Swagger UI. Its assets are bundled in the Lambda, not loaded from a CDN.
@@ -144,6 +155,10 @@ retired with the move away from FastAPI ([R-5](research.md)).
 | D-10 | Bad or non-member bearer returns 401 `{"message":"User is not authorized to access this resource with an explicit deny in an identity-based policy"}` (observed in dev) | Every auth failure returns 401 `{"message":"Unauthorized"}` | One body for clients; no IAM wording leaked |
 | D-11 | `X-Source` of any length is accepted and written verbatim into the SQS message and the `sparql_query` audit log | Over 64 characters returns 400 `'X-Source' exceeds maximum length of 64 characters` | A threshold must be enforced, not only documented (constitution III); bounds what callers can write into audit logs |
 | D-13 | A transient authorizer error (Synapse down) returns 500 (`AUTHORIZER_FAILURE`) | Gateway response maps `AUTHORIZER_FAILURE` to 503 with `Retry-After` | A Synapse outage shouldn't look like a service bug |
+| D-14 | The query worker has no concurrency cap | Reserved concurrency of 20; extra jobs wait in SQS | Bounds load on Neptune, and stops the worker from draining the account's Lambda concurrency, which the authorizer and API Lambdas share. Names the query path's rate bound (constitution V) |
+| D-15 | Status responses don't say how often to poll | `pending` / `running` responses carry `Retry-After: 2` | Polling is most of the traffic; this sizes it at the design target |
+| D-16 | A result over DynamoDB's 400 KB item limit fails the worker's write, though Neptune succeeded (`src/lambda/query.py`) | Results over 350 KB mark the job `error` with an actionable message | A limit that exists only as a DynamoDB error breaks constitution III. Offloading big results to S3 is a separate spec |
+| D-17 | Status methods share the 50 / 100 stage throttle | `GET /query/{job_id}` and `GET /ask/{job_id}` get 100 rps / 200 burst; the POSTs stay 50 / 100 | At the design target, worst-case polling is 50 rps, exactly the old limit |
 
 ## Known issues
 - **F8 (resolved by D-8):** today, the agent re-presents the caller's `Authorization` header to
@@ -166,6 +181,10 @@ retired with the move away from FastAPI ([R-5](research.md)).
 - A parity probe run against the old APIs and the new one shows 0 failures and 0 unexplained
   differences in dev, stage and prod before cutover.
 - A burst of 300 requests to `POST /query` gets about 100 accepted and the rest 429.
+- A load probe in dev at the design target passes: 100 simulated users each submit a cheap
+  `LIMIT 1` query and poll every 2 s for 10 minutes. The status methods return 0 429s, and the
+  query queue's oldest message stays under 5 minutes. The cheap query keeps the probe a test of
+  the API, not of Neptune.
 - `/api` loads in a browser, and "Try it out" with a PAT returns 202 for `POST /query`.
 - In each environment, the old APIs' `Count` stays at about 0 for 7 days before they are
   deleted.

@@ -21,6 +21,11 @@ resolves it.
 - Agent hardening: sanitize `/ask` errors (#22, PR #53); avoid logging full questions (#21);
   CORS / abuse protections (#23); `get_schema` can be unbounded (#30).
 - Normalize header keys in the query Lambda's logs (#20).
+- **Status polling cost** (spec 001 plan, scaling path): each poll is billed per request; at a
+  sustained ~1M requests/day a fixed-cost front door is cheaper. The request-volume alarm
+  reopens spec 001 R-1. Related levers to evaluate then: API Gateway's authorizer cache (R-18).
+- **Results over 350 KB fail** (spec 001 D-16) because results live in a DynamoDB item.
+  Offloading them to S3 needs its own spec.
 - **Custom domain for the unified API** (spec 001 R-16): needs a certificate and DNS from IT, and
   one more client URL change. Deferred until someone needs a stable vanity URL.
 

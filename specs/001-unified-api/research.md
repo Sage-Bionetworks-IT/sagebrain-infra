@@ -21,7 +21,10 @@
     patching, health checks, and CORS, body-limit and timeout code.
 
   **Reopen it if** we need response streaming (for example streamed agent answers),
-  long-lived connections, synchronous calls over 29 s, or bodies over 10 MB.
+  long-lived connections, synchronous calls over 29 s, or bodies over 10 MB, **or** the
+  request-volume alarm stays above 1M requests/day for a week. That is the cost break-even:
+  API Gateway's per-request cost (about $4.10 per million polls, Lambda included) then
+  overtakes a fixed ~$100–150/month front door (see the plan's scaling path).
 
   Also rejected:
   - FastAPI inside Lambda (Mangum): not worth a framework for four routes, and pydantic's
@@ -49,9 +52,10 @@
     poll granularity.
 - **R-5 Rate limits: API Gateway throttle for HTTP, worker concurrency for the agent**
   (decided 2026-10-12). Stage throttling applies per method, so merging both APIs into one
-  stage keeps 50 / 100 for each method with no extra config. Agent queries skip API Gateway,
-  but at most 10 agent workers run at once and each query is capped at 60 s, so they are
-  bounded. A test covers each bound. We deferred per-principal buckets and the shared
+  stage keeps 50 / 100 for each method with no extra config. The two status methods get
+  100 / 200, because polling at the 100-user design target is 50 rps at worst (D-17). Agent
+  queries skip API Gateway, but at most 10 agent workers run at once, and the query worker is
+  capped at 20 (D-14); every query is capped at 60 s. A test covers each bound. We deferred per-principal buckets and the shared
   DynamoDB rate-limit store from the earlier draft (D-6, D-12): they're worth building when
   one user actually starves others, not before.
 - **R-6 One edge stack.** The `RestApi`, authorizer, submit/status Lambdas and docs Lambda
@@ -84,6 +88,18 @@
   time, needs no authorizer, and sets `servers` to the stage URL from its environment.
 - **R-16 No custom domain yet** (decided 2026-10-12). API Gateway's `execute-api` URL is HTTPS
   already. A domain needs a certificate and a DNS record from IT, and is a follow-up.
+
+- **R-17 Design target: 100 concurrent users** (decided 2026-10-12), each polling every 2 s.
+  Prod's team gate has 9 members, so building for thousands now would be premature; thousands
+  is a future spec after spec 002 opens access. The plan's scaling path records what breaks
+  beyond the target and what it costs, without picking fixes.
+- **R-18 API Gateway's authorizer cache stays off** (decided 2026-10-12), for parity
+  (constitution II). Turning it on would make every poll after the first skip the authorizer,
+  but the cached policy must then cover every route, including spec 002's future ACLs. It is
+  the first thing to revisit if authorizer load shows up.
+- **R-19 Big results fail explicitly** (D-16, decided 2026-10-12). Results live in a DynamoDB
+  item (400 KB max), so the worker rejects anything over 350 KB with an actionable error.
+  Offloading to S3 is its own spec.
 
 (R-12, fixed Fargate task count, was retired with R-1.)
 
