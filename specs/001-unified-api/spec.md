@@ -55,8 +55,8 @@ beyond the team.
 - **FR-1 Submit query.** JSON body `{"query": string}`. The submit Lambda validates it with
   the shared query service (FR-7): trimmed, non-empty, at most 8000 characters after trimming.
   On success it stores the job item `{job_id, status: pending, created_at, ttl: created_at +
-  86400}`, sends the SQS message `{job_id, query, source, source_ip, user_agent}`, and returns
-  `202 {job_id, status}`. `source` comes from `X-Source`, defaults to `"direct"`, and may be at
+  86400}`, sends the SQS message `{job_id, query, source, source_ip, user_agent, user_id}`
+  (`user_id` is the authorizer's `context.user_id`, D-19), and returns `202 {job_id, status}`. `source` comes from `X-Source`, defaults to `"direct"`, and may be at
   most 64 characters (D-11). It logs `query_submitted`.
 - **FR-2 Query status.** 404 `{"error":"Job not found"}` for unknown ids. 200 returns
   `{job_id, status}`. A `complete` job adds `results` (default `""`) and `content_type`
@@ -98,7 +98,9 @@ beyond the team.
   - **Run** a query for a principal and source: validate it, run it on the Neptune **reader**
     endpoint with SigV4, read-only IAM and a 60 s timeout, and emit the `sparql_query` audit
     event. The event keeps today's fields (`job_id, query, query_length, source, source_ip,
-    user_agent, status_code, duration_ms, timestamp`) and adds `principal`.
+    user_agent, status_code, duration_ms, timestamp`) and adds `principal`: the caller's
+    `user_id` for direct and agent queries, or `legacy-apigw` for a query message from the old
+    API, which has no `user_id` (D-19).
 
   A result larger than 350 KB (350000 bytes, `max_result_bytes`) is not stored: the job is
   marked `error` with `"Result exceeds 350 KB; add LIMIT or narrow the query"` (D-16).
@@ -130,7 +132,9 @@ beyond the team.
   `/query` and `/ask` are separable in CloudWatch.
 
 ## Constraints
-- The job table items and the query SQS message keep today's shapes; the workers depend on them.
+- The job table items keep today's shapes, and the query SQS message keeps today's fields with
+  `user_id` added (D-19); the workers depend on them. Until the old `/query` API is deleted, the
+  query worker accepts messages with and without `user_id`.
 - Until the old `/ask` API is deleted, the agent worker accepts both the legacy message
   `{job_id, question, authorization}` and the new `{job_id, question, user_id, source_ip}`.
   A legacy job runs as principal `legacy-apigw`; the `authorization` value is never used.
@@ -161,6 +165,7 @@ retired with the move away from FastAPI ([R-5](research.md)).
 | D-16 | A result over DynamoDB's 400 KB item limit fails the worker's write, though Neptune succeeded (`src/lambda/query.py`) | Results over 350 KB mark the job `error` with an actionable message | A limit that exists only as a DynamoDB error breaks constitution III. Offloading big results to S3 is a separate spec |
 | D-17 | Status methods share the 50 / 100 stage throttle | `GET /query/{job_id}` and `GET /ask/{job_id}` get 100 rps / 200 burst; the POSTs stay 50 / 100 | At the design target, worst-case polling is 50 rps, exactly the old limit |
 | D-18 | A throttled request gets API Gateway's default 429, with no CORS header and no retry hint | The `THROTTLED` gateway response adds `Retry-After: 1` and `Access-Control-Allow-Origin: *` | Browser clients can read the 429, and polling clients back off instead of retrying at once |
+| D-19 | The query SQS message has no caller identity, so the query worker can't say who ran a query | The message gains `user_id` from the authorizer; the worker logs it as `principal`, or `legacy-apigw` when it's missing | Every `sparql_query` event names its caller, and spec 002's ACLs need that identity at the query service |
 
 ## Known issues
 - **F8 (resolved by D-8):** today, the agent re-presents the caller's `Authorization` header to

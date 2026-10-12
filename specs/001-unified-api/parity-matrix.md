@@ -39,7 +39,7 @@ reads the value from `x-sagebrain-limits`.
 | 16r | Read-only queries | Neptune IAM read actions only; the agent also requires SELECT-only | all | Reader endpoint and read-only IAM for every caller; the agent keeps its SELECT-only check |
 | 17 | Question length | 2000 after trim | http | `/ask` submit validation |
 | 17s | (new, D-11) `X-Source` length | 64 | http | `POST /query` submit validation; the agent passes `source="agent"` in-process |
-| 18 | Job item and SQS message shapes; job TTL | TTL 86400 s | — | Unchanged shapes (spec, Constraints) |
+| 18 | Job item and SQS message shapes; job TTL | TTL 86400 s | — | Unchanged, except the query message adds `user_id` (D-19; spec, Constraints) |
 | 18r | (new, D-16) stored result size; today only DynamoDB's 400 KB item limit | 350000 bytes | all | Query worker check before the write; marks the job `error`. Unit test |
 | 19 | Workers: DLQ max receive 2, visibility 90 / 360 s, agent reserved concurrency 10, timeouts 75 / 300 s | — | — | Unchanged stacks |
 
