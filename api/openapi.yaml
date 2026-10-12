@@ -5,20 +5,26 @@ info:
   summary: Async SPARQL query and natural-language agent API over the Sage Brain knowledge graph.
   description: |
     THIS FILE IS THE CONTRACT. Change it first, then the code
-    (see specs/001-api-gateway-to-fastapi/spec.md and docs/memory/constitution.md).
+    (see specs/001-unified-api/spec.md and docs/memory/constitution.md).
 
-    Both APIs are asynchronous: submit a job (202 + job_id), then poll its status.
+    Both APIs are asynchronous: submit a job (202 + job_id), then poll its status no more
+    often than the `Retry-After` header on `pending` / `running` responses says.
     All job endpoints require a Synapse bearer token belonging to a member of the
     configured Synapse team.
 
-    Limits (`x-sagebrain-limits`) are enforced server-side in the shared query service, not
-    only at the HTTP edge, because agent-originated SPARQL never passes through HTTP. The
-    edge (WAF/ALB) is an additional layer, never the only one.
+    Query limits (`x-sagebrain-limits`) are enforced server-side in the shared query service,
+    not only in API Gateway, because agent-originated SPARQL never passes through HTTP.
+    Request rate is the exception: API Gateway throttles HTTP callers per method, and the
+    agent is bounded by its worker's reserved concurrency (`agent_worker_concurrency`). The
+    query worker's concurrency cap is per environment, so it lives in config
+    (`NEPTUNE_API.query_worker_concurrency`), not here.
+
+    Unknown paths and methods return 404 `{"message": "Not Found"}`.
 
     Error body conventions:
       - `{"error": "..."}`   — application errors (validation, not found)
-      - `{"message": "..."}` — edge/gateway errors (auth, throttling, size, timeout),
-        matching the API Gateway default gateway-response bodies.
+      - `{"message": "..."}` — gateway errors (auth, throttling, size, timeout),
+        matching the API Gateway gateway-response bodies.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -27,14 +33,16 @@ info:
     neptune_query_timeout_seconds: 60
     question_max_chars: 2000
     source_max_chars: 64
-    global_rate_per_api_rps: 50
-    global_burst_per_api: 100
-    user_rate_rps: 5
-    user_burst: 20
-    # One shared bucket for agent jobs submitted via the legacy API Gateway /ask, which
-    # carry no caller id. Removed once /ask moves to the new service.
-    legacy_agent_rate_rps: 25
-    legacy_agent_burst: 50
+    # API Gateway stage throttle, applied per method.
+    method_rate_rps: 50
+    method_burst: 100
+    # Override on GET /query/{job_id} and GET /ask/{job_id}.
+    status_rate_rps: 100
+    status_burst: 200
+    poll_interval_seconds: 2
+    throttled_retry_after_seconds: 1
+    agent_worker_concurrency: 10
+    max_result_bytes: 350000
     max_body_bytes: 262144
     request_timeout_seconds: 10
     auth_timeout_seconds: 10
@@ -54,8 +62,6 @@ tags:
     description: Raw SPARQL (read-only) against Neptune.
   - name: ask
     description: Natural-language questions answered by the Bedrock agent.
-  - name: health
-    description: Liveness.
   - name: docs
     description: Interactive API documentation generated from this file.
 
@@ -110,6 +116,8 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
 
@@ -123,6 +131,9 @@ paths:
       responses:
         "200":
           description: Current job state.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/PollRetryAfter"
           content:
             application/json:
               schema:
@@ -141,6 +152,11 @@ paths:
                     job_id: "4f1c6a52-0f0e-4d8e-9a59-3c2b1e7f0a11"
                     status: error
                     error: "400 Client Error: Bad Request"
+                resultTooLarge:
+                  value:
+                    job_id: "4f1c6a52-0f0e-4d8e-9a59-3c2b1e7f0a11"
+                    status: error
+                    error: "Result exceeds 350 KB; add LIMIT or narrow the query"
         "400":
           $ref: "#/components/responses/BadJobId"
         "401":
@@ -151,6 +167,8 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
 
@@ -163,7 +181,7 @@ paths:
         Validates the question, records a `pending` job (including the question) and
         enqueues it for the agent worker together with the authenticated caller's user_id.
         No credential is forwarded: the agent runs its SPARQL through the shared server-side
-        query service (not over HTTP), which applies the same limits, rate buckets and
+        query service (not over HTTP), which applies the same query limits and
         `sparql_query` audit logging as `POST /query`, attributed to the original caller
         with `source: agent`. The question is trimmed before the length check.
       requestBody:
@@ -204,6 +222,8 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
 
@@ -220,6 +240,9 @@ paths:
       responses:
         "200":
           description: Current job state.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/PollRetryAfter"
           content:
             application/json:
               schema:
@@ -250,22 +273,10 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
-
-  /healthz:
-    get:
-      tags: [health]
-      operationId: healthz
-      summary: Liveness probe (unauthenticated, not rate limited)
-      security: []
-      responses:
-        "200":
-          description: Service is up.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Health"
 
   /api:
     get:
@@ -273,9 +284,9 @@ paths:
       operationId: apiDocs
       summary: Interactive API documentation (Swagger UI)
       description: |
-        Public (no auth, not charged to rate-limit buckets; WAF per-IP limits still apply).
-        Renders `/api/openapi.json`. Swagger UI assets are served by this service, not a
-        third-party CDN. "Try it out" calls this same host; click **Authorize** and paste a
+        Public (no auth), with the same per-method throttle as every other route.
+        Renders `/api/openapi.json`. Swagger UI assets are bundled in the docs Lambda, not
+        loaded from a third-party CDN. "Try it out" calls this same host; click **Authorize** and paste a
         Synapse PAT.
       security: []
       responses:
@@ -285,6 +296,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /api/openapi.json:
     get:
@@ -303,6 +316,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OpenApiDocument"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /api/openapi.yaml:
     get:
@@ -318,6 +333,8 @@ paths:
             application/yaml:
               schema:
                 $ref: "#/components/schemas/OpenApiDocument"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
 components:
   securitySchemes:
@@ -470,14 +487,6 @@ components:
         paths:
           type: object
 
-    Health:
-      type: object
-      required: [status]
-      properties:
-        status:
-          type: string
-          const: ok
-
   responses:
     JobAccepted:
       description: Job accepted; poll the status endpoint with the returned job_id.
@@ -500,7 +509,9 @@ components:
             $ref: "#/components/schemas/ErrorBody"
           example: { error: "Job not found" }
     Unauthorized:
-      description: Missing, invalid or non-team-member credentials.
+      description: |
+        Missing, invalid or non-team-member credentials. Every auth denial returns exactly
+        this body.
       content:
         application/json:
           schema:
@@ -514,12 +525,13 @@ components:
             $ref: "#/components/schemas/GatewayError"
           example: { message: "Request Too Long" }
     TooManyRequests:
-      description: Rate limit exceeded (global per-API bucket or per-principal bucket).
+      description: The method's API Gateway throttle was exceeded.
       headers:
         Retry-After:
-          description: Seconds to wait before retrying.
+          description: Seconds to wait before retrying (`throttled_retry_after_seconds`).
           schema:
             type: integer
+            const: 1
       content:
         application/json:
           schema:
@@ -532,6 +544,18 @@ components:
           schema:
             $ref: "#/components/schemas/GatewayError"
           example: { message: "Internal server error" }
+    ServiceUnavailable:
+      description: The authorizer could not verify the token (for example, Synapse is down).
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GatewayError"
+          example: { message: "Service Unavailable" }
     GatewayTimeout:
       description: Request exceeded request_timeout_seconds.
       content:
@@ -539,3 +563,12 @@ components:
           schema:
             $ref: "#/components/schemas/GatewayError"
           example: { message: "Endpoint request timed out" }
+
+  headers:
+    PollRetryAfter:
+      description: |
+        Present while the job is `pending` or `running`: the minimum seconds to wait before
+        polling again (`poll_interval_seconds`).
+      schema:
+        type: integer
+        const: 2
