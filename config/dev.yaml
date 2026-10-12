@@ -10,6 +10,9 @@ NEPTUNE:
   serverless_max_capacity: 4.0
   deletion_protection: false  # Allow easier cleanup in dev
 
+NEPTUNE_API:
+  query_worker_concurrency: 5  # dev's Neptune maxes at 4 NCU (prod: 10, from base.yaml)
+
 NEPTUNE_VIZ:
   enabled: true
   allowed_cidrs:

@@ -85,6 +85,7 @@ neptune_api_stack = NeptuneApiStack(
     neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
     neptune_security_group=neptune_stack.neptune_security_group,
     synapse_team_id=config["AUTH"]["synapse_team_id"],
+    query_worker_concurrency=config["NEPTUNE_API"]["query_worker_concurrency"],
     machine_api_key=config["AUTH"].get("machine_api_key", ""),
     env=env,
 )

@@ -18,6 +18,11 @@ NEPTUNE:
   create_parameter_group: false
   parameter_group_parameters: {}
 
+NEPTUNE_API:
+  # Reserved concurrency of the SQS query worker: the most SPARQL jobs that run on Neptune at
+  # once; extra jobs wait in the queue (spec 001 D-14). A safety bound, not a tuned value.
+  query_worker_concurrency: 10
+
 # Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
 # uploads and bulk-loads {portal}/YYYY-MM-DD/data/ (Turtle only) into its own
 # named graph. The manifest is the trigger and stays outside the load path.
