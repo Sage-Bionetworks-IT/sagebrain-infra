@@ -132,16 +132,19 @@ Agent invocations (question asked, answer status, total duration, step count) ar
 
 ## Loading Data
 
-Data is loaded via the Neptune S3 bulk loader. Each data release is uploaded to S3 under a date-partitioned prefix, creating a historical data lake of past snapshots.
+Data is loaded by the append-only ingestion pipeline (`app-dev-neptune-pipeline`) using the
+Neptune S3 bulk loader. Each data release is a dated snapshot per portal, so S3 keeps a
+historical data lake and Neptune keeps every snapshot in its own named graph
+(`urn:sagebrain:{portal}:{date}`).
 
-### S3 Layout (Hive-style partitioning)
+### S3 Layout
 
 ```
 s3://<NeptuneDataBucketName>/
-  YYYY-MM-DD/
-    schema/       ← ontology / schema TTL files
-    data/
-      rdf/        ← data TTL files (one or more .ttl files)
+  {portal}/YYYY-MM-DD/
+    data/          ← Turtle only; this whole prefix is bulk loaded
+    other/         ← optional: anything that is not Turtle
+    manifest.ttl   ← written LAST; its arrival triggers the load
 ```
 
 Get the bucket name from CloudFormation:
@@ -153,14 +156,11 @@ aws --profile sagebrain cloudformation describe-stacks \
   --output text
 ```
 
-Each date prefix is a self-contained snapshot. Old prefixes are retained in S3 — they are not loaded into Neptune but are available for reference or rollback.
+> [!IMPORTANT]
+> Only Turtle may live under `data/`. The bulk loader parses every object under the prefix, and
+> with `failOnError=TRUE` one non-RDF file (e.g. a `README.md`) fails the whole snapshot.
 
-> [!NOTE]
-> Non-RDF files (e.g. `README.md`) in the S3 prefix are harmlessly skipped by the bulk loader.
-
-### Uploading data to S3
-
-From any machine with the `sagebrain` AWS profile:
+### Uploading a snapshot
 
 ```bash
 export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
@@ -168,51 +168,13 @@ export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
   --output text)
 
-aws s3 cp ./schema/ s3://$NEPTUNE_BUCKET/2026-02-20/schema/ --recursive
-aws s3 cp ./data/rdf/ s3://$NEPTUNE_BUCKET/2026-02-20/data/rdf/ --recursive
+aws s3 cp ./data/ s3://$NEPTUNE_BUCKET/nf/2026-02-20/data/ --recursive
+aws s3 cp ./manifest.ttl s3://$NEPTUNE_BUCKET/nf/2026-02-20/manifest.ttl   # last: starts the load
 ```
 
-### Running the loader (manual)
-
-Run `tools/load_kg.py` from any machine with the `sagebrain` AWS profile and VPC connectivity to Neptune. It performs a full reset (wipes Neptune) then loads schema followed by data:
-
-```bash
-conda activate neptune
-pip install requests aws-requests-auth
-
-export NEPTUNE_ENDPOINT=$(aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune \
-  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
-  --output text)
-export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune \
-  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
-  --output text)
-export NEPTUNE_LOAD_ROLE=$(aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune \
-  --query "Stacks[0].Outputs[?OutputKey=='NeptuneLoadRoleArn'].OutputValue" \
-  --output text)
-
-# Full reset + load
-python tools/load_kg.py --prefix 2026-02-20 --stats
-
-# Append only (no reset)
-python tools/load_kg.py --prefix 2026-02-20 --no-reset --stats
-
-# Dry-run (print what would happen, no changes)
-python tools/load_kg.py --prefix 2026-02-20 --dry-run
-```
-
-The loader:
-1. Resets Neptune via the system reset endpoint (faster than `DROP ALL`)
-2. Waits for Neptune to restart (~15–30s)
-3. Bulk loads `YYYY-MM-DD/schema/` first
-4. Bulk loads `YYYY-MM-DD/data/rdf/`
-5. Polls until each job completes and prints record counts
-
-### Automated ingestion pipeline
-
-See CLAUDE.md for details on the append-only pipeline (`app-dev-neptune-pipeline`) — transform uploads a snapshot + `manifest.ttl` to S3, EventBridge triggers Step Functions, which invokes a loader Lambda that calls Neptune's bulk loader. Fully automated with DynamoDB lineage tracking.
+The `manifest.ttl` upload triggers EventBridge → Step Functions → the bulk loader. Progress and
+lineage are in the Step Functions executions and the `app-dev-neptune-pipeline-loads` DynamoDB
+table; see the "Automated Ingestion Pipeline" section of CLAUDE.md.
 
 ## Adding Graph Explorer Users
 

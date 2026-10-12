@@ -27,45 +27,22 @@ aws --profile sagebrain sso login
 
 ## S3 Data Bucket
 
-Data is stored in a date-partitioned (Hive-style) layout — each contribution is a snapshot under its own date prefix, preserving a historical data lake:
+Each contribution is a dated snapshot per portal, preserving a historical data lake. The
+ingestion pipeline (below) loads it into its own named graph:
 
 ```
 s3://<NeptuneDataBucketName>/
-  YYYY-MM-DD/
-    schema/       ← ontology / schema TTL files
-    data/
-      rdf/        ← data TTL files
+  {portal}/YYYY-MM-DD/
+    data/          ← Turtle only; this whole prefix is bulk loaded
+    other/         ← optional: anything that is not Turtle
+    manifest.ttl   ← written LAST; its arrival triggers the load
 ```
 
 Any principal authenticated to the AWS account can upload to the bucket. Bucket name, cluster endpoint, and load role ARN are all in the `app-dev-neptune` CloudFormation outputs (`NeptuneDataBucketName`, `NeptuneClusterEndpoint`, `NeptuneLoadRoleArn`).
 
-## Loading Data
-
-Activate the `neptune` conda environment and run `tools/load_kg.py`. Read values from CloudFormation outputs:
-
-```bash
-conda activate neptune
-
-export NEPTUNE_ENDPOINT=$(aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune \
-  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
-  --output text)
-export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune \
-  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
-  --output text)
-export NEPTUNE_LOAD_ROLE=$(aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune \
-  --query "Stacks[0].Outputs[?OutputKey=='NeptuneLoadRoleArn'].OutputValue" \
-  --output text)
-
-python tools/load_kg.py --prefix 2026-02-20 --stats
-```
-
 ## Automated Ingestion Pipeline: src/neptune_pipeline_stack.py
 
-`tools/load_kg.py` is the manual path. The **append-only pipeline** is the automated
-path: a transform pipeline deposits a dated snapshot per portal in S3 and writes
+Data reaches Neptune only through the **append-only pipeline**: a transform pipeline deposits a dated snapshot per portal in S3 and writes
 `manifest.ttl` **last** as the completion sentinel; its arrival drives a Neptune bulk load
 with no human in the loop.
 
@@ -335,7 +312,7 @@ Tests live in `tests/unit/`. Lambda handler tests import from `src/lambda/` via 
 - The API is **POST only** — GET was removed to avoid URL length limits for complex SPARQL queries.
 - **Synapse team-gated auth** — both APIs require a valid Synapse PAT/OAuth token and membership in the environment's Synapse team (dev: 273957, prod: 3605470). The Lambda authorizer validates via Synapse's `/userProfile` + `/team/{id}/member/{userId}/membershipStatus` endpoints; results are cached 5 min by API Gateway.
 - **S3 bulk loader** is used for all data loading — not SPARQL INSERT batches. Neptune assumes `NeptuneLoadRole` (trusted by `rds.amazonaws.com`) to read from S3.
-- **Date-partitioned S3 layout** (`YYYY-MM-DD/schema/` and `YYYY-MM-DD/data/rdf/`) preserves a historical data lake. Each load is a full reset + reload from a chosen prefix.
+- **Date-partitioned S3 layout** (`{portal}/YYYY-MM-DD/data/`) preserves a historical data lake. Each snapshot loads append-only into its own named graph; nothing resets Neptune.
 - **Both APIs are async (submit + poll)** — Neptune SPARQL on the 2.27M-triple graph takes 4–40s; synchronous API Gateway has a hard 29s limit. SQS + DynamoDB decouples HTTP from execution for both `/query` and `/ask`.
 - **Agent routes through `/query`** rather than calling Neptune directly. The `query_neptune` tool submits to `/query` and polls `/query/{job_id}` — keeps all query traffic through the single audit-logged chokepoint, and the agent inherits future ACLs for free.
 - **Worker concurrency is capped** — query worker uncapped (SPARQL is read-only); agent worker capped at 10 concurrent invocations to prevent Bedrock rate-limit errors under burst traffic.
