@@ -32,7 +32,8 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 - **Synapse team-gated authorizer** (#31, #40). Dev and prod use different teams (#63, issue #62).
 - **Spec-driven development, one API Gateway endpoint** (spec 001). The contract comes first: a
   hand-written OpenAPI 3.1 file, right after the plan and before any code (spec 001 R-0). Split
-  into a stack: spec and plan #74, contract #73, then the shared query service #71 (Phase 1a). The rules it introduced (contract first,
+  into a stack: spec and plan #74, contract #73, then the shared query service and the agent's in-process queries #71
+  (Phases 1a and 1b). The rules it introduced (contract first,
   parity before improvement, every threshold tested, one query chokepoint) are the articles in
   [constitution.md](constitution.md); this file records why and any exceptions, not the rules themselves.
 - **FastAPI on Fargate was dropped for one API Gateway REST API (2026-10-12, #74).** The 29 s
@@ -44,7 +45,9 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 - **Rate limits stay at API Gateway; per-principal buckets deferred (2026-10-12, #74).** Agent
   queries skip API Gateway but are bounded by the worker's reserved concurrency of 10 and the 60 s
   timeout. This amended constitution article V (rate is no longer one of the service's limits) and
-  shelves #71's DynamoDB rate limiter until one user actually starves others (spec 001 R-5).
+  removed #71's DynamoDB rate limiter; per-principal buckets wait until one user actually starves
+  others (spec 001 R-5). If they come back, the design notes are in #71's history: DynamoDB, not
+  Valkey, because a 5–10 ms check doesn't matter at 4–40 s queries and needs no VPC.
 - **Design target: 100 concurrent users (2026-10-12, #74).** Prod's team gate has 9 members.
   Status polling dominates traffic and is billed per request; the break-even with a fixed-cost
   front door is ~1M requests/day, which is the alarm that reopens the hosting decision. The query
@@ -58,6 +61,10 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 - **Synapse bearer tokens are the only API credential (2026-10-12, #74).** The authorizer's
   `x-api-key` machine-key path was configured in no environment, and the agent no longer needs a
   machine credential once it calls the query service in-process.
+- **The query chokepoint is a library, `sagebrain_core`, not an endpoint** (#71). The agent's
+  in-process queries get the same query limits and `sparql_query` audit log as `POST /query`, with
+  no HTTP loop-back and no bearer token in SQS. Jobs from the old APIs carry no caller id, so they
+  are attributed to `legacy-apigw` until those APIs are deleted (spec 001 D-19).
 
 ## Governance
 - **Access requirements first, then ACLs** (spec 002, #66; it builds on spec 001: #74, #73, #71, #72). It replaces earlier
