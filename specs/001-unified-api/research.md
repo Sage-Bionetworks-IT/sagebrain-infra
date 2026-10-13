@@ -113,7 +113,7 @@ Probed against the dev API Gateway (account 442650749796) with a Synapse team-me
 | Missing `Authorization` | 401 `{"message":"Unauthorized"}` + ACAO `*` | Same |
 | Bad bearer (authorizer Deny → ACCESS_DENIED remapped) | 401 `{"message":"User is not authorized to access this resource with an explicit deny in an identity-based policy"}` + ACAO `*` | 401 `{"message":"Unauthorized"}` for every auth failure, via a gateway response template (D-10) |
 | Preflight `OPTIONS /query` | **204**, empty body. `Allow-Origin: *`, `Allow-Methods: POST,GET,OPTIONS`, `Allow-Headers: Content-Type,Authorization,X-Source,x-api-key`, no `Max-Age` | Same |
-| `GET /query/` and unknown paths | 403 with a SigV4 parse error (`Invalid key=value pair … in Authorization header`), **no CORS** | 404 `{"message":"Not Found"}` + ACAO, via `MISSING_AUTHENTICATION_TOKEN` (D-3) |
+| `GET /query/` and unknown paths | 403 with a SigV4 parse error (`Invalid key=value pair … in Authorization header`), **no CORS** | 404 `{"message":"Not Found"}` + ACAO, via mock `ANY` / `{proxy+}` routes and `MISSING_AUTHENTICATION_TOKEN` (D-3). With a Bearer header the error is `IncompleteSignatureException`, which has no gateway response type of its own |
 | 11 MB body | 413 plain text `HTTP content length exceeded 10485760 bytes.`, **no CORS** | Unchanged above 10 MB (API Gateway's own cap). Between 256 KiB and 10 MB the handler returns 413 `{"message":"Request Too Long"}` + ACAO (D-5) |
 | Non-string field / non-object body | 502 `{"message":"Internal server error"}` | 400 (D-2) |
 | F3: authorizer raises on a transient Synapse error | Can't be induced from outside. AWS documents that an authorizer function error returns `AUTHORIZER_FAILURE` (500) | 503 + `Retry-After` (D-13) |
