@@ -9,6 +9,7 @@ the start of a task; open only the files whose hook matches it.
 | [constitution.md](constitution.md) | you are writing a spec, a plan, or a change to the API or the query path — the non-negotiable rules |
 | [decisions.md](decisions.md) | you are about to change architecture, ingestion, auth or the query path — what was decided, in which PR, and why |
 | [open-work.md](open-work.md) | you are picking up work or wondering "is this known?" — open threads grouped by theme, with issue numbers |
+| [security-reviews.md](security-reviews.md) | you are changing auth, a public route or an IAM grant, or asked "was this reviewed?" — dated reviews, their scope, what was ruled out |
 | [gotchas.md](gotchas.md) | something fails in a way that looks environmental (IAM, networking, timeouts, tooling) |
 | [runbooks/direct-neptune-access.md](runbooks/direct-neptune-access.md) | you need to read/delete in Neptune directly (outside `/query`), e.g. drop a graph or debug a failed load |
 

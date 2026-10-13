@@ -44,6 +44,8 @@ def request_body(case) -> str:
 
 
 def job_id_for(case) -> str:
+    if "job_id" in case["request"]:
+        return case["request"]["job_id"]
     item = (case.get("given") or {}).get("item")
     return item["job_id"] if item else str(uuid.uuid4())
 

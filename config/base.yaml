@@ -23,6 +23,11 @@ NEPTUNE_API:
   # once; extra jobs wait in the queue (spec 001 D-14). A safety bound, not a tuned value.
   query_worker_concurrency: 10
 
+# The unified API (spec 001): one REST API for /query, /ask and /api docs, stack app-{env}-api.
+# Runs alongside the two old APIs until cutover; enable per env.
+API_EDGE:
+  enabled: false
+
 # Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
 # uploads and bulk-loads {portal}/YYYY-MM-DD/data/ (Turtle only) into its own
 # named graph. The manifest is the trigger and stays outside the load path.
@@ -49,4 +54,3 @@ AGENT:
 
 AUTH:
   synapse_team_id: "3605470"
-  # machine_api_key: ""  # set in env-specific config (not committed); enables x-api-key auth

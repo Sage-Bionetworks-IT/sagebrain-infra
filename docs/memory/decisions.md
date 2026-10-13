@@ -62,7 +62,9 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   responses are tested against the contract instead. Article IV no longer says "ECS secrets".
 - **Synapse bearer tokens are the only API credential (2026-10-12, #74).** The authorizer's
   `x-api-key` machine-key path was configured in no environment, and the agent no longer needs a
-  machine credential once it calls the query service in-process.
+  machine credential once it calls the query service in-process. Removed in spec 001 Phase 2 rather
+  than waiting for Phase 5: it was checked before the bearer, so any request carrying `x-api-key`
+  was denied even with a valid token. `x-api-key` stays in the CORS allow-list (FR-6 parity).
 - **The query chokepoint is a library, `sagebrain_core`, not an endpoint** (#71). The agent's
   in-process queries get the same query limits and `sparql_query` audit log as `POST /query`, with
   no HTTP loop-back and no bearer token in SQS. Jobs from the old APIs carry no caller id, so they
@@ -73,6 +75,16 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   It's a standalone package (`core/pyproject.toml`): the layer ships it now, and a future API
   service can `pip install ./core` without depending on CDK. A future service gets its own
   top-level directory next to `core/`, not a place under `src/`.
+- **The edge stack's docs inline Swagger UI (2026-10-12, spec 001 Phase 2).** Its JS and CSS go into
+  the `/api` page (~1.8 MB) rather than onto extra asset routes, so the deployed routes stay exactly
+  the contract's paths (R-14) and nothing loads from a CDN (FR-8). Swagger UI is pinned with its npm
+  sha512 and fetched at bundle time, not committed.
+- **Both authorizer-failure gateway responses map to 503 (2026-10-12, spec 001 Phase 2).** Which
+  of `AUTHORIZER_FAILURE` / `AUTHORIZER_CONFIGURATION_ERROR` API Gateway returns for a raising Lambda
+  authorizer isn't clearly documented, so D-13 covers both, with `Retry-After: 300`
+  (`auth_failure_retry_after_seconds`, new in the contract). The dev deploy confirms which one fires.
+  300 s, not 5: Synapse's weekly Sunday maintenance takes it down for ~30 min, and a short hint
+  would have every client retrying through the whole window.
 - **The contract describes the API, not its implementation (2026-10-12, #73).** `api/openapi.yaml`'s
   descriptions are written for clients, because they feed Swagger UI and, later, generated
   server and client code. Notes on where a limit is enforced (shared service, API Gateway,

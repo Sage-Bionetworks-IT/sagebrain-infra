@@ -56,7 +56,9 @@ info:
     auth_timeout_seconds: 10
     synapse_call_timeout_seconds: 5
     auth_cache_ttl_seconds: 300
+    auth_failure_retry_after_seconds: 300
     job_ttl_seconds: 86400
+    job_id_max_chars: 128
 
 servers:
   - url: https://api.sagebrain.example.org
@@ -550,12 +552,15 @@ components:
             $ref: "#/components/schemas/GatewayError"
           example: { message: "Internal server error" }
     ServiceUnavailable:
-      description: The authorizer could not verify the token (for example, Synapse is down).
+      description: |
+        The token could not be checked because Synapse is unavailable (for example, during its
+        weekly maintenance window, about 30 minutes). Not an auth denial: retry after `Retry-After`.
       headers:
         Retry-After:
-          description: Seconds to wait before retrying.
+          description: Seconds to wait before retrying (`auth_failure_retry_after_seconds`).
           schema:
             type: integer
+            const: 300
       content:
         application/json:
           schema:

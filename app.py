@@ -2,6 +2,7 @@ import os
 
 import aws_cdk as cdk
 
+from src.api_edge_stack import ApiEdgeStack
 from src.neptune_agent_stack import NeptuneAgentStack
 from src.network_stack import NetworkStack
 from src.neptune_api_stack import NeptuneApiStack
@@ -86,7 +87,6 @@ neptune_api_stack = NeptuneApiStack(
     neptune_security_group=neptune_stack.neptune_security_group,
     synapse_team_id=config["AUTH"]["synapse_team_id"],
     query_worker_concurrency=config["NEPTUNE_API"]["query_worker_concurrency"],
-    machine_api_key=config["AUTH"].get("machine_api_key", ""),
     env=env,
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies
@@ -107,9 +107,23 @@ neptune_agent_stack = NeptuneAgentStack(
     neptune_security_group=neptune_stack.neptune_security_group,
     bedrock_model_id=config["AGENT"]["bedrock_model_id"],
     synapse_team_id=config["AUTH"]["synapse_team_id"],
-    machine_api_key=config["AUTH"].get("machine_api_key", ""),
     env=env,
 )
+
+# Unified API (spec 001): one REST API in front of the existing job tables and queues. Runs
+# alongside the two old APIs until cutover. Its references to their tables and queues become
+# cross-stack exports, which Phase 5 releases before deleting the old APIs.
+if config.get("API_EDGE", {}).get("enabled", False):
+    ApiEdgeStack(
+        scope=cdk_app,
+        construct_id=f"{STACK_NAME_PREFIX}-api",
+        query_job_table=neptune_api_stack.job_table,
+        query_job_queue=neptune_api_stack.job_queue,
+        ask_job_table=neptune_agent_stack.job_table,
+        ask_job_queue=neptune_agent_stack.job_queue,
+        synapse_team_id=config["AUTH"]["synapse_team_id"],
+        env=env,
+    )
 
 monitoring_stack = MonitoringStack(
     scope=cdk_app,

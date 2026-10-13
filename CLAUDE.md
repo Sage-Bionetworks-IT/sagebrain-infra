@@ -32,6 +32,7 @@ aws --profile sagebrain sso login       # prod
 | NeptuneAgentStack | `app-dev-neptune-agent` | Bedrock Strands AI agent — async NL-to-SPARQL via `POST /ask` + `GET /ask/{job_id}` |
 | NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only) |
 | NeptunePipelineStack | `app-dev-neptune-pipeline` | Append-only ingestion — S3 `manifest.ttl` → EventBridge → Step Functions → Neptune bulk loader (one named graph per snapshot) |
+| ApiEdgeStack | `app-dev-api` | Unified API (spec 001): one REST API for `/query`, `/ask` and public docs at `/api`, in front of the existing job tables/queues. `API_EDGE.enabled` (dev on, prod off) |
 
 ## S3 Data Bucket
 
@@ -257,6 +258,31 @@ JOB_ID=$(echo $JOB | python3 -c "import sys,json; print(json.load(sys.stdin)['jo
 
 # Poll
 curl -H "Authorization: Bearer <synapse-pat>" <AgentApiUrl>/$JOB_ID
+```
+
+## Unified API (spec 001 Phase 2): src/api_edge_stack.py
+
+One REST API (stage `prod`) that replaces the two old APIs' front doors; it runs alongside them
+until cutover. The tables, queues and workers stay in `app-*-neptune-api` / `app-*-neptune-agent`.
+- `src/lambda_edge/jobs.py` — the four submit/status handlers (one module, one handler per Lambda),
+  on the `sagebrain_core` layer. Same responses as the old Lambdas plus the spec deviations: lowercase
+  headers (D-1), 400 for non-string/non-object bodies (D-2), 413 over 256 KiB (D-5), `X-Source` ≤ 64
+  (D-11), `Retry-After: 2` while pending/running (D-15), `user_id` in the query message (D-19), and
+  no credential in the `/ask` message (D-8). Held to `tests/contract/cases.yaml` `expect`.
+- `src/lambda_docs/` — `GET /api` (Swagger UI, assets inlined), `/api/openapi.{json,yaml}` (the
+  contract, `servers` set to the calling stage). `bundle.py` copies the contract in and fetches a
+  pinned Swagger UI 5 from npm with an integrity check at bundle time (needs Docker + network).
+- Every throttle/timeout/retry value is read from `api/openapi.yaml` `x-sagebrain-limits` via
+  `src/contract.py`; `tests/unit/test_api_edge_stack.py` checks routes equal the contract's paths.
+- Gateway responses: 401 `Unauthorized` for every denial, 404 `Not Found` for unknown routes, 503 +
+  `Retry-After: 300` when the authorizer raises, 429 + `Retry-After: 1` when throttled; all with CORS.
+- Probes: `tools/parity_probe.py` (old vs new, same base twice for the unified API) and
+  `tools/load_probe.py` (`load`: design-target polling; `burst`: 300 POSTs → ~100 through).
+
+```bash
+cdk deploy app-dev-api --profile sagebrain-dev   # also adds exports to the two old stacks
+aws --profile sagebrain-dev cloudformation describe-stacks --stack-name app-dev-api \
+  --query "Stacks[0].Outputs" --output table      # ApiBaseUrl, ApiDocsUrl
 ```
 
 ## Graph Explorer Visualization: src/neptune_viz_stack.py

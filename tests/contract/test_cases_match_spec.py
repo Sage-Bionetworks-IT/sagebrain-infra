@@ -150,3 +150,20 @@ def test_limits_extension_matches_schema_limits():
         SPEC["components"]["parameters"]["XSource"]["schema"]["maxLength"]
         == limits["source_max_chars"]
     )
+    assert (
+        SPEC["components"]["parameters"]["JobId"]["schema"]["maxLength"]
+        == limits["job_id_max_chars"]
+    )
+    responses = SPEC["components"]["responses"]
+    assert (
+        responses["ServiceUnavailable"]["headers"]["Retry-After"]["schema"]["const"]
+        == limits["auth_failure_retry_after_seconds"]
+    )
+    assert (
+        responses["TooManyRequests"]["headers"]["Retry-After"]["schema"]["const"]
+        == limits["throttled_retry_after_seconds"]
+    )
+    assert (
+        SPEC["components"]["headers"]["PollRetryAfter"]["schema"]["const"]
+        == limits["poll_interval_seconds"]
+    )
