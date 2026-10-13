@@ -15,6 +15,12 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   Bedrock console (per model, per account). Don't grant `aws-marketplace:*` to the worker role.
 - **`cdk synth` fails on `DescribeAvailabilityZones`** with default credentials. Log in with SSO and
   pass `--profile`.
+- **A stack shows `UPDATE_ROLLBACK_COMPLETE` for months after one failed update.** A later deploy
+  with no changes doesn't update the status. Check `cdk diff` before assuming it's broken:
+  `app-dev-monitoring` has shown it since the 2026-09-04 cost-anomaly attempt (#55, reverted in
+  #57) with no differences from the code.
+- **Strands prints the streamed answer to stdout by default**, glued onto the next log line, so
+  JSON log events stop parsing in Insights. Pass `callback_handler=None` to `Agent`.
 - **Setting `AWS_REGION` in a Lambda's environment fails the deploy**: it's reserved, and the runtime
   always sets it. Read it; don't set it.
 
