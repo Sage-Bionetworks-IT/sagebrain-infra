@@ -239,7 +239,9 @@ class ApiEdgeStack(cdk.Stack):
             response_headers=cors,
             templates=unauthorized,
         )
-        # Unknown path or method (D-3)
+        # Unknown path or method sent without an Authorization header (D-3). With one,
+        # API Gateway raises IncompleteSignatureException instead, which has no response
+        # type of its own; the not-found routes below catch those requests first.
         self.api.add_gateway_response(
             "MissingAuthenticationToken",
             type=apigw.ResponseType.MISSING_AUTHENTICATION_TOKEN,
@@ -314,6 +316,53 @@ class ApiEdgeStack(cdk.Stack):
                 integration(self.docs_fn),
                 authorization_type=apigw.AuthorizationType.NONE,
             )
+
+        # Not found (D-3): ANY on every resource plus a root {proxy+} catch-all, all a
+        # mock 404. API Gateway prefers the exact method and the more specific path, so
+        # these only answer requests no route above matches.
+        # A mock integration can't parse a passed-through body (500), so the common types
+        # get a template and any other Content-Type is a 415
+        not_found = apigw.MockIntegration(
+            request_templates={
+                content_type: '{"statusCode": 404}'
+                for content_type in (
+                    "application/json",
+                    "text/plain",
+                    "application/x-www-form-urlencoded",
+                    "application/sparql-query",
+                )
+            },
+            passthrough_behavior=apigw.PassthroughBehavior.NEVER,
+            integration_responses=[
+                apigw.IntegrationResponse(
+                    status_code="404",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": "'*'"
+                    },
+                    response_templates=_json_message("Not Found"),
+                )
+            ],
+        )
+        not_found_response = apigw.MethodResponse(
+            status_code="404",
+            response_parameters={
+                "method.response.header.Access-Control-Allow-Origin": True
+            },
+        )
+        for resource in (
+            self.api.root,
+            self.api.root.add_resource("{proxy+}"),
+            *self.api.root.node.find_all(),
+        ):
+            if isinstance(
+                resource, apigw.ResourceBase
+            ) and not resource.node.try_find_child("ANY"):
+                resource.add_method(
+                    "ANY",
+                    not_found,
+                    authorization_type=apigw.AuthorizationType.NONE,
+                    method_responses=[not_found_response],
+                )
 
         # -------------------
         # Outputs

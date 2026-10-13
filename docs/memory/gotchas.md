@@ -21,6 +21,12 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   #57) with no differences from the code.
 - **Strands prints the streamed answer to stdout by default**, glued onto the next log line, so
   JSON log events stop parsing in Insights. Pass `callback_handler=None` to `Agent`.
+- **An unknown API Gateway route returns 403 `IncompleteSignatureException` when the request has a
+  Bearer header**, even with `MISSING_AUTHENTICATION_TOKEN` remapped to 404. API Gateway parses the
+  header as SigV4, and that error has no gateway response type (it falls to `DEFAULT_4XX`, whose
+  status applies to everything). Route the request instead: mock `ANY` methods plus a root
+  `{proxy+}` (`src/api_edge_stack.py`). A mock can't parse a passed-through body, so give it
+  request templates and `PassthroughBehavior.NEVER` (other types get 415, not 500).
 - **Setting `AWS_REGION` in a Lambda's environment fails the deploy**: it's reserved, and the runtime
   always sets it. Read it; don't set it.
 

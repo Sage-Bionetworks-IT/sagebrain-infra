@@ -55,12 +55,12 @@ def _resource_paths(template) -> dict:
 
 
 def _methods(template) -> dict:
-    """(path, METHOD) → method properties, for every non-OPTIONS method."""
+    """(path, METHOD) → method properties, for every route (not OPTIONS or not-found ANY)."""
     path_of = _resource_paths(template)
     methods = {}
     for method in template.find_resources("AWS::ApiGateway::Method").values():
         props = method["Properties"]
-        if props["HttpMethod"] == "OPTIONS":
+        if props["HttpMethod"] in ("OPTIONS", "ANY"):
             continue
         methods[(path_of(props["ResourceId"]) or "/", props["HttpMethod"])] = props
     return methods
@@ -80,6 +80,38 @@ def _function_logical_id(template, handler) -> str:
 
 def test_routes_equal_the_contract(template):
     assert set(_methods(template)) == operations()
+
+
+def test_every_other_path_and_method_is_a_mock_404(template):
+    # D-3: with a Bearer header API Gateway answers unrouted requests with a 403 SigV4
+    # parse error that no gateway response type can remap, so they need a route
+    path_of = _resource_paths(template)
+    resource_paths = {
+        path_of({"Ref": r}) or "/"
+        for r in template.find_resources("AWS::ApiGateway::Resource")
+    }
+    any_methods = {}
+    for method in template.find_resources("AWS::ApiGateway::Method").values():
+        props = method["Properties"]
+        if props["HttpMethod"] == "ANY":
+            any_methods[path_of(props["ResourceId"]) or "/"] = props
+    assert set(any_methods) == resource_paths | {"/"}
+    assert "/{proxy+}" in any_methods
+    for path, props in any_methods.items():
+        assert props["AuthorizationType"] == "NONE", path
+        integration = props["Integration"]
+        assert integration["Type"] == "MOCK", path
+        (response,) = integration["IntegrationResponses"]
+        assert response["StatusCode"] == "404", path
+        assert response["ResponseTemplates"] == {
+            "application/json": '{"message":"Not Found"}'
+        }, path
+        assert (
+            response["ResponseParameters"][
+                "method.response.header.Access-Control-Allow-Origin"
+            ]
+            == "'*'"
+        ), path
 
 
 def test_only_the_docs_routes_skip_the_authorizer(template):

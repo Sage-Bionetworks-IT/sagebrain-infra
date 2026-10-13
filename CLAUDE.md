@@ -274,6 +274,8 @@ until cutover. The tables, queues and workers stay in `app-*-neptune-api` / `app
   pinned Swagger UI 5 from npm with an integrity check at bundle time (needs Docker + network).
 - Every throttle/timeout/retry value is read from `api/openapi.yaml` `x-sagebrain-limits` via
   `src/contract.py`; `tests/unit/test_api_edge_stack.py` checks routes equal the contract's paths.
+- Unknown paths and methods: 404 `Not Found` from mock `ANY` methods on every resource plus a root
+  `{proxy+}` (a gateway response alone misses requests that carry a Bearer header; see gotchas).
 - Gateway responses: 401 `Unauthorized` for every denial, 404 `Not Found` for unknown routes, 503 +
   `Retry-After: 300` when the authorizer raises, 429 + `Retry-After: 1` when throttled; all with CORS.
 - Probes: `tools/parity_probe.py` (old vs new, same base twice for the unified API) and

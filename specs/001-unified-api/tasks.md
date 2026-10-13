@@ -60,7 +60,7 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
   authorizer TTL 0 and timeout, method metrics, access-log fields and retention — every value
   read from `x-sagebrain-limits`
 - [x] T207 Test: gateway responses — `ACCESS_DENIED` / `UNAUTHORIZED` → 401 `Unauthorized` (D-10),
-  `MISSING_AUTHENTICATION_TOKEN` → 404 (D-3), `AUTHORIZER_FAILURE` and
+  `MISSING_AUTHENTICATION_TOKEN` → 404 plus mock `ANY` / `{proxy+}` 404 routes (D-3), `AUTHORIZER_FAILURE` and
   `AUTHORIZER_CONFIGURATION_ERROR` → 503 + `Retry-After` (D-13), `THROTTLED` → 429 + `Retry-After: 1`
   (D-18), `DEFAULT_4XX` / `DEFAULT_5XX` with ACAO
 - [x] T208 Test: least-privilege grants on the existing tables and queues (submit: write + send;
