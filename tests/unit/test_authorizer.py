@@ -175,6 +175,48 @@ def test_empty_token_returns_deny():
     assert result["policyDocument"]["Statement"][0]["Effect"] == "Deny"
 
 
+# ---------------------------------------------------------------------------
+# x-api-key is not a credential (spec 001 D-4)
+# ---------------------------------------------------------------------------
+
+
+@patch("authorizer.urllib.request.urlopen")
+def test_x_api_key_alone_is_denied(mock_urlopen):
+    event = {
+        "headers": {"x-api-key": "some-key", "authorization": "ApiKey"},
+        "methodArn": METHOD_ARN,
+    }
+    result = auth_module.handler(event, {})
+
+    assert result["policyDocument"]["Statement"][0]["Effect"] == "Deny"
+    mock_urlopen.assert_not_called()
+
+
+@patch("authorizer.urllib.request.urlopen")
+def test_x_api_key_does_not_block_a_valid_bearer(mock_urlopen):
+    mock_urlopen.side_effect = _urlopen_mock(MEMBER_USERPROFILE, IS_MEMBER)
+    event = _event()
+    event["headers"]["x-api-key"] = "anything"
+
+    result = auth_module.handler(event, {})
+
+    assert result["policyDocument"]["Statement"][0]["Effect"] == "Allow"
+    assert result["principalId"] == "999"
+
+
+@patch("authorizer.urllib.request.urlopen")
+def test_machine_api_key_env_grants_nothing(mock_urlopen, monkeypatch):
+    monkeypatch.setenv("MACHINE_API_KEY", "secret")
+    event = {
+        "headers": {"x-api-key": "secret", "authorization": "ApiKey"},
+        "methodArn": METHOD_ARN,
+    }
+    result = auth_module.handler(event, {})
+
+    assert result["policyDocument"]["Statement"][0]["Effect"] == "Deny"
+    assert result["principalId"] != "machine"
+
+
 @patch("authorizer.urllib.request.urlopen")
 def test_synapse_401_on_profile_returns_deny(mock_urlopen):
     mock_urlopen.side_effect = _urlopen_mock(

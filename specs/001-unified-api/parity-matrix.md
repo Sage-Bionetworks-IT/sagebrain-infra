@@ -27,7 +27,8 @@ reads the value from `x-sagebrain-limits`.
 | 6 | Authorizer caching (off in API Gateway; in-process cache in the Lambda) | 300 s, successes only | http | Unchanged: API Gateway TTL 0, in-Lambda cache keyed by a hash of the token |
 | 7 | `Authorization` identity source (missing gives 401 before the authorizer runs) | — | http | Unchanged; `x-api-key` is not a credential (D-4) |
 | 8 | `ACCESS_DENIED` remapped to 401, `UNAUTHORIZED` with CORS `*` | 401 `{"message":"Unauthorized"}` | http | Gateway responses with a fixed body template (D-10) |
-| 9 | Transient authorizer error | 500 (F3) | http | `AUTHORIZER_FAILURE` gateway response → 503 + `Retry-After` (D-13) |
+| 9 | Transient authorizer error | 500 (F3) | http | `AUTHORIZER_FAILURE` and `AUTHORIZER_CONFIGURATION_ERROR` gateway responses → 503 + `Retry-After: 300` (`auth_failure_retry_after_seconds`, D-13). CDK assertion |
+| 9j | (new, D-3) `job_id` length | 128 | http | Status handlers return 400 `Missing job_id` above `job_id_max_chars`. Unit test |
 | 10 | CORS preflight | `*`; POST/GET/OPTIONS; Content-Type, Authorization, X-Source, x-api-key | http | Unchanged preflight; `DEFAULT_4XX` / `DEFAULT_5XX` gateway responses carry ACAO; handlers set ACAO |
 | 11 | Payload limit | 10 MB → 256 KiB (D-5) | http | Handler check returns 413; API Gateway's 10 MB cap stays above it |
 | 12 | Access logs | caller, httpMethod, ip, protocol, requestTime, resourcePath, responseLength, status, user | http | One access-log group for the one stage, same fields plus requestId; `resourcePath` separates `/query` from `/ask` |

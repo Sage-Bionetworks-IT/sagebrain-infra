@@ -1,4 +1,3 @@
-import hmac
 import json
 import logging
 import os
@@ -15,12 +14,6 @@ SYNAPSE_REPO_API = "https://repo-prod.prod.sagebase.org/repo/v1"
 TEAM_ID = os.getenv("SYNAPSE_TEAM_ID")
 if not TEAM_ID:
     raise RuntimeError("Missing required environment variable: SYNAPSE_TEAM_ID")
-
-# Optional — if set, callers may authenticate with x-api-key: <key>.
-# Machine clients must ALSO send Authorization: ApiKey so API Gateway's identity
-# source requirement is satisfied (see RequestAuthorizer in the CDK stack).
-# Leave unset (or empty) to disable the API-key path.
-_MACHINE_API_KEY = os.getenv("MACHINE_API_KEY", "")
 
 # Lambda-instance token cache: token -> (principal_id, expires_monotonic)
 # Warm instances reuse this to avoid redundant Synapse API calls.
@@ -49,29 +42,12 @@ def handler(event, context):
 
 
 def _authenticate(headers: dict) -> str:
-    api_key = headers.get("x-api-key", "")
+    # Synapse bearer tokens are the only credential; x-api-key is ignored (spec 001 D-4).
     auth = headers.get("authorization", "")
-
-    if api_key:
-        return _validate_api_key(api_key)
-
     if auth.lower().startswith("bearer "):
         return _validate_synapse_token(auth[7:])
 
-    raise _AuthDenied("no recognised credential (x-api-key or Authorization: Bearer)")
-
-
-# ---------------------------------------------------------------------------
-# API-key path  (machine / service clients)
-# ---------------------------------------------------------------------------
-
-
-def _validate_api_key(provided: str) -> str:
-    if not _MACHINE_API_KEY:
-        raise _AuthDenied("x-api-key auth not configured")
-    if not hmac.compare_digest(provided, _MACHINE_API_KEY):
-        raise _AuthDenied("invalid x-api-key")
-    return "machine"
+    raise _AuthDenied("no recognised credential (Authorization: Bearer)")
 
 
 # ---------------------------------------------------------------------------

@@ -43,7 +43,6 @@ class NeptuneApiStack(cdk.Stack):
         neptune_security_group: ec2.SecurityGroup,
         synapse_team_id: str,
         query_worker_concurrency: int,
-        machine_api_key: str = "",
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -185,28 +184,21 @@ class NeptuneApiStack(cdk.Stack):
 
         # -------------------
         # Authorizer Lambda — no VPC (calls Synapse public API)
-        # Accepts x-api-key header (machine clients) or Authorization: Bearer
-        # (Synapse PAT or OAuth JWT).  Machine clients must also send
-        # Authorization: ApiKey so API Gateway's identity-source check passes.
+        # Accepts Authorization: Bearer (Synapse PAT or OAuth JWT) only.
         # -------------------
-        authorizer_env = {"SYNAPSE_TEAM_ID": synapse_team_id}
-        if machine_api_key:
-            authorizer_env["MACHINE_API_KEY"] = machine_api_key
-
         authorizer_fn = lambda_.Function(
             self,
             "SynapseAuthorizerFunction",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="authorizer.handler",
             code=lambda_.Code.from_asset("src/lambda_authorizer"),
-            environment=authorizer_env,
+            environment={"SYNAPSE_TEAM_ID": synapse_team_id},
             timeout=cdk.Duration.seconds(10),
             memory_size=256,
         )
 
-        # REQUEST authorizer so the Lambda can read both Authorization and
-        # x-api-key headers.  Caching is disabled here; the Lambda does its
-        # own in-process token cache (5 min TTL) for warm instances.
+        # Caching is disabled here; the Lambda does its own in-process token
+        # cache (5 min TTL) for warm instances.
         token_authorizer = apigw.RequestAuthorizer(
             self,
             "SynapseRequestAuthorizer",

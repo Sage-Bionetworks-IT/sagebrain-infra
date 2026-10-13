@@ -42,6 +42,38 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
 - [ ] T126 Deploy order (prod): `app-prod-neptune-agent` first, then delete the two `export_value`
   lines in `app.py` and deploy `app-prod-neptune-api` (see `docs/memory/open-work.md`)
 
-## Phase 2 onward
-Tasks for the edge stack (Phase 2), alarms (Phase 3), cutover (Phase 4) and removal (Phase 5) are
-added here when their PRs start.
+## Phase 2 — the edge stack (`app-{env}-api`), behind `API_EDGE.enabled`
+- [x] T201 Contract: `job_id_max_chars` (128) and `auth_failure_retry_after_seconds` (5) join
+  `x-sagebrain-limits`; `sagebrain_core.limits` and the schema-limit test follow
+- [x] T202 Vectors in `cases.yaml`: the query message carries `user_id` (D-19), lowercase
+  `user-agent` (D-1), a body over 256 KiB (D-5), a `job_id` over 128 chars (D-3), and
+  `Retry-After: 2` on `pending` / `running` (D-15). Each has a `legacy` entry for today's Lambdas
+- [x] T203 Test: the edge handlers pass every `handler` vector's `expect` → `src/lambda_edge/jobs.py`
+  (D-1, D-2, D-5, D-11, D-15, D-19, FR-1–FR-4), with AWS client timeouts under the 10 s integration
+  timeout
+- [x] T204 Test: the docs Lambda serves Swagger UI with inlined assets, and the contract as JSON and
+  YAML with `servers` set to the calling stage → `src/lambda_docs/` (FR-8). Swagger UI is fetched at
+  bundle time, pinned and integrity-checked
+- [x] T205 Test: the synthesized routes equal the contract's paths and methods, and only the docs
+  routes skip the authorizer → `src/api_edge_stack.py` (R-14, FR-9)
+- [x] T206 Test: stage throttle 50 / 100, status methods 100 / 200 (D-17), integration timeouts,
+  authorizer TTL 0 and timeout, method metrics, access-log fields and retention — every value
+  read from `x-sagebrain-limits`
+- [x] T207 Test: gateway responses — `ACCESS_DENIED` / `UNAUTHORIZED` → 401 `Unauthorized` (D-10),
+  `MISSING_AUTHENTICATION_TOKEN` → 404 (D-3), `AUTHORIZER_FAILURE` and
+  `AUTHORIZER_CONFIGURATION_ERROR` → 503 + `Retry-After` (D-13), `THROTTLED` → 429 + `Retry-After: 1`
+  (D-18), `DEFAULT_4XX` / `DEFAULT_5XX` with ACAO
+- [x] T208 Test: least-privilege grants on the existing tables and queues (submit: write + send;
+  status: read) → wire into `app.py` behind `API_EDGE.enabled` (dev on, prod off)
+- [x] T209 `tools/load_probe.py`: the design-target load probe and the 300-request burst probe
+- [ ] T210 Deploy `app-dev-api`; run the parity probe (old vs new) and the load probe in dev; results
+  in `research.md`
+
+- [x] T211 Test: `x-api-key` alone is denied without calling Synapse, a valid bearer plus `x-api-key`
+  is allowed, and `MACHINE_API_KEY` grants nothing → delete the key path from the shared authorizer
+  and the unused `machine_api_key` plumbing (D-4). It was configured in no env, so the old stacks'
+  templates are unchanged; their authorizers only get the code update
+
+## Phase 3 onward
+Tasks for alarms (Phase 3), cutover (Phase 4) and removal (Phase 5) are added here when their PRs
+start.

@@ -18,10 +18,10 @@ FIELDS = {"query": "query", "ask": "question"}
 
 
 def _field_cases():
-    """Submit vectors whose body is a JSON object — body parsing itself is the HTTP layer's job."""
+    """Submit vectors whose body is a JSON object — body parsing and size are the HTTP layer's job."""
     out = []
     for case in load_cases(layer="handler"):
-        if case["request"]["method"] != "POST":
+        if case["request"]["method"] != "POST" or case["expect"]["status"] == 413:
             continue
         req = case["request"]
         raw = json.dumps(req["json"]) if "json" in req else req.get("body", "")

@@ -39,7 +39,8 @@ query validation, the 60 s SigV4 Neptune call, the sparql_query audit log
     agent stacks;
   - the docs Lambda for `/api` (R-15);
   - gateway responses: `ACCESS_DENIED` and `UNAUTHORIZED` → 401, `MISSING_AUTHENTICATION_TOKEN`
-    → 404, `AUTHORIZER_FAILURE` → 503 + `Retry-After`, `THROTTLED` → 429 + `Retry-After: 1`
+    → 404, `AUTHORIZER_FAILURE` and `AUTHORIZER_CONFIGURATION_ERROR` → 503 + `Retry-After: 300`,
+    `THROTTLED` → 429 + `Retry-After: 1`
     (D-18), `DEFAULT_4XX` / `DEFAULT_5XX` with CORS;
   - the stage throttle (50 / 100, applied per method) with a 100 / 200 override on the two
     status methods (D-17), method-level metrics, and an access-log group with 1-month retention.
@@ -100,6 +101,21 @@ Signal: the request-volume alarm, or 429s on the status methods.
   authorizer, and cold instances call Synapse. Signal: authorizer duration or errors.
 - **Fairness.** All callers share each method's budget, so one heavy user can take it.
   Signal: 429s concentrated on one principal in the access logs. Fix: #75.
+
+## Throttling granularity in API Gateway
+API Gateway can throttle per route as well as per stage, and both API types support it:
+- **HTTP APIs** (v2) have [route-level throttling](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-throttling.html):
+  a stage default plus overrides per route (`GET /query/{job_id}`).
+- **REST APIs** (v1), which this plan uses, do the same with stage **method settings**: a stage
+  default (`*/*`) plus overrides per resource path and method. The edge stack sets 50 / 100 as the
+  default and 100 / 200 on the two status methods (D-17). A method override replaces the stage
+  defaults, so it also restates metrics and the logging level.
+
+Both kinds of limit are shared by every caller of that route or method: neither is per user.
+The only per-client limit API Gateway offers is REST **usage plans keyed by API keys**, which would
+bring back a client-held `x-api-key` that D-4 removed. Per-user fairness stays with #75.
+Moving to an HTTP API would also give up gateway-response customisation (D-3, D-10, D-13, D-18)
+and the 413 / CORS bodies built on it, so route-level throttling alone is no reason to switch.
 
 ## Open decisions
 - **Custom domain (deferred).** Not needed to ship: API Gateway's `execute-api` URL is HTTPS.

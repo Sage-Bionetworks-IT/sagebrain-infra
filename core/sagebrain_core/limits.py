@@ -20,7 +20,11 @@ REQUEST_TIMEOUT_SECONDS = 10
 AUTH_TIMEOUT_SECONDS = 10
 SYNAPSE_CALL_TIMEOUT_SECONDS = 5
 AUTH_CACHE_TTL_SECONDS = 300
+AUTH_FAILURE_RETRY_AFTER_SECONDS = (
+    300  # Retry-After on the 503 when Synapse is down (weekly ~30 min maintenance)
+)
 JOB_TTL_SECONDS = 86400
+JOB_ID_MAX_CHARS = 128
 
 
 def as_spec_dict() -> dict:

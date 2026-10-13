@@ -39,6 +39,14 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
 ## Tooling
 - **CDK Docker bundling mounts the raw source directory**, so `exclude=` doesn't filter what the
   bundling command sees. Clean up inside the command (see `src/core_layer.py`).
+- **Stack tests still run Docker bundling.** Their `@aws-cdk/core:bundlingStacks` context key isn't
+  the one CDK reads (`aws:cdk:bundling-stacks`), so `pytest tests/` needs Docker and network
+  (pip, and npm for the docs Lambda's Swagger UI).
+- **A bundling `volumes` mount isn't part of the asset hash.** The docs Lambda mounts
+  `api/openapi.yaml` from outside its asset dir, so it sets a custom hash over both
+  (`src/api_edge_stack.py`); without it a contract-only change wouldn't redeploy the docs.
+- **PyPI `swagger-ui-bundle` ships Swagger UI 4**, which can't render OpenAPI 3.1. The docs Lambda
+  fetches `swagger-ui-dist` 5 from npm at bundle time instead.
 - **`pre-commit run --all-files` only checks tracked files.** `git add` new files first.
 - **Copilot coding agent fails to start on issues** with "insufficient GitHub AI Credits". It's a
   billing problem, not a bug in the issue.
