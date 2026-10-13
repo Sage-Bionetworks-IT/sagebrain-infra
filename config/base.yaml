@@ -28,6 +28,18 @@ NEPTUNE_API:
 API_EDGE:
   enabled: false
 
+# Alarm thresholds for the unified API (spec 001 Phase 3). A top-level key, not under API_EDGE:
+# the config merge is shallow, so an env file's API_EDGE block would replace these.
+API_EDGE_ALARMS:
+  # 5XX responses across the API in 5 minutes (handler errors, timeouts, Synapse down)
+  server_errors_per_5_minutes: 5
+  # Scaling path 1: above ~1M requests/day a fixed-cost front door is cheaper (reopens R-1)
+  requests_per_day: 1000000
+  # Scaling path 1: any 429 on GET /query/{job_id} or GET /ask/{job_id} in 5 minutes
+  status_throttled_per_5_minutes: 1
+  # Scaling path 2: oldest message in the query or ask job queue
+  queue_oldest_message_seconds: 300
+
 # Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
 # uploads and bulk-loads {portal}/YYYY-MM-DD/data/ (Turtle only) into its own
 # named graph. The manifest is the trigger and stays outside the load path.

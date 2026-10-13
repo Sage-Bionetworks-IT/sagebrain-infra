@@ -74,6 +74,18 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
   and the unused `machine_api_key` plumbing (D-4). It was configured in no env, so the old stacks'
   templates are unchanged; their authorizers only get the code update
 
-## Phase 3 onward
-Tasks for alarms (Phase 3), cutover (Phase 4) and removal (Phase 5) are added here when their PRs
-start.
+## Phase 3 — alarms and a dashboard for the edge stack (constitution VII)
+- [x] T301 Test: alarm thresholds come from `API_EDGE_ALARMS` in config (a top-level key: the config
+  merge is shallow) → `config/base.yaml`
+- [x] T302 Test: 5XX alarm on the API (Sum over 5 min) and the request-volume alarm (Sum over 1 day,
+  1M, scaling path 1) → `src/api_edge_monitoring.py`
+- [x] T303 Test: an access-log metric filter counts 429s per `resourcePath` (API Gateway has no 429
+  metric); an alarm on each status method (scaling path 1)
+- [x] T304 Test: an oldest-message alarm on the query and ask queues, 5 min (scaling path 2)
+- [x] T305 Test: the dashboard graphs every contract route (requests, 4XX, 5XX, p99 latency, 429s),
+  the edge Lambdas' errors and p99 duration, and queue age
+- [ ] T306 Deploy `app-dev-api`; check the alarms reach `OK` and the dashboard renders
+- [ ] T307 Decide where alarms notify (none do today, old or new) before prod cutover
+
+## Phase 4 onward
+Tasks for cutover (Phase 4) and removal (Phase 5) are added here when their PRs start.

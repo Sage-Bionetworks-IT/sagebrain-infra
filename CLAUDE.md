@@ -279,6 +279,10 @@ until cutover. The tables, queues and workers stay in `app-*-neptune-api` / `app
   `{proxy+}` (a gateway response alone misses requests that carry a Bearer header; see gotchas).
 - Gateway responses: 401 `Unauthorized` for every denial, 404 `Not Found` for unknown routes, 503 +
   `Retry-After: 300` when the authorizer raises, 429 + `Retry-After: 1` when throttled; all with CORS.
+- Alarms and dashboard (`app-{env}-api-overview`, Phase 3): `src/api_edge_monitoring.py`. 5XX, 429s
+  on each status method (an access-log metric filter: API Gateway has no 429 metric), requests/day
+  (1M reopens R-1), oldest queued job. Thresholds in `API_EDGE_ALARMS` (`config/base.yaml`); no
+  alarm actions yet
 - Probes: `tools/parity_probe.py` (old vs new, same base twice for the unified API) and
   `tools/load_probe.py` (`load`: design-target polling; `burst`: 300 POSTs → ~100 through).
 

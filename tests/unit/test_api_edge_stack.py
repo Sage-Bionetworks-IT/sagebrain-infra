@@ -1,5 +1,6 @@
 """Edge stack (src/api_edge_stack.py): routes match the contract, every threshold comes from it."""
 
+import json
 import aws_cdk as cdk
 import pytest
 from aws_cdk import aws_dynamodb as dynamodb
@@ -8,6 +9,9 @@ from aws_cdk.assertions import Match, Template
 
 from src.api_edge_stack import ApiEdgeStack
 from src.contract import LIMITS, operations, public_operations
+from src.utils import load_context_config
+
+ALARMS = load_context_config("dev")["API_EDGE_ALARMS"]
 
 
 @pytest.fixture(scope="module")
@@ -34,6 +38,7 @@ def template():
         ask_job_queue=sqs.Queue(jobs_stack, "AskQueue"),
         synapse_team_id="273957",
         stage_name="dev",
+        alarm_thresholds=ALARMS,
     )
     return Template.from_stack(stack)
 
@@ -441,3 +446,92 @@ def test_edge_stack_is_enabled_per_env(env_name, enabled):
     from src.utils import load_context_config
 
     assert load_context_config(env_name)["API_EDGE"]["enabled"] is enabled
+
+
+# ---------------------------------------------------------------------------
+# Alarms and dashboard (Phase 3, constitution VII)
+# ---------------------------------------------------------------------------
+
+
+def _alarms(template) -> dict:
+    """AlarmDescription prefix → alarm properties."""
+    return {
+        props["Properties"]["AlarmDescription"]: props["Properties"]
+        for props in template.find_resources("AWS::CloudWatch::Alarm").values()
+    }
+
+
+def _alarm(template, metric_name, **dimensions) -> dict:
+    (props,) = [
+        props
+        for props in _alarms(template).values()
+        if props["MetricName"] == metric_name
+        and all(
+            {"Name": k, "Value": v} in props["Dimensions"]
+            for k, v in dimensions.items()
+        )
+    ]
+    return props
+
+
+def test_server_errors_alarm(template):
+    props = _alarm(template, "5XXError", ApiName="sagebrain-api", Stage="dev")
+    assert props["Namespace"] == "AWS/ApiGateway"
+    assert (props["Statistic"], props["Period"]) == ("Sum", 300)
+    assert props["Threshold"] == ALARMS["server_errors_per_5_minutes"]
+
+
+def test_request_volume_alarm(template):
+    props = _alarm(template, "Count", ApiName="sagebrain-api", Stage="dev")
+    assert (props["Statistic"], props["Period"]) == ("Sum", 86400)
+    assert props["Threshold"] == ALARMS["requests_per_day"] == 1_000_000
+
+
+@pytest.mark.parametrize("path", ["/query/{job_id}", "/ask/{job_id}"])
+def test_status_throttled_alarm(template, path):
+    props = _alarm(template, "Throttled", ResourcePath=path)
+    assert props["Namespace"] == "SageBrain/Api"
+    assert (props["Statistic"], props["Period"]) == ("Sum", 300)
+    assert props["Threshold"] == ALARMS["status_throttled_per_5_minutes"]
+
+
+def test_queue_age_alarms(template):
+    alarms = [
+        props
+        for props in _alarms(template).values()
+        if props["MetricName"] == "ApproximateAgeOfOldestMessage"
+    ]
+    assert len(alarms) == 2  # query and ask
+    for props in alarms:
+        assert (props["Statistic"], props["Period"]) == ("Maximum", 300)
+        assert props["Threshold"] == ALARMS["queue_oldest_message_seconds"] == 300
+
+
+def test_alarms_ignore_missing_data(template):
+    for props in _alarms(template).values():
+        assert props["TreatMissingData"] == "notBreaching"
+        assert props["ComparisonOperator"] == "GreaterThanOrEqualToThreshold"
+
+
+def test_throttled_metric_filter_counts_429s_per_resource_path(template):
+    template.has_resource_properties(
+        "AWS::Logs::MetricFilter",
+        {
+            "FilterPattern": '{ $.status = "429" }',
+            "MetricTransformations": [
+                {
+                    "MetricNamespace": "SageBrain/Api",
+                    "MetricName": "Throttled",
+                    "MetricValue": "1",
+                    "Dimensions": [{"Key": "ResourcePath", "Value": "$.resourcePath"}],
+                }
+            ],
+        },
+    )
+
+
+def test_dashboard_has_every_route(template):
+    (dashboard,) = template.find_resources("AWS::CloudWatch::Dashboard").values()
+    body = json.dumps(dashboard["Properties"]["DashboardBody"])
+    for path, method in operations():
+        assert f"{method} {path}" in body

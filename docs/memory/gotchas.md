@@ -43,6 +43,12 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   but it would time out a synchronous API Gateway call.
 
 ## Tooling
+- **An env file's top-level key replaces base.yaml's whole block.** `load_context_config` merges
+  shallowly (`{**base, **env}`), so `API_EDGE: {enabled: true}` in `dev.yaml` drops every other
+  `API_EDGE` key from `base.yaml`. Put shared settings under their own top-level key
+  (`API_EDGE_ALARMS`), or repeat them in the env file.
+- **A CDK metric with a `label` makes an alarm use the `Metrics` (math) form**, with no top-level
+  `MetricName`. Label the dashboard copy (`metric.with_(label=…)`), not the alarm's metric.
 - **CDK Docker bundling mounts the raw source directory**, so `exclude=` doesn't filter what the
   bundling command sees. Clean up inside the command (see `src/core_layer.py`).
 - **Stack tests still run Docker bundling.** Their `@aws-cdk/core:bundlingStacks` context key isn't

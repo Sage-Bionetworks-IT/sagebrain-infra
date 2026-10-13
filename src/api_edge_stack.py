@@ -9,6 +9,7 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
+from src.api_edge_monitoring import ApiEdgeMonitoring
 from src.contract import LIMITS, SPEC_PATH
 from src.core_layer import sagebrain_core_layer
 
@@ -60,6 +61,7 @@ class ApiEdgeStack(cdk.Stack):
         ask_job_queue: sqs.IQueue,
         synapse_team_id: str,
         stage_name: str,
+        alarm_thresholds: dict,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -365,6 +367,24 @@ class ApiEdgeStack(cdk.Stack):
                     authorization_type=apigw.AuthorizationType.NONE,
                     method_responses=[not_found_response],
                 )
+
+        ApiEdgeMonitoring(
+            self,
+            "Monitoring",
+            api=self.api,
+            stage_name=stage_name,
+            access_log_group=access_log_group,
+            functions={
+                "query submit": self.query_submit_fn,
+                "query status": self.query_status_fn,
+                "ask submit": self.ask_submit_fn,
+                "ask status": self.ask_status_fn,
+                "authorizer": authorizer_fn,
+                "docs": self.docs_fn,
+            },
+            queues={"query": query_job_queue, "ask": ask_job_queue},
+            thresholds=alarm_thresholds,
+        )
 
         # -------------------
         # Outputs
