@@ -7,8 +7,8 @@ Invoked as three distinct Step Functions tasks via the ``action`` field:
     check   →  poll the load job status (called in the state machine's Wait loop)
     record  →  write the terminal result to the tracking table + emit an audit log
 
-Neptune calls go through the boto3 ``neptunedata`` client, which SigV4-signs them
-for the ``neptune-db`` service (IAM auth is on). The Lambda itself does not wait
+Neptune requests are SigV4-signed for the ``neptune-db`` service (IAM auth is on),
+mirroring the query worker in src/lambda/query.py. The Lambda itself does not wait
 for the load — the state machine owns the Wait/Choice polling loop, so each
 invocation is a single fast HTTP call.
 
@@ -38,7 +38,10 @@ import time
 from decimal import Decimal
 
 import boto3
-from botocore.config import Config
+import botocore.session
+import requests
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 
 NEPTUNE_ENDPOINT = os.environ["NEPTUNE_ENDPOINT"]
 REGION = os.environ["AWS_REGION"]
@@ -54,16 +57,6 @@ NEPTUNE_PORT = 8182
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 _dynamodb = boto3.resource("dynamodb")
-_neptunedata = boto3.client(
-    "neptunedata",
-    endpoint_url=f"https://{NEPTUNE_ENDPOINT}:{NEPTUNE_PORT}",
-    region_name=REGION,
-    # One attempt, like the old requests calls: botocore's retries could outlast the 30 s
-    # Lambda timeout and re-submit start_loader_job. Step Functions owns retrying.
-    config=Config(
-        connect_timeout=3, read_timeout=20, retries={"total_max_attempts": 1}
-    ),
-)
 
 
 # ---------------------------------------------------------------------------
@@ -110,45 +103,72 @@ def parse_snapshot(bucket: str, key: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+# TODO use boto client: https://docs.aws.amazon.com/boto3/latest/reference/services/neptunedata.html
+def _signed_headers(method: str, url: str, body: str, headers: dict) -> dict:
+    session = botocore.session.Session()
+    credentials = session.get_credentials()
+    aws_request = AWSRequest(method=method, url=url, data=body, headers=headers)
+    SigV4Auth(credentials, "neptune-db", REGION).add_auth(aws_request)
+    return dict(aws_request.headers)
+
+
+# TODO use boto client: https://docs.aws.amazon.com/boto3/latest/reference/services/neptunedata.html
 def _start_bulk_load(prefix: str, named_graph: str) -> str:
     """Submit an S3 bulk-load job into a named graph. Returns the loadId."""
-    resp = _neptunedata.start_loader_job(
-        source=prefix,
-        format="turtle",
-        iamRoleArn=NEPTUNE_LOAD_ROLE_ARN,
-        s3BucketRegion=REGION,
+    url = f"https://{NEPTUNE_ENDPOINT}:{NEPTUNE_PORT}/loader"
+    payload = {
+        "source": prefix,
+        "format": "turtle",
+        "iamRoleArn": NEPTUNE_LOAD_ROLE_ARN,
+        "region": REGION,
         # Append-only: surface bad data instead of silently skipping it.
-        failOnError="TRUE",
-        parallelism=PARALLELISM,
+        "failOnError": "TRUE",
+        "parallelism": PARALLELISM,
         # Queue behind any in-flight load rather than erroring on a busy cluster.
-        queueRequest="TRUE",
+        "queueRequest": "TRUE",
         # Route every triple in this snapshot into its own named graph.
-        parserConfiguration={"namedGraphUri": named_graph},
+        "parserConfiguration": {"namedGraphUri": named_graph},
+    }
+    body = json.dumps(payload)
+    headers = {"Content-Type": "application/json"}
+    resp = requests.post(
+        url, data=body, headers=_signed_headers("POST", url, body, headers), timeout=25
     )
-    return resp["payload"]["loadId"]
+    resp.raise_for_status()
+    return resp.json()["payload"]["loadId"]
 
 
+# TODO Same here with using boto:
+# https://docs.aws.amazon.com/boto3/latest/reference/services/neptunedata/client/get_loader_job_status.html
 def _load_status(load_id: str) -> dict:
     """Return the ``overallStatus`` block for a load job."""
-    resp = _neptunedata.get_loader_job_status(loadId=load_id)
-    return resp["payload"]["overallStatus"]
+    url = f"https://{NEPTUNE_ENDPOINT}:{NEPTUNE_PORT}/loader/{load_id}"
+    resp = requests.get(url, headers=_signed_headers("GET", url, "", {}), timeout=25)
+    resp.raise_for_status()
+    return resp.json()["payload"]["overallStatus"]
 
 
 def _load_errors(load_id: str, limit: int = 5) -> list:
     """Per-file parse/insert errors for a failed load (absent from overallStatus).
 
-    Calls ``get_loader_job_status`` with ``errors``/``details`` on, which returns
+    Calls ``GET /loader/{loadId}?errors=TRUE&details=TRUE`` which returns
     ``errorLogs`` entries with ``errorCode``, ``errorMessage``, ``fileName``,
     and ``recordNum`` — enough to identify the bad file and line without
     manually querying Neptune from SageMaker Studio.
     Returns an empty list if the request fails so a transient error here
     never masks the original load failure.
     """
+    url = (
+        f"https://{NEPTUNE_ENDPOINT}:{NEPTUNE_PORT}/loader/{load_id}"
+        f"?errors=TRUE&details=TRUE&errorsPerPage={limit}"
+    )
     try:
-        resp = _neptunedata.get_loader_job_status(
-            loadId=load_id, errors=True, details=True, errorsPerPage=limit
+        resp = requests.get(
+            url, headers=_signed_headers("GET", url, "", {}), timeout=10
         )
-        return resp.get("payload", {}).get("errors", {}).get("errorLogs", [])
+        resp.raise_for_status()
+        payload = resp.json().get("payload", {})
+        return payload.get("errors", {}).get("errorLogs", [])
     except Exception as exc:  # noqa: BLE001
         _log(action="load_errors_fetch_failed", load_id=load_id, error=str(exc))
         return []

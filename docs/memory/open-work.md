@@ -10,7 +10,9 @@ resolves it.
   strategy (#52).
 - **Release-keyed sources** (e.g. Reactome `v97`) are rejected because the snapshot token must be
   a date; the proposal is to widen it to `v…` tags (#61).
-- **Bulk loader mode**: `NEW` vs the inherited `AUTO` (#44).
+- **Bulk loader mode**: `NEW` vs the inherited `AUTO` (#44). Move the loader to the boto3
+  `neptunedata` client (#50). Note: `neptunedata` has **no SPARQL execute API**, only loader,
+  openCypher and Gremlin.
 - **Turtle file size vs serverless capacity** (#10): aim for 100 MB–1 GB per file.
 
 ## Query path / agent

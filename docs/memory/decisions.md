@@ -16,10 +16,6 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   joined the union. It has been removed (#68): every load now goes through the pipeline.
 - **Load errors are captured per file on failure** (#49, issue #46): the loader fetches
   `?errors=TRUE&details=TRUE`, so you rarely need direct Neptune access to see what broke.
-- **The loader calls Neptune through boto3 `neptunedata`** (#50, ported in spec 001), one attempt
-  per call, with Step Functions owning retries. SPARQL can't follow: `neptunedata` has **no SPARQL
-  execute API** (only loader, openCypher and Gremlin), so `sagebrain_core.neptune` keeps its own
-  SigV4 signing over `requests`.
 
 ## Infrastructure
 - **Neptune is serverless-only** with per-env min/max capacity (#45). Big Turtle files can OOM the
