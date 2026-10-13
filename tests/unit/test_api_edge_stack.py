@@ -12,6 +12,7 @@ from src.contract import LIMITS, operations, public_operations
 from src.utils import load_context_config
 
 ALARMS = load_context_config("dev")["API_EDGE_ALARMS"]
+ALARM_EMAIL = load_context_config("dev")["ALARM_EMAIL"]
 
 
 @pytest.fixture(scope="module")
@@ -39,6 +40,7 @@ def template():
         synapse_team_id="273957",
         stage_name="dev",
         alarm_thresholds=ALARMS,
+        alarm_email=ALARM_EMAIL,
     )
     return Template.from_stack(stack)
 
@@ -535,3 +537,24 @@ def test_dashboard_has_every_route(template):
     body = json.dumps(dashboard["Properties"]["DashboardBody"])
     for path, method in operations():
         assert f"{method} {path}" in body
+
+
+def test_every_alarm_emails_the_topic(template):
+    (topic,) = template.find_resources("AWS::SNS::Topic")
+    for props in _alarms(template).values():
+        assert props["AlarmActions"] == [{"Ref": topic}]
+    template.has_resource_properties(
+        "AWS::SNS::Subscription",
+        {"Protocol": "email", "Endpoint": ALARM_EMAIL, "TopicArn": {"Ref": topic}},
+    )
+
+
+@pytest.mark.parametrize(
+    "env_name,email",
+    [
+        ("dev", "aws-sagebrain-dev@sagebase.org"),
+        ("prod", "aws-sagebrain-prod@sagebase.org"),
+    ],
+)
+def test_alarm_email_per_env(env_name, email):
+    assert load_context_config(env_name)["ALARM_EMAIL"] == email

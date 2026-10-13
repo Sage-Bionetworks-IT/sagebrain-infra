@@ -84,8 +84,11 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
 - [x] T304 Test: an oldest-message alarm on the query and ask queues, 5 min (scaling path 2)
 - [x] T305 Test: the dashboard graphs every contract route (requests, 4XX, 5XX, p99 latency, 429s),
   the edge Lambdas' errors and p99 duration, and queue age
-- [ ] T306 Deploy `app-dev-api`; check the alarms reach `OK` and the dashboard renders
-- [ ] T307 Decide where alarms notify (none do today, old or new) before prod cutover
+- [ ] T306 After CI deploys `app-dev-api`: confirm the SNS email subscription, check the alarms
+  reach `OK` and the dashboard renders
+- [x] T307 Test: every alarm notifies one SNS topic with an email subscription from `ALARM_EMAIL`
+  (dev `aws-sagebrain-dev@sagebase.org`, prod `aws-sagebrain-prod@sagebase.org`). The
+  subscription needs a one-time confirmation from that mailbox
 
 ## Phase 4 onward
 Tasks for cutover (Phase 4) and removal (Phase 5) are added here when their PRs start.

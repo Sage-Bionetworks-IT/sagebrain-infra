@@ -62,6 +62,7 @@ class ApiEdgeStack(cdk.Stack):
         synapse_team_id: str,
         stage_name: str,
         alarm_thresholds: dict,
+        alarm_email: str,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -384,6 +385,7 @@ class ApiEdgeStack(cdk.Stack):
             },
             queues={"query": query_job_queue, "ask": ask_job_queue},
             thresholds=alarm_thresholds,
+            alarm_email=alarm_email,
         )
 
         # -------------------

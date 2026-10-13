@@ -4,15 +4,18 @@ At least what the old APIs have in the monitoring stack (constitution VII), spli
 by the stage's method-level metrics, plus the scaling-path signals from the plan: daily
 request volume, 429s on the status methods, and the age of the oldest queued job.
 
-Thresholds come from `API_EDGE_ALARMS` in config. No alarm has an action yet, like the
-monitoring stack's DLQ alarms.
+Thresholds come from `API_EDGE_ALARMS` in config. Every alarm emails `ALARM_EMAIL` (per env)
+through one SNS topic; the address has to confirm the subscription once.
 """
 
 import aws_cdk as cdk
 from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_cloudwatch as cw
+from aws_cdk import aws_cloudwatch_actions as cw_actions
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
+from aws_cdk import aws_sns as sns
+from aws_cdk import aws_sns_subscriptions as subscriptions
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
@@ -38,6 +41,7 @@ class ApiEdgeMonitoring(Construct):
         functions: dict[str, lambda_.IFunction],
         queues: dict[str, sqs.IQueue],
         thresholds: dict,
+        alarm_email: str,
     ) -> None:
         super().__init__(scope, construct_id)
 
@@ -80,8 +84,12 @@ class ApiEdgeMonitoring(Construct):
         # -------------------
         # Alarms
         # -------------------
+        self.alarm_topic = sns.Topic(self, "AlarmTopic")
+        self.alarm_topic.add_subscription(subscriptions.EmailSubscription(alarm_email))
+        alarm_action = cw_actions.SnsAction(self.alarm_topic)
+
         def alarm(construct_id, metric, threshold, description):
-            return cw.Alarm(
+            created = cw.Alarm(
                 self,
                 construct_id,
                 metric=metric,
@@ -91,6 +99,8 @@ class ApiEdgeMonitoring(Construct):
                 alarm_description=description,
                 treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
             )
+            created.add_alarm_action(alarm_action)
+            return created
 
         alarms = [
             alarm(
