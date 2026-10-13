@@ -65,6 +65,23 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   in-process queries get the same query limits and `sparql_query` audit log as `POST /query`, with
   no HTTP loop-back and no bearer token in SQS. Jobs from the old APIs carry no caller id, so they
   are attributed to `legacy-apigw` until those APIs are deleted (spec 001 D-19).
+- **`sagebrain_core` lives in `core/`, not under `src/` (2026-10-12, #71).** `src/` is the CDK app,
+  imported as `src.*`. In Lambda the layer puts `sagebrain_core` at the top level, so a copy under
+  `src/` would invite `from src.sagebrain_core import …`, which passes tests and fails in Lambda.
+  It's a standalone package (`core/pyproject.toml`): the layer ships it now, and a future API
+  service can `pip install ./core` without depending on CDK. A future service gets its own
+  top-level directory next to `core/`, not a place under `src/`.
+- **The contract describes the API, not its implementation (2026-10-12, #73).** `api/openapi.yaml`'s
+  descriptions are written for clients, because they feed Swagger UI and, later, generated
+  server and client code. Notes on where a limit is enforced (shared service, API Gateway,
+  worker concurrency) go in YAML comments and the spec's parity matrix. Values that differ per env
+  (the query worker cap) live in `config/`, not in `x-sagebrain-limits`.
+- **`/api` ships with the edge stack (Phase 2), not with the contract (2026-10-12, #73).** It's a
+  route on the one combined API, and its `servers` URL is that API's stage URL. Building it earlier
+  would put it on one of the two APIs that Phase 5 deletes. The contract describes the routes now.
+- **An oversized query result fails the job, not the SQS message (2026-10-12, #71).** Over
+  350 KB the worker marks the job `error` and returns: retrying would get the same result, then
+  land in the DLQ (spec 001 D-16).
 
 ## Governance
 - **Access requirements first, then ACLs** (spec 002, #66; it builds on spec 001: #74, #73, #71, #72). It replaces earlier
