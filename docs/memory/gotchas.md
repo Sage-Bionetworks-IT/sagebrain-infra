@@ -49,6 +49,14 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   (`API_EDGE_ALARMS`), or repeat them in the env file.
 - **A CDK metric with a `label` makes an alarm use the `Metrics` (math) form**, with no top-level
   `MetricName`. Label the dashboard copy (`metric.with_(label=…)`), not the alarm's metric.
+- **An API Gateway REST throttle is not a strict token bucket.** 300 concurrent `POST /query` (273
+  of them in one second) all got through a 50 / 100 stage on both the old and the unified API;
+  600 got 60, then 179, 429s (dev, 2026-10-13). A burst probe can show the throttle engages, not
+  where.
+- **API Gateway's `5XXError` includes the authorizer's 503** (D-13), which it returns for the ~30 min
+  every Sunday that Synapse is down for maintenance. Alarm on server errors from an access-log
+  metric filter that excludes 503 (`src/api_edge_monitoring.py`). Check a filter pattern with
+  `aws logs test-metric-filter` before relying on it.
 - **CDK Docker bundling mounts the raw source directory**, so `exclude=` doesn't filter what the
   bundling command sees. Clean up inside the command (see `src/core_layer.py`).
 - **Stack tests still run Docker bundling.** Their `@aws-cdk/core:bundlingStacks` context key isn't

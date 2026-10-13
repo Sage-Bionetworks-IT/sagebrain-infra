@@ -285,7 +285,8 @@ until cutover. The tables, queues and workers stay in `app-*-neptune-api` / `app
   access-log metric filters: `5XXError` includes the authorizer's 503. Thresholds in `API_EDGE_ALARMS` (`config/base.yaml`); alarms
   email `ALARM_EMAIL` (per env) via SNS, which needs a one-time subscription confirmation
 - Probes: `tools/parity_probe.py` (old vs new, same base twice for the unified API) and
-  `tools/load_probe.py` (`load`: design-target polling; `burst`: 300 POSTs → ~100 through).
+  `tools/load_probe.py` (`load`: design-target polling; `burst`: 600 POSTs → some 429s, each with D-18's headers). Dev results (T210) are in
+  the spec's `research.md`.
 
 ```bash
 cdk deploy app-dev-api --profile sagebrain-dev   # also adds exports to the two old stacks
