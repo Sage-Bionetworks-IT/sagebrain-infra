@@ -13,8 +13,8 @@ Usage:
     # Unified API: one host serves both; pass the same base twice
     python tools/parity_probe.py \\
         --target apigw https://<query-api>/prod https://<agent-api>/prod \\
-        --target unified https://<api-id>.execute-api.us-east-1.amazonaws.com/prod \\
-                         https://<api-id>.execute-api.us-east-1.amazonaws.com/prod \\
+        --target unified https://<api-id>.execute-api.us-east-1.amazonaws.com/<env> \\
+                         https://<api-id>.execute-api.us-east-1.amazonaws.com/<env> \\
         --legacy apigw
 
 --legacy LABEL checks that target against a case's `legacy` expectation (the recorded

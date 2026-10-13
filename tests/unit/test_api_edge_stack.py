@@ -33,6 +33,7 @@ def template():
         ask_job_table=table("AskJobs"),
         ask_job_queue=sqs.Queue(jobs_stack, "AskQueue"),
         synapse_team_id="273957",
+        stage_name="dev",
     )
     return Template.from_stack(stack)
 
@@ -76,6 +77,10 @@ def _function_logical_id(template, handler) -> str:
 # ---------------------------------------------------------------------------
 # Routes vs the contract (R-14, FR-9)
 # ---------------------------------------------------------------------------
+
+
+def test_stage_is_named_after_the_env(template):
+    template.has_resource_properties("AWS::ApiGateway::Stage", {"StageName": "dev"})
 
 
 def test_routes_equal_the_contract(template):
@@ -184,7 +189,6 @@ def test_cors_preflight_matches_the_old_apis(template):
 def _method_settings(template) -> dict:
     (stage,) = template.find_resources("AWS::ApiGateway::Stage").values()
     props = stage["Properties"]
-    assert props["StageName"] == "prod"
     return {
         (s["ResourcePath"], s["HttpMethod"]): s for s in props["MethodSettings"]
     }, props

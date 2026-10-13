@@ -10,7 +10,7 @@ Load and burst probes for the unified API (spec 001 success criteria).
 
 Usage:
     export SYNAPSE_AUTH_TOKEN=<synapse-pat>   # team member
-    BASE=https://<api-id>.execute-api.us-east-1.amazonaws.com/prod
+    BASE=https://<api-id>.execute-api.us-east-1.amazonaws.com/<env>
     python tools/load_probe.py load  "$BASE" --users 100 --duration 600
     python tools/load_probe.py burst "$BASE" --requests 300
 

@@ -262,7 +262,8 @@ curl -H "Authorization: Bearer <synapse-pat>" <AgentApiUrl>/$JOB_ID
 
 ## Unified API (spec 001 Phase 2): src/api_edge_stack.py
 
-One REST API (stage `prod`) that replaces the two old APIs' front doors; it runs alongside them
+One REST API (stage named after the env: `/dev` in dev, `/prod` in prod; the old APIs are `/prod`
+in every env) that replaces the two old APIs' front doors; it runs alongside them
 until cutover. The tables, queues and workers stay in `app-*-neptune-api` / `app-*-neptune-agent`.
 - `src/lambda_edge/jobs.py` — the four submit/status handlers (one module, one handler per Lambda),
   on the `sagebrain_core` layer. Same responses as the old Lambdas plus the spec deviations: lowercase

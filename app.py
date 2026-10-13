@@ -122,6 +122,8 @@ if config.get("API_EDGE", {}).get("enabled", False):
         ask_job_table=neptune_agent_stack.job_table,
         ask_job_queue=neptune_agent_stack.job_queue,
         synapse_team_id=config["AUTH"]["synapse_team_id"],
+        # The base URL ends in /{env}; the old APIs keep CDK's default /prod in every env
+        stage_name=env_name,
         env=env,
     )
 

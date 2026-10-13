@@ -93,6 +93,9 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 - **`/api` ships with the edge stack (Phase 2), not with the contract (2026-10-12, #73).** It's a
   route on the one combined API, and its `servers` URL is that API's stage URL. Building it earlier
   would put it on one of the two APIs that Phase 5 deletes. The contract describes the routes now.
+- **The unified API's stage is named after the env (2026-10-13).** Dev's base URL ends in `/dev`,
+  prod's in `/prod`, so a dev URL no longer reads as prod. Only the new API changed, before any
+  client moved to it; the old APIs keep CDK's default `/prod` in every env until Phase 5 deletes them.
 - **An oversized query result fails the job, not the SQS message (2026-10-12, #71).** Over
   350 KB the worker marks the job `error` and returns: retrying would get the same result, then
   land in the DLQ (spec 001 D-16).

@@ -120,13 +120,13 @@ beyond the team.
   - `GET /api` serves Swagger UI. Its assets are bundled in the Lambda, not loaded from a CDN.
   - `GET /api/openapi.json` serves the committed `api/openapi.yaml` as JSON, except that
     `servers` is set to this deployment's stage URL
-    (`https://<id>.execute-api.<region>.amazonaws.com/prod`), so "Try it out" and generated
+    (`https://<id>.execute-api.<region>.amazonaws.com/<env>`), so "Try it out" and generated
     clients hit the right host.
   - `GET /api/openapi.yaml` serves the same document as YAML.
 
   These routes get the same stage throttle as every other method. "Try it out" works with
   **Authorize** (Synapse PAT).
-- **FR-9 One API.** One REST API, stage `prod`, in its own edge stack, with the routes
+- **FR-9 One API.** One REST API, stage named after the environment (`dev`, `prod`), in its own edge stack, with the routes
   `POST /query`, `GET /query/{job_id}`, `POST /ask`, `GET /ask/{job_id}`, `GET /api`,
   `GET /api/openapi.json` and `GET /api/openapi.yaml`. Method-level metrics are on, so
   `/query` and `/ask` are separable in CloudWatch.
@@ -154,7 +154,7 @@ retired with the move away from FastAPI ([R-5](research.md)).
 | D-3 | Unknown paths return 403 with a SigV4 parse error and no CORS; a blank `job_id` can't reach the handler | 404 `{"message":"Not Found"}` + ACAO from mock `ANY` methods on every resource plus a root `{proxy+}`, and a gateway response mapping `MISSING_AUTHENTICATION_TOKEN` to the same. A `job_id` over 128 chars returns 400 `Missing job_id` | Explicit input bounds; an unknown path is not an auth error |
 | D-4 | The authorizer has an `x-api-key` machine-key path (unconfigured in every environment) | Synapse bearer tokens only; `x-api-key` is not a credential | Nothing uses it; the agent no longer needs a machine credential (D-8) |
 | D-5 | Bodies up to 10 MB are accepted | Handlers return 413 `{"message":"Request Too Long"}` above 256 KiB. API Gateway's own 10 MB cap can't be lowered, so the check is in the handler | The largest valid body is about 8 KB; this narrows the abuse surface |
-| D-7 | Two hostnames, one per API, each with a `/prod` stage prefix | One hostname for both. The `/prod` prefix stays until a custom domain is added (out of scope) | One endpoint |
+| D-7 | Two hostnames, one per API, each with a `/prod` stage prefix | One hostname for both. The stage prefix is the env (`/dev`, `/prod`) and stays until a custom domain is added (out of scope) | One endpoint |
 | D-8 | `/ask` puts the caller's raw `Authorization` header in SQS; the agent re-presents it to `POST /query` over HTTPS and polls every 3 s | `/ask` enqueues `{job_id, question, user_id, source_ip}`; the agent runs its queries in-process through the shared service, attributed to `user_id` with `source: agent` | No bearer tokens in queues; no HTTP loopback |
 | D-9 | Agent queries go through the query SQS queue and worker (two hops), with a 70 s poll timeout | They run synchronously in the agent worker against the Neptune reader with a 60 s timeout. The agent worker gains read-only Neptune IAM and port 8182 ingress, and loses `NEPTUNE_QUERY_URL` | Fewer moving parts and lower latency |
 | D-10 | Bad or non-member bearer returns 401 `{"message":"User is not authorized to access this resource with an explicit deny in an identity-based policy"}` (observed in dev) | Every auth failure returns 401 `{"message":"Unauthorized"}` | One body for clients; no IAM wording leaked |
