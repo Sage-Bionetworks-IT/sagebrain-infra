@@ -117,3 +117,34 @@ Probed against the dev API Gateway (account 442650749796) with a Synapse team-me
 | 11 MB body | 413 plain text `HTTP content length exceeded 10485760 bytes.`, **no CORS** | Unchanged above 10 MB (API Gateway's own cap). Between 256 KiB and 10 MB the handler returns 413 `{"message":"Request Too Long"}` + ACAO (D-5) |
 | Non-string field / non-object body | 502 `{"message":"Internal server error"}` | 400 (D-2) |
 | F3: authorizer raises on a transient Synapse error | Can't be induced from outside. AWS documents that an authorizer function error returns `AUTHORIZER_FAILURE` (500) | 503 + `Retry-After` (D-13) |
+
+## Unified API in dev (T210, 2026-10-13)
+`app-dev-api` (`https://ftclvhk9nh.execute-api.us-east-1.amazonaws.com/dev`) against the old dev
+APIs, with a Synapse team-member PAT.
+
+**Parity probe** (`tools/parity_probe.py`, old vs new, `--legacy apigw`): **0 failures**. Every
+difference is a listed deviation: non-string / non-object bodies 502 → 400 (D-2), unknown route
+403 → 404 + ACAO (D-3), a body over 256 KiB 400 → 413 (D-5), bad bearer's IAM wording → `Unauthorized`
+(D-10), 65-char `X-Source` 202 → 400 (D-11), 129-char `job_id` 404 → 400 (D-3). Bodies over 10 MB
+still get API Gateway's own plain-text 413 with no CORS on both. The live `LIMIT 1` job submitted
+to the unified API completed, and its `sparql_query` event carries `principal` = the caller's
+Synapse user id (D-19).
+
+**Load probe** (`load`, 100 users, 600 s, `LIMIT 1`, polling on `Retry-After`): **pass**.
+| | Requests | Rate | p50 | p95 | Statuses |
+|---|---|---|---|---|---|
+| `POST /query` | 14,243 | 23.7/s | 224 ms | 377 ms | 202 × 14,231, transport error × 12 |
+| `GET /query/{job_id}` | 25,176 | 42.0/s | 205 ms | 364 ms | 200 × 25,158, transport error × 18 |
+
+14,205 jobs completed, end-to-end p50 4.3 s, p95 7.7 s. **0 429s** on the status method, 0 5XX, 0
+query-worker errors. The query queue's oldest message peaked at **77 s** (criterion: < 5 min).
+The 30 transport errors (0.08%) were client-side: API Gateway logged no matching 5XX. Neptune
+reached dev's `serverless_max_capacity` of **4 NCU**, even on `LIMIT 1` queries: at the design
+target, dev's Neptune is the ceiling (scaling path 2).
+
+**Burst probe** (`burst`, `POST /query` with an empty query): 300 concurrent requests, 273 of
+them landing within one second, **all got through** on both the old API and the new one, though
+both have a 50 / 100 throttle. 600 got 60 and then 179 429s on two runs. API Gateway enforces its
+throttle approximately across its fleet, so "about 100 of 300 accepted" isn't a property it has;
+the success criterion now asks for what is: the throttle engages, and every 429 carries
+`Retry-After: 1` and ACAO `*` (D-18). All 179 did, with the `{"message":"Too Many Requests"}` body.

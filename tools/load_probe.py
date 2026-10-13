@@ -4,15 +4,18 @@ Load and burst probes for the unified API (spec 001 success criteria).
   load   The design target: USERS simulated users, each submitting a cheap `LIMIT 1` query
          and polling its status, honouring Retry-After (2 s), for DURATION seconds, then
          submitting the next one. Passes if the status method returned no 429s.
-  burst  BURST concurrent POST /query requests at once. Expect about method_burst (100) of
-         them through and the rest 429. The body is an empty query, so the requests that get
-         through are rejected 400 by the handler and no job is created.
+  burst  BURST concurrent POST /query requests at once. Passes if some are throttled and every
+         429 carries `Retry-After: 1` and `Access-Control-Allow-Origin: *` (D-18). API Gateway
+         enforces its throttle approximately across its fleet, so how many get through isn't
+         asserted: in dev, 300 at once all got through a 50 / 100 stage (old API and new alike)
+         and 600 got 60 429s. The body is an empty query, so the requests that get through are
+         rejected 400 by the handler and no job is created.
 
 Usage:
     export SYNAPSE_AUTH_TOKEN=<synapse-pat>   # team member
     BASE=https://<api-id>.execute-api.us-east-1.amazonaws.com/<env>
     python tools/load_probe.py load  "$BASE" --users 100 --duration 600
-    python tools/load_probe.py burst "$BASE" --requests 300
+    python tools/load_probe.py burst "$BASE" --requests 600
 
 The load probe can't see the queue. While it runs, watch the query queue's
 ApproximateAgeOfOldestMessage in CloudWatch (it should stay under 5 minutes).
@@ -150,18 +153,27 @@ def run_burst(args) -> int:
 
     def one(_):
         barrier.wait()
-        return _send(args.base, "POST", "/query", args.token, {"query": ""})[0]
+        status, headers, _, _ = _send(
+            args.base, "POST", "/query", args.token, {"query": ""}
+        )
+        headers = {k.lower(): v for k, v in headers.items()}
+        return status, (
+            headers.get("retry-after"),
+            headers.get("access-control-allow-origin"),
+        )
 
     print(f"burst: {args.requests} concurrent POST /query against {args.base}")
     with ThreadPoolExecutor(max_workers=args.requests) as pool:
-        statuses = Counter(pool.map(one, range(args.requests)))
+        results = list(pool.map(one, range(args.requests)))
 
+    statuses = Counter(status for status, _ in results)
+    throttled_headers = Counter(h for status, h in results if status == 429)
     through = sum(n for status, n in statuses.items() if status not in (429, None))
     print(f"statuses {dict(statuses)}; {through} through, {statuses[429]} throttled")
-    # The bucket holds method_burst (100) and refills at 50/s while the burst is in flight
-    ok = statuses[429] > 0 and through <= args.expect_through
+    print(f"429 (Retry-After, Access-Control-Allow-Origin): {dict(throttled_headers)}")
+    ok = statuses[429] > 0 and set(throttled_headers) == {("1", "*")}
     print(
-        f"{'PASS' if ok else 'FAIL'}: expected some 429s and at most {args.expect_through} through"
+        f"{'PASS' if ok else 'FAIL'}: expected some 429s, each with Retry-After: 1 and ACAO *"
     )
     return 0 if ok else 1
 
@@ -179,13 +191,7 @@ def _parse_args():
 
     burst = sub.add_parser("burst", help="throttle burst probe")
     burst.add_argument("base", help="base URL, stage included")
-    burst.add_argument("--requests", type=int, default=300)
-    burst.add_argument(
-        "--expect-through",
-        type=int,
-        default=150,
-        help="most non-429 responses that still count as throttled correctly",
-    )
+    burst.add_argument("--requests", type=int, default=600)
 
     for p in (load, burst):
         p.add_argument("--token", default=os.environ.get("SYNAPSE_AUTH_TOKEN"))

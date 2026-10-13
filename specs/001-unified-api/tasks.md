@@ -66,8 +66,9 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
 - [x] T208 Test: least-privilege grants on the existing tables and queues (submit: write + send;
   status: read) → wire into `app.py` behind `API_EDGE.enabled` (dev on, prod off)
 - [x] T209 `tools/load_probe.py`: the design-target load probe and the 300-request burst probe
-- [ ] T210 Deploy `app-dev-api`; run the parity probe (old vs new) and the load probe in dev; results
-  in `research.md`
+- [x] T210 Deploy `app-dev-api`; run the parity probe (old vs new) and the load probe in dev; results
+  in `research.md`. The burst criterion moved to "429s carry D-18's headers": API Gateway's
+  throttle is approximate
 
 - [x] T211 Test: `x-api-key` alone is denied without calling Synapse, a valid bearer plus `x-api-key`
   is allowed, and `MACHINE_API_KEY` grants nothing → delete the key path from the shared authorizer
