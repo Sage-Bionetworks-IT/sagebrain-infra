@@ -188,7 +188,9 @@ retired with the move away from FastAPI ([R-5](research.md)).
 - A parity probe run against the old APIs and the new one shows 0 failures and 0 unexplained
   differences in dev and prod before cutover. (`config/stage.yaml` exists but no stage
   environment is deployed, so stage is not in this rollout.)
-- A burst of 300 requests to `POST /query` gets about 100 accepted and the rest 429.
+- A burst of 600 concurrent requests to `POST /query` gets 429s, each with `Retry-After: 1` and
+  `Access-Control-Allow-Origin: *` (D-18). API Gateway's throttle is approximate, so the number
+  accepted isn't a criterion ([research](research.md#unified-api-in-dev-t210-2026-10-13)).
 - A load probe in dev at the design target passes: 100 simulated users each submit a cheap
   `LIMIT 1` query and poll every 2 s for 10 minutes. The status methods return 0 429s, and the
   query queue's oldest message stays under 5 minutes. The cheap query keeps the probe a test of

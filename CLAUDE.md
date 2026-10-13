@@ -280,7 +280,8 @@ until cutover. The tables, queues and workers stay in `app-*-neptune-api` / `app
 - Gateway responses: 401 `Unauthorized` for every denial, 404 `Not Found` for unknown routes, 503 +
   `Retry-After: 300` when the authorizer raises, 429 + `Retry-After: 1` when throttled; all with CORS.
 - Probes: `tools/parity_probe.py` (old vs new, same base twice for the unified API) and
-  `tools/load_probe.py` (`load`: design-target polling; `burst`: 300 POSTs → ~100 through).
+  `tools/load_probe.py` (`load`: design-target polling; `burst`: 600 POSTs → some 429s, each with D-18's headers). Dev results (T210) are in
+  the spec's `research.md`.
 
 ```bash
 cdk deploy app-dev-api --profile sagebrain-dev   # also adds exports to the two old stacks

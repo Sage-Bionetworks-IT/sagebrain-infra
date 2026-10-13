@@ -43,6 +43,10 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   but it would time out a synchronous API Gateway call.
 
 ## Tooling
+- **An API Gateway REST throttle is not a strict token bucket.** 300 concurrent `POST /query` (273
+  of them in one second) all got through a 50 / 100 stage on both the old and the unified API;
+  600 got 60, then 179, 429s (dev, 2026-10-13). A burst probe can show the throttle engages, not
+  where.
 - **CDK Docker bundling mounts the raw source directory**, so `exclude=` doesn't filter what the
   bundling command sees. Clean up inside the command (see `src/core_layer.py`).
 - **Stack tests still run Docker bundling.** Their `@aws-cdk/core:bundlingStacks` context key isn't
