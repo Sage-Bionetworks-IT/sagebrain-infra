@@ -37,7 +37,8 @@ def _json_message(message: str) -> dict:
 
 class ApiEdgeStack(cdk.Stack):
     """
-    The unified API (spec 001): one REST API, stage `prod`, serving /query, /ask and /api.
+    The unified API (spec 001): one REST API, stage named after the env (`dev`, `prod`), serving
+    /query, /ask and /api.
 
     Flow:
       POST /query, GET /query/{job_id}  →  authorizer  →  submit/status Lambdas  →  query table/queue
@@ -58,6 +59,7 @@ class ApiEdgeStack(cdk.Stack):
         ask_job_table: dynamodb.ITable,
         ask_job_queue: sqs.IQueue,
         synapse_team_id: str,
+        stage_name: str,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -197,7 +199,7 @@ class ApiEdgeStack(cdk.Stack):
                 ],
             ),
             deploy_options=apigw.StageOptions(
-                stage_name="prod",
+                stage_name=stage_name,
                 access_log_destination=apigw.LogGroupLogDestination(access_log_group),
                 # requestId is always included
                 access_log_format=apigw.AccessLogFormat.json_with_standard_fields(

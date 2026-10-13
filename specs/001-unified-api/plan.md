@@ -5,7 +5,7 @@ Implementation detail lives in the code PRs.
 
 ## Architecture
 ```
-Client ─HTTPS→ API Gateway REST API, stage prod (edge stack, one hostname)
+Client ─HTTPS→ API Gateway REST API, stage = env (edge stack, one hostname)
                throttle per method: POSTs 50 / 100, status 100 / 200 · gateway responses (401/404/503 + CORS)
                ├ POST /query        → authorizer → query submit Lambda  → shared service: validate → SQS
                ├ GET  /query/{id}   → authorizer → query status Lambda  → query job table
