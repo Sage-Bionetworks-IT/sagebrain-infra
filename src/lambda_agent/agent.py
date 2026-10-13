@@ -263,6 +263,9 @@ def _process_job(job: _Job, question: str):
         model=model,
         system_prompt=SYSTEM_PROMPT,
         tools=_make_tools(job),
+        # Strands' default handler prints the streamed answer to stdout, which corrupts the
+        # JSON log lines and writes every answer to CloudWatch.
+        callback_handler=None,
     )
 
     try:

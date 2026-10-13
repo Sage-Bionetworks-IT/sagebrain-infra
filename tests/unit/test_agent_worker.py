@@ -88,8 +88,9 @@ class ScriptedAgent:
     def __init__(self, script):
         self.script = script
 
-    def factory(self, *, model, system_prompt, tools):
+    def factory(self, *, model, system_prompt, tools, **options):
         self.tools = {t.__name__: t for t in tools}
+        self.options = options
         ScriptedAgent.instances.append(self)
         return self
 
@@ -119,6 +120,19 @@ def _no_http():
 # ---------------------------------------------------------------------------
 # T121 — the tool calls run_query in-process and records the same steps
 # ---------------------------------------------------------------------------
+
+
+def test_agent_streams_nothing_to_stdout(agent, monkeypatch, capsys):
+    """Strands' default callback prints the streamed answer to stdout, which glued it onto the
+    front of the agent_invocation line, so Insights couldn't parse it, and logged every answer.
+    """
+    scripted = _use_agent(agent, monkeypatch, lambda tools: "the answer")
+    _run(agent, NEW_MESSAGE)
+
+    assert "callback_handler" in scripted.options
+    assert scripted.options["callback_handler"] is None
+    for line in capsys.readouterr().out.splitlines():
+        assert line.startswith("{"), line
 
 
 def test_module_imports_without_query_api_urls(agent):
