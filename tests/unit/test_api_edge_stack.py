@@ -469,18 +469,32 @@ def _alarm(template, metric_name, **dimensions) -> dict:
         for props in _alarms(template).values()
         if props["MetricName"] == metric_name
         and all(
-            {"Name": k, "Value": v} in props["Dimensions"]
+            {"Name": k, "Value": v} in props.get("Dimensions", [])
             for k, v in dimensions.items()
         )
     ]
     return props
 
 
-def test_server_errors_alarm(template):
-    props = _alarm(template, "5XXError", ApiName="sagebrain-api", Stage="dev")
-    assert props["Namespace"] == "AWS/ApiGateway"
+def test_server_errors_alarm_excludes_synapse_outages(template):
+    # Not API Gateway's 5XXError: that counts the authorizer's 503 while Synapse is down
+    props = _alarm(template, "ServerErrors")
+    assert props["Namespace"] == "SageBrain/Api"
     assert (props["Statistic"], props["Period"]) == ("Sum", 300)
     assert props["Threshold"] == ALARMS["server_errors_per_5_minutes"]
+    assert (props["DatapointsToAlarm"], props["EvaluationPeriods"]) == (2, 3)
+    assert not [
+        a for a in _alarms(template).values() if a.get("MetricName") == "5XXError"
+    ]
+
+
+def test_synapse_unavailable_alarm_outlasts_weekly_maintenance(template):
+    props = _alarm(template, "AuthUnavailable")
+    assert (props["Statistic"], props["Period"], props["Threshold"]) == ("Sum", 300, 1)
+    periods = ALARMS["synapse_outage_minutes"] // 5
+    assert props["DatapointsToAlarm"] == props["EvaluationPeriods"] == periods
+    # Synapse's maintenance is ~30 min every Sunday; it must not email
+    assert periods * 5 == ALARMS["synapse_outage_minutes"] > 30
 
 
 def test_request_volume_alarm(template):
@@ -493,8 +507,10 @@ def test_request_volume_alarm(template):
 def test_status_throttled_alarm(template, path):
     props = _alarm(template, "Throttled", ResourcePath=path)
     assert props["Namespace"] == "SageBrain/Api"
-    assert (props["Statistic"], props["Period"]) == ("Sum", 300)
-    assert props["Threshold"] == ALARMS["status_throttled_per_5_minutes"]
+    assert (props["Statistic"], props["Period"], props["Threshold"]) == ("Sum", 300, 1)
+    periods = ALARMS["status_throttled_minutes"] // 5
+    assert periods * 5 == ALARMS["status_throttled_minutes"]
+    assert props["DatapointsToAlarm"] == props["EvaluationPeriods"] == periods > 1
 
 
 def test_queue_age_alarms(template):
@@ -526,6 +542,29 @@ def test_throttled_metric_filter_counts_429s_per_resource_path(template):
                     "MetricName": "Throttled",
                     "MetricValue": "1",
                     "Dimensions": [{"Key": "ResourcePath", "Value": "$.resourcePath"}],
+                }
+            ],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "metric_name,pattern",
+    [
+        ("ServerErrors", '{ ($.status = "5*") && ($.status != "503") }'),
+        ("AuthUnavailable", '{ $.status = "503" }'),
+    ],
+)
+def test_status_metric_filters(template, metric_name, pattern):
+    template.has_resource_properties(
+        "AWS::Logs::MetricFilter",
+        {
+            "FilterPattern": pattern,
+            "MetricTransformations": [
+                {
+                    "MetricNamespace": "SageBrain/Api",
+                    "MetricName": metric_name,
+                    "MetricValue": "1",
                 }
             ],
         },

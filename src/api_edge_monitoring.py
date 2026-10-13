@@ -21,9 +21,14 @@ from constructs import Construct
 
 from src.contract import operations
 
-# 429s don't have an API Gateway metric of their own, so they're counted from the access log
-THROTTLED_NAMESPACE = "SageBrain/Api"
+# Counted from the access log: API Gateway has no 429 metric, and its 5XXError includes the
+# 503 that the authorizer returns while Synapse is down (D-13), which happens for ~30 min
+# every Sunday. No handler returns 503 (a Lambda error is a 502, a timeout a 504), so a 503
+# always means the authorizer failed.
+ACCESS_LOG_NAMESPACE = "SageBrain/Api"
 THROTTLED_METRIC = "Throttled"
+SERVER_ERRORS_METRIC = "ServerErrors"
+AUTH_UNAVAILABLE_METRIC = "AuthUnavailable"
 STATUS_PATHS = ("/query/{job_id}", "/ask/{job_id}")
 
 ONE_MINUTE = cdk.Duration.minutes(1)
@@ -61,24 +66,48 @@ class ApiEdgeMonitoring(Construct):
                 metric_name, statistic, Method=method, Resource=path
             ).with_(label=f"{method} {path}")
 
-        def throttled_metric(path, period=ONE_MINUTE):
+        def access_log_metric(metric_name, period=ONE_MINUTE, **dimensions):
             return cw.Metric(
-                namespace=THROTTLED_NAMESPACE,
-                metric_name=THROTTLED_METRIC,
-                dimensions_map={"ResourcePath": path},
+                namespace=ACCESS_LOG_NAMESPACE,
+                metric_name=metric_name,
+                dimensions_map=dimensions or None,
                 statistic="Sum",
                 period=period,
             )
 
-        logs.MetricFilter(
-            self,
+        def throttled_metric(path, period=ONE_MINUTE):
+            return access_log_metric(THROTTLED_METRIC, period, ResourcePath=path)
+
+        def access_log_filter(construct_id, metric_name, pattern, **kwargs):
+            logs.MetricFilter(
+                self,
+                construct_id,
+                log_group=access_log_group,
+                metric_namespace=ACCESS_LOG_NAMESPACE,
+                metric_name=metric_name,
+                filter_pattern=pattern,
+                metric_value="1",
+                **kwargs,
+            )
+
+        status = logs.FilterPattern.string_value
+        access_log_filter(
             "ThrottledFilter",
-            log_group=access_log_group,
-            metric_namespace=THROTTLED_NAMESPACE,
-            metric_name=THROTTLED_METRIC,
-            filter_pattern=logs.FilterPattern.string_value("$.status", "=", "429"),
-            metric_value="1",
+            THROTTLED_METRIC,
+            status("$.status", "=", "429"),
             dimensions={"ResourcePath": "$.resourcePath"},
+        )
+        access_log_filter(
+            "ServerErrorsFilter",
+            SERVER_ERRORS_METRIC,
+            logs.FilterPattern.all(
+                status("$.status", "=", "5*"), status("$.status", "!=", "503")
+            ),
+        )
+        access_log_filter(
+            "AuthUnavailableFilter",
+            AUTH_UNAVAILABLE_METRIC,
+            status("$.status", "=", "503"),
         )
 
         # -------------------
@@ -88,13 +117,16 @@ class ApiEdgeMonitoring(Construct):
         self.alarm_topic.add_subscription(subscriptions.EmailSubscription(alarm_email))
         alarm_action = cw_actions.SnsAction(self.alarm_topic)
 
-        def alarm(construct_id, metric, threshold, description):
+        # Actions fire on a change into ALARM only (no OK action), so an alarm that stays in
+        # ALARM sends one email. Those needing several periods don't flap on a one-off spike.
+        def alarm(construct_id, metric, threshold, description, periods=1, of=None):
             created = cw.Alarm(
                 self,
                 construct_id,
                 metric=metric,
                 threshold=threshold,
-                evaluation_periods=1,
+                evaluation_periods=of or periods,
+                datapoints_to_alarm=periods,
                 comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
                 alarm_description=description,
                 treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
@@ -105,9 +137,21 @@ class ApiEdgeMonitoring(Construct):
         alarms = [
             alarm(
                 "ServerErrorsAlarm",
-                api_metric("5XXError", period=FIVE_MINUTES),
+                access_log_metric(SERVER_ERRORS_METRIC, FIVE_MINUTES),
                 thresholds["server_errors_per_5_minutes"],
-                "5XX responses from the unified API (handler errors, timeouts, Synapse down)",
+                "5XX responses other than 503 (handler errors, timeouts) in 2 of 3 "
+                "5-minute periods",
+                periods=2,
+                of=3,
+            ),
+            alarm(
+                "SynapseUnavailableAlarm",
+                access_log_metric(AUTH_UNAVAILABLE_METRIC, FIVE_MINUTES),
+                1,
+                f"The authorizer has failed (503) for {thresholds['synapse_outage_minutes']} "
+                "minutes: Synapse is down beyond its weekly maintenance, or the authorizer "
+                "is misconfigured",
+                periods=thresholds["synapse_outage_minutes"] // 5,
             ),
             alarm(
                 "RequestVolumeAlarm",
@@ -122,9 +166,10 @@ class ApiEdgeMonitoring(Construct):
                 alarm(
                     f"Throttled{path.split('/')[1].title()}StatusAlarm",
                     throttled_metric(path, period=FIVE_MINUTES),
-                    thresholds["status_throttled_per_5_minutes"],
-                    f"GET {path} returned 429: polling outgrew the status throttle "
-                    "(spec 001 scaling path 1)",
+                    1,
+                    f"GET {path} returned 429s for {thresholds['status_throttled_minutes']} "
+                    "minutes: polling outgrew the status throttle (spec 001 scaling path 1)",
+                    periods=thresholds["status_throttled_minutes"] // 5,
                 )
             )
         for name, queue in queues.items():
@@ -174,11 +219,12 @@ class ApiEdgeMonitoring(Construct):
                 )
             ),
             cw.GraphWidget(
-                title="429 Throttled (from the access log)",
+                title="429 per path, and 503 = Synapse down (from the access log)",
                 left=[
-                    throttled_metric(p).with_(label=p)
+                    throttled_metric(p).with_(label=f"429 {p}")
                     for p in sorted({p for p, _ in routes})
                 ],
+                right=[access_log_metric(AUTH_UNAVAILABLE_METRIC).with_(label="503")],
                 width=12,
             ),
             cw.GraphWidget(

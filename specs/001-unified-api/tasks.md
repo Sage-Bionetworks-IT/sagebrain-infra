@@ -77,10 +77,12 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
 ## Phase 3 — alarms and a dashboard for the edge stack (constitution VII)
 - [x] T301 Test: alarm thresholds come from `API_EDGE_ALARMS` in config (a top-level key: the config
   merge is shallow) → `config/base.yaml`
-- [x] T302 Test: 5XX alarm on the API (Sum over 5 min) and the request-volume alarm (Sum over 1 day,
-  1M, scaling path 1) → `src/api_edge_monitoring.py`
-- [x] T303 Test: an access-log metric filter counts 429s per `resourcePath` (API Gateway has no 429
-  metric); an alarm on each status method (scaling path 1)
+- [x] T302 Test: 5XX alarm from the access log, excluding 503 (Sum / 5 min, 2 of 3 periods), and the
+  request-volume alarm (Sum / 1 day, 1M, scaling path 1) → `src/api_edge_monitoring.py`
+- [x] T303 Test: access-log metric filters count 429s per `resourcePath` (API Gateway has no 429
+  metric) and 503s (the authorizer failed); a 429 alarm on each status method after 15 sustained
+  minutes (scaling path 1), and a Synapse-unavailable alarm after 60 minutes of 503s, so Synapse's
+  ~30 min Sunday maintenance doesn't email
 - [x] T304 Test: an oldest-message alarm on the query and ask queues, 5 min (scaling path 2)
 - [x] T305 Test: the dashboard graphs every contract route (requests, 4XX, 5XX, p99 latency, 429s),
   the edge Lambdas' errors and p99 duration, and queue age
