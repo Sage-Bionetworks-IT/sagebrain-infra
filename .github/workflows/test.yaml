@@ -22,6 +22,34 @@ jobs:
           platforms: arm64
       - name: Run unit tests
         run: python -m pytest tests/ -s -v
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+      - name: Lint OpenAPI contract
+        run: npx --yes @redocly/cli@2 lint api/openapi.yaml --config api/.redocly.yaml
+  contract-breaking:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check for breaking changes against the base branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if ! git show "origin/$BASE_REF:api/openapi.yaml" > /tmp/base-openapi.yaml 2>/dev/null; then
+            echo "No api/openapi.yaml on $BASE_REF yet; nothing to compare."
+            exit 0
+          fi
+          docker run --rm -v /tmp:/base -v "$PWD/api:/head" \
+            tufin/oasdiff@sha256:2e32b0c600523a308f338a7d8456603f6caf47d9bbcdbd1fb366c21d80e42c5f \
+            breaking /base/base-openapi.yaml /head/openapi.yaml --fail-on ERR
   synth:
     runs-on: ubuntu-latest
     steps:

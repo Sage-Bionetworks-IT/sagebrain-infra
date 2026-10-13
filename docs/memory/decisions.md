@@ -32,7 +32,7 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 - **Synapse team-gated authorizer** (#31, #40). Dev and prod use different teams (#63, issue #62).
 - **Spec-driven development, one API Gateway endpoint** (spec 001). The contract comes first: a
   hand-written OpenAPI 3.1 file, right after the plan and before any code (spec 001 R-0). Split
-  into a stack: spec and plan #74, contract #73, core #71. The rules it introduced (contract first,
+  into a stack: spec and plan #74, contract #73, then the shared query service #71 (Phase 1a). The rules it introduced (contract first,
   parity before improvement, every threshold tested, one query chokepoint) are the articles in
   [constitution.md](constitution.md); this file records why and any exceptions, not the rules themselves.
 - **FastAPI on Fargate was dropped for one API Gateway REST API (2026-10-12, #74).** The 29 s

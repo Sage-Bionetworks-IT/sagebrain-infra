@@ -321,7 +321,14 @@ cdk synth --context env=dev
 
 # Pre-commit (lint/validate)
 pre-commit run --all-files
+
+# Lint the OpenAPI contract (CI also runs oasdiff breaking-change checks on PRs)
+npx --yes @redocly/cli@2 lint api/openapi.yaml --config api/.redocly.yaml
 ```
+
+The API contract is [api/openapi.yaml](api/openapi.yaml): change it first, then the code
+(constitution I). Thresholds are declared in its `info.x-sagebrain-limits`; per-env values
+live in `config/`.
 
 Tests live in `tests/unit/`. Lambda handler tests import from `src/lambda/` via a `sys.path` insert at the top of [test_query_handler.py](tests/unit/test_query_handler.py).
 
