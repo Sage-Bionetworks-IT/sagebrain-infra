@@ -30,7 +30,9 @@ resolves it.
 - **Results over 350 KB fail** (spec 001 D-16) because results live in a DynamoDB item.
   Offloading them to S3 needs its own spec.
 - **Custom domain for the unified API** (spec 001 R-16): needs a certificate and DNS from IT, and
-  one more client URL change. Deferred until someone needs a stable vanity URL.
+  one more client URL change. Deferred until someone needs a stable vanity URL. Before it lands,
+  escape `<` in the `/api` page's spec URL (`src/lambda_docs/docs.py`): a mapping changes what
+  `requestContext.path` can contain (security review 2026-10-13).
 
 ## Infra hygiene
 - Narrow Neptune SG egress to the S3 prefix list (#15). Make the endpoint configurable per env (#14).
