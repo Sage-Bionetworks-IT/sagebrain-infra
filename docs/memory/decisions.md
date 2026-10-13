@@ -46,8 +46,10 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   queries skip API Gateway but are bounded by the worker's reserved concurrency of 10 and the 60 s
   timeout. This amended constitution article V (rate is no longer one of the service's limits) and
   removed #71's DynamoDB rate limiter; per-principal buckets wait until one user actually starves
-  others (spec 001 R-5). If they come back, the design notes are in #71's history: DynamoDB, not
-  Valkey, because a 5–10 ms check doesn't matter at 4–40 s queries and needs no VPC.
+  others (spec 001 R-5). Tracked in #75, which has the signals, the design (an in-service DynamoDB
+  limiter, not Valkey: a 5–10 ms check doesn't matter at 4–40 s queries and needs no VPC), and the
+  rejected alternatives. Needing per-user limits is not an argument for FastAPI: Fargate tasks
+  would need the same shared store.
 - **Design target: 100 concurrent users (2026-10-12, #74).** Prod's team gate has 9 members.
   Status polling dominates traffic and is billed per request; the break-even with a fixed-cost
   front door is ~1M requests/day, which is the alarm that reopens the hosting decision. The query
