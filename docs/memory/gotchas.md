@@ -10,6 +10,13 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   IAM you need in a stack.
 - **zsh doesn't word-split `$VAR`**: `P="--profile x"; aws $P …` passes one argument and the CLI
   rejects it. Write flags out, or use `AWS_PROFILE=…`.
+- **Bedrock `AccessDeniedException` mentioning Marketplace `ViewSubscriptions`/`Subscribe`**: the
+  model's Marketplace agreement hasn't been accepted in this account. Open the model once in the
+  Bedrock console (per model, per account). Don't grant `aws-marketplace:*` to the worker role.
+- **`cdk synth` fails on `DescribeAvailabilityZones`** with default credentials. Log in with SSO and
+  pass `--profile`.
+- **Setting `AWS_REGION` in a Lambda's environment fails the deploy**: it's reserved, and the runtime
+  always sets it. Read it; don't set it.
 
 ## Neptune
 - **`DROP GRAPH` on ~2M triples → `TimeLimitExceededException` after 120s** (the default
@@ -24,5 +31,8 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   but it would time out a synchronous API Gateway call.
 
 ## Tooling
+- **CDK Docker bundling mounts the raw source directory**, so `exclude=` doesn't filter what the
+  bundling command sees. Clean up inside the command (see `src/core_layer.py`).
+- **`pre-commit run --all-files` only checks tracked files.** `git add` new files first.
 - **Copilot coding agent fails to start on issues** with "insufficient GitHub AI Credits". It's a
   billing problem, not a bug in the issue.

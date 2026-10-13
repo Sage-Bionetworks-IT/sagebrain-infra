@@ -9,6 +9,8 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
+from src.core_layer import sagebrain_core_layer
+
 _BUNDLING = cdk.BundlingOptions(
     image=lambda_.Runtime.PYTHON_3_11.bundling_image,
     command=[
@@ -40,6 +42,7 @@ class NeptuneApiStack(cdk.Stack):
         neptune_cluster_resource_id: str,
         neptune_security_group: ec2.SecurityGroup,
         synapse_team_id: str,
+        query_worker_concurrency: int,
         machine_api_key: str = "",
         **kwargs,
     ) -> None:
@@ -135,12 +138,14 @@ class NeptuneApiStack(cdk.Stack):
         # -------------------
         # Worker Lambda — SQS-triggered SPARQL executor (needs VPC)
         # -------------------
+        self.core_layer = sagebrain_core_layer(self)
         self.query_fn = lambda_.Function(
             self,
             "NeptuneQueryFunction",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="query.handler",
             code=lambda_.Code.from_asset("src/lambda", bundling=_BUNDLING),
+            layers=[self.core_layer],
             vpc=vpc,
             security_groups=[self.lambda_sg],
             vpc_subnets=ec2.SubnetSelection(
@@ -152,6 +157,8 @@ class NeptuneApiStack(cdk.Stack):
             },
             timeout=cdk.Duration.seconds(75),  # Neptune complex queries can take 40s+
             memory_size=512,
+            # Per-env cap on concurrent Neptune queries; extra jobs wait in SQS (spec 001 D-14)
+            reserved_concurrent_executions=query_worker_concurrency,
         )
         self.job_table.grant_read_write_data(self.query_fn)
         self.query_fn.add_event_source(

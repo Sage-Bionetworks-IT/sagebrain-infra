@@ -99,7 +99,7 @@ Signal: the request-volume alarm, or 429s on the status methods.
 - **Authorizer load.** With API Gateway's authorizer cache off, every poll invokes the
   authorizer, and cold instances call Synapse. Signal: authorizer duration or errors.
 - **Fairness.** All callers share each method's budget, so one heavy user can take it.
-  Signal: 429s concentrated on one principal in the access logs.
+  Signal: 429s concentrated on one principal in the access logs. Fix: #75.
 
 ## Open decisions
 - **Custom domain (deferred).** Not needed to ship: API Gateway's `execute-api` URL is HTTPS.

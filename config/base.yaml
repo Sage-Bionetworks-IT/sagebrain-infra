@@ -18,6 +18,11 @@ NEPTUNE:
   create_parameter_group: false
   parameter_group_parameters: {}
 
+NEPTUNE_API:
+  # Reserved concurrency of the SQS query worker: the most SPARQL jobs that run on Neptune at
+  # once; extra jobs wait in the queue (spec 001 D-14). A safety bound, not a tuned value.
+  query_worker_concurrency: 10
+
 # Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
 # uploads and bulk-loads {portal}/YYYY-MM-DD/data/ (Turtle only) into its own
 # named graph. The manifest is the trigger and stays outside the load path.
@@ -35,6 +40,12 @@ NEPTUNE_VIZ:
   # Graph Explorer image. Pin a tag or digest per-env for reproducible deploys,
   # e.g. "public.ecr.aws/neptune/graph-explorer@sha256:<digest>".
   image: "public.ecr.aws/neptune/graph-explorer:latest"
+
+AGENT:
+  # Bedrock cross-region inference profile for the agent worker (Claude 4+ needs the `us.`
+  # profile, not the base model ID). The worker's IAM allows us.anthropic.claude-* profiles.
+  # Each model needs its Bedrock Marketplace agreement accepted once per account.
+  bedrock_model_id: us.anthropic.claude-sonnet-5-5
 
 AUTH:
   synapse_team_id: "3605470"

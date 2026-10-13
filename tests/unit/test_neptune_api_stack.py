@@ -4,6 +4,10 @@ from aws_cdk import aws_ec2 as ec2
 from aws_cdk.assertions import Match, Template
 
 from src.neptune_api_stack import NeptuneApiStack
+from src.utils import load_context_config
+
+# Differs from both env values, so the test shows the stack passes the config value through.
+QUERY_WORKER_CONCURRENCY = 7
 
 
 @pytest.fixture(scope="module")
@@ -26,6 +30,7 @@ def template():
         neptune_cluster_resource_id="cluster-ABCDEFGHIJKLMNOP",
         neptune_security_group=neptune_sg,
         synapse_team_id="273957",
+        query_worker_concurrency=QUERY_WORKER_CONCURRENCY,
     )
     return Template.from_stack(stack)
 
@@ -61,6 +66,23 @@ def test_submit_and_status_lambda_timeout_is_10s(template):
         "AWS::Lambda::Function",
         {"Handler": "status.handler", "Timeout": 10},
     )
+
+
+def test_query_worker_reserved_concurrency_comes_from_config(template):
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "Handler": "query.handler",
+            "ReservedConcurrentExecutions": QUERY_WORKER_CONCURRENCY,
+        },
+    )
+
+
+@pytest.mark.parametrize("env_name, expected", [("dev", 5), ("prod", 10)])
+def test_query_worker_concurrency_per_env(env_name, expected):
+    """spec 001 D-14: dev 5, prod 10."""
+    config = load_context_config(env_name)
+    assert config["NEPTUNE_API"]["query_worker_concurrency"] == expected
 
 
 def test_lambda_has_neptune_endpoint_env(template):
@@ -274,3 +296,36 @@ def test_cloudwatch_role_configured(template):
 
 def test_api_url_output_exists(template):
     template.has_output("ApiUrl", {})
+
+
+# ---------------------------------------------------------------------------
+# sagebrain_core layer (spec 001 T106)
+# ---------------------------------------------------------------------------
+
+
+def test_core_layer_created_for_both_architectures(template):
+    template.has_resource_properties(
+        "AWS::Lambda::LayerVersion",
+        {
+            "CompatibleRuntimes": ["python3.11"],
+            "CompatibleArchitectures": ["x86_64", "arm64"],
+        },
+    )
+
+
+def test_query_worker_uses_core_layer(template):
+    layer_id = next(iter(template.find_resources("AWS::Lambda::LayerVersion")))
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"Handler": "query.handler", "Layers": [{"Ref": layer_id}]},
+    )
+
+
+def test_only_query_worker_uses_core_layer(template):
+    functions = template.find_resources("AWS::Lambda::Function")
+    with_layers = [
+        f["Properties"]["Handler"]
+        for f in functions.values()
+        if f["Properties"].get("Layers")
+    ]
+    assert with_layers == ["query.handler"]
