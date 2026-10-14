@@ -39,8 +39,8 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
 - [x] T124 CDK: the agent role gets read-only `neptune-db` and 8182 ingress into the Neptune SG;
   `NEPTUNE_QUERY_URL` is removed; stack tests
 - [x] T125 Test: the agent worker's reserved concurrency equals the contract's `agent_worker_concurrency`
-- [ ] T126 Deploy order (prod): `app-prod-neptune-agent` first, then delete the two `export_value`
-  lines in `app.py` and deploy `app-prod-neptune-api` (see `docs/memory/open-work.md`)
+- [x] T126 Deploy order (prod): `app-prod-neptune-agent` first (promoted in #84), then delete the
+  two `export_value` lines in `app.py` and deploy `app-prod-neptune-api` (with T401)
 
 ## Phase 2 — the edge stack (`app-{env}-api`), behind `API_EDGE.enabled`
 - [x] T201 Contract: `job_id_max_chars` (128) and `auth_failure_retry_after_seconds` (5) join
@@ -93,5 +93,18 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
   (dev `aws-sagebrain-dev@sagebase.org`, prod `aws-sagebrain-prod@sagebase.org`). The
   subscription needs a one-time confirmation from that mailbox
 
-## Phase 4 onward
-Tasks for cutover (Phase 4) and removal (Phase 5) are added here when their PRs start.
+## Phase 4 — the edge stack in prod
+This repo has no control over clients: it publishes the new API and the sunset date, and clients
+move on their own. The old APIs keep serving until Phase 5's gate.
+- [x] T401 Config: `API_EDGE.enabled` in prod; the per-env test follows. Promoted only after #84
+  deployed the in-process agent, because it also deletes the two `export_value` lines (T126)
+- [ ] T402 After CI deploys `app-prod-api`: confirm the SNS email subscription
+  (`aws-sagebrain-prod@sagebase.org`), check the alarms reach `OK` and the dashboard renders
+- [ ] T403 Parity probe in prod (old vs new, `--legacy apigw`); results in `research.md`. No load
+  or burst probe: T210 covered them in dev, and in prod they would compete with real users
+- [ ] T404 Announce to the Synapse team: the base URL (`ApiBaseUrl`, ending `/prod`), the docs at
+  `/api`, and a sunset date for the two old URLs. Record the date here
+
+## Phase 5 onward
+Tasks for removal (Phase 5) are added here when its PR starts. Its gate is client-driven: the old
+APIs at ~0 requests for 7 days (their `Count` metric) **and** the T404 sunset date at least 30 days past (plan, Phase 5).
