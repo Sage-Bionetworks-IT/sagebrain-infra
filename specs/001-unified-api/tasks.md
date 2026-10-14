@@ -99,8 +99,9 @@ This repo has no control over clients: it publishes the new API and the sunset d
 move on their own. The old APIs keep serving until Phase 5's gate.
 - [x] T401 Config: `API_EDGE.enabled` in prod; the per-env test follows. Promoted only after #84
   deployed the in-process agent, because it also deletes the two `export_value` lines (T126)
-- [ ] T402 After CI deploys `app-prod-api`: confirm the SNS email subscription
-  (`aws-sagebrain-prod@sagebase.org`), check the alarms reach `OK` and the dashboard renders
+- [x] T402 After CI deploys `app-prod-api`: confirm the SNS email subscription
+  (`aws-sagebrain-prod@sagebase.org`), check the alarms reach `OK` and the dashboard renders.
+  Email checked end to end on 2026-10-14 with `cloudwatch set-alarm-state` on the query-queue alarm
 - [x] T403 Parity probe in prod (old vs new, `--legacy apigw`); results in `research.md`. No load
   or burst probe: T210 covered them in dev, and in prod they would compete with real users
 - [ ] T404 Announce to the Synapse team: the base URL (`ApiBaseUrl`, ending `/prod`), the docs at
