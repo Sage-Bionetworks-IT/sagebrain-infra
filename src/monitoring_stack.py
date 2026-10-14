@@ -24,16 +24,12 @@ class MonitoringStack(cdk.Stack):
         construct_id: str,
         # Query API resources
         query_api: apigw.RestApi,
-        query_submit_fn: lambda_.Function,
-        query_status_fn: lambda_.Function,
         query_worker_fn: lambda_.Function,
         query_job_queue: sqs.Queue,
         query_dlq: sqs.Queue,
         query_job_table: dynamodb.Table,
         # Agent API resources
         agent_api: apigw.RestApi,
-        agent_submit_fn: lambda_.Function,
-        agent_status_fn: lambda_.Function,
         agent_worker_fn: lambda_.Function,
         agent_job_queue: sqs.Queue,
         agent_dlq: sqs.Queue,
@@ -130,14 +126,8 @@ class MonitoringStack(cdk.Stack):
         )
         dashboard.add_widgets(
             cw.GraphWidget(
-                title="Lambda Errors",
+                title="Worker Errors",
                 left=[
-                    query_submit_fn.metric_errors(
-                        label="submit", period=cdk.Duration.minutes(1)
-                    ),
-                    query_status_fn.metric_errors(
-                        label="status", period=cdk.Duration.minutes(1)
-                    ),
                     query_worker_fn.metric_errors(
                         label="worker", period=cdk.Duration.minutes(1)
                     ),
@@ -286,14 +276,8 @@ class MonitoringStack(cdk.Stack):
         )
         dashboard.add_widgets(
             cw.GraphWidget(
-                title="Lambda Errors & Throttles",
+                title="Worker Errors & Throttles",
                 left=[
-                    agent_submit_fn.metric_errors(
-                        label="submit errors", period=cdk.Duration.minutes(1)
-                    ),
-                    agent_status_fn.metric_errors(
-                        label="status errors", period=cdk.Duration.minutes(1)
-                    ),
                     agent_worker_fn.metric_errors(
                         label="worker errors", period=cdk.Duration.minutes(1)
                     ),

@@ -123,19 +123,22 @@ if config.get("API_EDGE", {}).get("enabled", False):
         env=env,
     )
 
+# TODO(spec 001 T502): the deployed app-*-monitoring still imports these four auto-generated
+# exports (the old submit/status Lambdas). Keep them until it has been deployed without them;
+# T503 deletes these lines with the Lambdas, and deleting them first fails the old stacks' update.
+for _stack in (neptune_api_stack, neptune_agent_stack):
+    _stack.export_value(_stack.submit_fn.function_name)
+    _stack.export_value(_stack.status_fn.function_name)
+
 monitoring_stack = MonitoringStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-monitoring",
     query_api=neptune_api_stack.api,
-    query_submit_fn=neptune_api_stack.submit_fn,
-    query_status_fn=neptune_api_stack.status_fn,
     query_worker_fn=neptune_api_stack.query_fn,
     query_job_queue=neptune_api_stack.job_queue,
     query_dlq=neptune_api_stack.dlq,
     query_job_table=neptune_api_stack.job_table,
     agent_api=neptune_agent_stack.api,
-    agent_submit_fn=neptune_agent_stack.submit_fn,
-    agent_status_fn=neptune_agent_stack.status_fn,
     agent_worker_fn=neptune_agent_stack.agent_fn,
     agent_job_queue=neptune_agent_stack.job_queue,
     agent_dlq=neptune_agent_stack.dlq,
