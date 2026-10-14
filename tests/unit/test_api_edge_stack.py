@@ -443,7 +443,7 @@ def test_outputs(template):
     assert {"ApiBaseUrl", "ApiDocsUrl"} <= set(outputs)
 
 
-@pytest.mark.parametrize("env_name,enabled", [("dev", True), ("prod", False)])
+@pytest.mark.parametrize("env_name,enabled", [("dev", True), ("prod", True)])
 def test_edge_stack_is_enabled_per_env(env_name, enabled):
     from src.utils import load_context_config
 
