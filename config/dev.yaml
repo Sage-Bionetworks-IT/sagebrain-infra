@@ -25,3 +25,6 @@ NEPTUNE_VIZ:
 
 AUTH:
   synapse_team_id: "273957"  # Dev team (prod uses 3605470)
+
+# Where the unified API's alarms email (spec 001 Phase 3). Confirm the SNS subscription once.
+ALARM_EMAIL: aws-sagebrain-dev@sagebase.org

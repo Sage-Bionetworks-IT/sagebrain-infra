@@ -124,6 +124,8 @@ if config.get("API_EDGE", {}).get("enabled", False):
         synapse_team_id=config["AUTH"]["synapse_team_id"],
         # The base URL ends in /{env}; the old APIs keep CDK's default /prod in every env
         stage_name=env_name,
+        alarm_thresholds=config["API_EDGE_ALARMS"],
+        alarm_email=config["ALARM_EMAIL"],
         env=env,
     )
 

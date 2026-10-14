@@ -18,3 +18,6 @@ NEPTUNE_VIZ:
 AGENT:
   # Pinned to the model prod already runs; dev uses config/base.yaml's default (Sonnet 5.5).
   bedrock_model_id: us.anthropic.claude-sonnet-4-6
+
+# Where the unified API's alarms email (spec 001 Phase 3). Confirm the SNS subscription once.
+ALARM_EMAIL: aws-sagebrain-prod@sagebase.org

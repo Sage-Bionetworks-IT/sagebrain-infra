@@ -1,5 +1,6 @@
 """Edge stack (src/api_edge_stack.py): routes match the contract, every threshold comes from it."""
 
+import json
 import aws_cdk as cdk
 import pytest
 from aws_cdk import aws_dynamodb as dynamodb
@@ -8,6 +9,10 @@ from aws_cdk.assertions import Match, Template
 
 from src.api_edge_stack import ApiEdgeStack
 from src.contract import LIMITS, operations, public_operations
+from src.utils import load_context_config
+
+ALARMS = load_context_config("dev")["API_EDGE_ALARMS"]
+ALARM_EMAIL = load_context_config("dev")["ALARM_EMAIL"]
 
 
 @pytest.fixture(scope="module")
@@ -34,6 +39,8 @@ def template():
         ask_job_queue=sqs.Queue(jobs_stack, "AskQueue"),
         synapse_team_id="273957",
         stage_name="dev",
+        alarm_thresholds=ALARMS,
+        alarm_email=ALARM_EMAIL,
     )
     return Template.from_stack(stack)
 
@@ -441,3 +448,152 @@ def test_edge_stack_is_enabled_per_env(env_name, enabled):
     from src.utils import load_context_config
 
     assert load_context_config(env_name)["API_EDGE"]["enabled"] is enabled
+
+
+# ---------------------------------------------------------------------------
+# Alarms and dashboard (Phase 3, constitution VII)
+# ---------------------------------------------------------------------------
+
+
+def _alarms(template) -> dict:
+    """AlarmDescription prefix → alarm properties."""
+    return {
+        props["Properties"]["AlarmDescription"]: props["Properties"]
+        for props in template.find_resources("AWS::CloudWatch::Alarm").values()
+    }
+
+
+def _alarm(template, metric_name, **dimensions) -> dict:
+    (props,) = [
+        props
+        for props in _alarms(template).values()
+        if props["MetricName"] == metric_name
+        and all(
+            {"Name": k, "Value": v} in props.get("Dimensions", [])
+            for k, v in dimensions.items()
+        )
+    ]
+    return props
+
+
+def test_server_errors_alarm_excludes_synapse_outages(template):
+    # Not API Gateway's 5XXError: that counts the authorizer's 503 while Synapse is down
+    props = _alarm(template, "ServerErrors")
+    assert props["Namespace"] == "SageBrain/Api"
+    assert (props["Statistic"], props["Period"]) == ("Sum", 300)
+    assert props["Threshold"] == ALARMS["server_errors_per_5_minutes"]
+    assert (props["DatapointsToAlarm"], props["EvaluationPeriods"]) == (2, 3)
+    assert not [
+        a for a in _alarms(template).values() if a.get("MetricName") == "5XXError"
+    ]
+
+
+def test_synapse_unavailable_alarm_outlasts_weekly_maintenance(template):
+    props = _alarm(template, "AuthUnavailable")
+    assert (props["Statistic"], props["Period"], props["Threshold"]) == ("Sum", 300, 1)
+    periods = ALARMS["synapse_outage_minutes"] // 5
+    assert props["DatapointsToAlarm"] == props["EvaluationPeriods"] == periods
+    # Synapse's maintenance is ~30 min every Sunday; it must not email
+    assert periods * 5 == ALARMS["synapse_outage_minutes"] > 30
+
+
+def test_request_volume_alarm(template):
+    props = _alarm(template, "Count", ApiName="sagebrain-api", Stage="dev")
+    assert (props["Statistic"], props["Period"]) == ("Sum", 86400)
+    assert props["Threshold"] == ALARMS["requests_per_day"] == 1_000_000
+
+
+@pytest.mark.parametrize("path", ["/query/{job_id}", "/ask/{job_id}"])
+def test_status_throttled_alarm(template, path):
+    props = _alarm(template, "Throttled", ResourcePath=path)
+    assert props["Namespace"] == "SageBrain/Api"
+    assert (props["Statistic"], props["Period"], props["Threshold"]) == ("Sum", 300, 1)
+    periods = ALARMS["status_throttled_minutes"] // 5
+    assert periods * 5 == ALARMS["status_throttled_minutes"]
+    assert props["DatapointsToAlarm"] == props["EvaluationPeriods"] == periods > 1
+
+
+def test_queue_age_alarms(template):
+    alarms = [
+        props
+        for props in _alarms(template).values()
+        if props["MetricName"] == "ApproximateAgeOfOldestMessage"
+    ]
+    assert len(alarms) == 2  # query and ask
+    for props in alarms:
+        assert (props["Statistic"], props["Period"]) == ("Maximum", 300)
+        assert props["Threshold"] == ALARMS["queue_oldest_message_seconds"] == 300
+
+
+def test_alarms_ignore_missing_data(template):
+    for props in _alarms(template).values():
+        assert props["TreatMissingData"] == "notBreaching"
+        assert props["ComparisonOperator"] == "GreaterThanOrEqualToThreshold"
+
+
+def test_throttled_metric_filter_counts_429s_per_resource_path(template):
+    template.has_resource_properties(
+        "AWS::Logs::MetricFilter",
+        {
+            "FilterPattern": '{ $.status = "429" }',
+            "MetricTransformations": [
+                {
+                    "MetricNamespace": "SageBrain/Api",
+                    "MetricName": "Throttled",
+                    "MetricValue": "1",
+                    "Dimensions": [{"Key": "ResourcePath", "Value": "$.resourcePath"}],
+                }
+            ],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "metric_name,pattern",
+    [
+        ("ServerErrors", '{ ($.status = "5*") && ($.status != "503") }'),
+        ("AuthUnavailable", '{ $.status = "503" }'),
+    ],
+)
+def test_status_metric_filters(template, metric_name, pattern):
+    template.has_resource_properties(
+        "AWS::Logs::MetricFilter",
+        {
+            "FilterPattern": pattern,
+            "MetricTransformations": [
+                {
+                    "MetricNamespace": "SageBrain/Api",
+                    "MetricName": metric_name,
+                    "MetricValue": "1",
+                }
+            ],
+        },
+    )
+
+
+def test_dashboard_has_every_route(template):
+    (dashboard,) = template.find_resources("AWS::CloudWatch::Dashboard").values()
+    body = json.dumps(dashboard["Properties"]["DashboardBody"])
+    for path, method in operations():
+        assert f"{method} {path}" in body
+
+
+def test_every_alarm_emails_the_topic(template):
+    (topic,) = template.find_resources("AWS::SNS::Topic")
+    for props in _alarms(template).values():
+        assert props["AlarmActions"] == [{"Ref": topic}]
+    template.has_resource_properties(
+        "AWS::SNS::Subscription",
+        {"Protocol": "email", "Endpoint": ALARM_EMAIL, "TopicArn": {"Ref": topic}},
+    )
+
+
+@pytest.mark.parametrize(
+    "env_name,email",
+    [
+        ("dev", "aws-sagebrain-dev@sagebase.org"),
+        ("prod", "aws-sagebrain-prod@sagebase.org"),
+    ],
+)
+def test_alarm_email_per_env(env_name, email):
+    assert load_context_config(env_name)["ALARM_EMAIL"] == email
