@@ -366,9 +366,9 @@ Rules are in [docs/memory/constitution.md](docs/memory/constitution.md); each fe
 API Gateway endpoint (`/query`, `/ask`, public docs at `/api`) with an OpenAPI contract; see its
 [parity-matrix.md](specs/001-unified-api/parity-matrix.md) for where every threshold is enforced.
 Draft: [specs/002-kg-governance-rebac](specs/002-kg-governance-rebac/spec.md) — per-caller KG
-governance (Stage 1: an ingest gate admits only content AUTHENTICATED_USERS can download, plus
-query-time access-requirement checks in Cedar/AVP over governanceDUO's graph in a private Neptune
-cluster; Stage 2: query-time ACLs).
+governance, always enforced and fail-closed: query-time ACL (open to registered users) and
+managed-ACT access-requirement checks in Cedar/AVP, over two DynamoDB tables exported from the
+Synapse warehouse; Stage 2: per-user and team ACLs.
 
 - **Query limits are server-side.** The agent calls the shared query service in-process (not
   `POST /query` over HTTP), so every query limit and the `sparql_query` audit log live in that
