@@ -365,6 +365,9 @@ Rules are in [docs/memory/constitution.md](docs/memory/constitution.md); each fe
 [specs/001-unified-api](specs/001-unified-api/spec.md) — merging the two REST APIs into one
 API Gateway endpoint (`/query`, `/ask`, public docs at `/api`) with an OpenAPI contract; see its
 [parity-matrix.md](specs/001-unified-api/parity-matrix.md) for where every threshold is enforced.
+Draft: [specs/004-latest-graph-scoping](specs/004-latest-graph-scoping/spec.md) — queries see only
+the latest published snapshot of each portal (via `default-graph-uri`/`named-graph-uri`),
+release-keyed tags (#61), invisible failed loads (#51).
 
 - **Query limits are server-side.** The agent calls the shared query service in-process (not
   `POST /query` over HTTP), so every query limit and the `sparql_query` audit log live in that
