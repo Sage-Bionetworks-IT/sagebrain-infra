@@ -7,20 +7,32 @@ File-level detail belongs in `tasks.md` and the code PRs.
 Run [Hindsight](https://github.com/vectorize-io/hindsight) locally on each computer and treat
 its bank as a **build artifact**. It is rebuilt from sources, never edited by hand, and safe to
 delete. No server is hosted centrally. Everyone's bank comes out alike because the build is
-pinned in this repo (`tools/memory/bank.yaml`) and every import replaces a document with its
-current content, so banks converge on the sources.
+pinned in this repo (`tools/memory/bank.yaml`), repo content is read from each repo's default
+branch, and every import replaces a document with its current content, so banks converge on the
+sources.
+
+Hindsight is passive: it has no connectors and only learns what is retained into it. So sync is
+a pull-then-push loop outside it, run on a timer:
+
+```
+launchd (hourly) ──> ingest.py ──> gh api: default-branch docs/specs, PRs/issues updated since last sync
+launchd (weekly) ──> claude -p /memory-sync ──> Atlassian MCP (SKG) ──> ingest.py --stdin
+                     ingest.py ──> one document per item, stable ID ──> retain(update_mode=replace)
+                                                                       └─ Hindsight worker: extraction (Bedrock)
+                               ──> ~/.sagebrain-memory/state.json (last sync, hashes, errors)
+```
 
 Agents query the bank over MCP instead of reading `docs/memory/` files. The markdown bank stays
 the curated, PR-reviewed layer and is one source among several: this repo, the depositor repos,
-GitHub, then Jira and Confluence. Relationships come from Hindsight's entity graph, made
-reliable by passing explicit entities (`#N`, `SKG-N`, spec IDs, stack names) on every item.
+GitHub, then Jira. Relationships come from Hindsight's entity graph, made reliable by passing
+explicit entities (`#N`, `SKG-N`, spec IDs, stack names) on every item.
 
 ## Components
 
 **Local server.** `ghcr.io/vectorize-io/hindsight`, pinned by digest, in Docker with embedded
 Postgres (pg0) on a named volume `hindsight-data`. API on `:8888`, UI on `:9999`, MCP at
-`http://localhost:8888/mcp/sagebrain/`. There is one server per computer, shared by every
-participating repo checked out on it.
+`http://localhost:8888/mcp/sagebrain/`. One server per computer, left running, shared by every
+participating repo.
 
 **LLM: Bedrock via the `sage-bedrock-sso` profile** (account 042467473451, role `BedrockClient`,
 us-east-1). `HINDSIGHT_API_LLM_PROVIDER=bedrock`, `~/.aws` mounted read-only, `AWS_PROFILE` set.
@@ -36,113 +48,135 @@ only extraction calls go to Bedrock.
 - the mission
 - the directives (the constitution's articles)
 - the mental models
-- the repos to ingest
-- the Jira projects and Confluence spaces
+- the repos to ingest, each with its default branch (`nf-osi/kg-pipeline` uses `develop`)
+- the Jira projects (`SKG`)
+- the cadences and caps in the spec's thresholds table
 
-A version bump makes every computer rebuild at its next session.
+A version bump makes every computer rebuild at its next sync.
 
-**Sources and their conventions** (FR-3, FR-8, FR-9):
+**Sources and their conventions** (FR-3, FR-8, FR-9, FR-16):
 
 | Source (phase) | Path | Cadence | document_id | tags |
 |---|---|---|---|---|
-| `docs/memory`, specs: this repo (1) | script | every session | `repo:<repo>/<path>#<slug>`, one per entry | `source:repo\|spec`, `kind:*`, `topic:*` |
-| depositor repos' docs (1) | script | every session | same | `source:repo`, `repo:<name>` |
-| GitHub PRs/issues, all listed repos (1) | script (`gh`) | every session | `gh:<repo>/pr/N`, `gh:<repo>/issue/N` | `source:github` |
-| Jira (2) | skill, Atlassian MCP | weekly | `jira:<KEY>` | `source:jira` |
-| Confluence (2) | skill, Atlassian MCP | weekly | `confluence:<page-id>` | `source:confluence` |
+| `docs/memory`, specs: this repo (1) | script, default branch | hourly, full scan | `repo:<repo>/<path>#<slug>`, one per entry | `source:repo\|spec`, `kind:*`, `topic:*` |
+| depositor repos' docs (1) | script, default branch | hourly, full scan | same | `source:repo`, `repo:<name>` |
+| GitHub PRs/issues, all listed repos (1) | script (`gh`) | hourly, updated since last sync | `gh:<repo>/pr/N`, `gh:<repo>/issue/N` | `source:github` |
+| Jira `SKG` (2) | skill, Atlassian MCP, headless | weekly | `jira:<KEY>` | `source:jira` |
 
-Each import replaces the whole document with its current content (`update_mode=replace`).
-Banks therefore converge however often each computer syncs. LLM extraction isn't byte-for-byte
-deterministic, so two banks hold the same documents and nearly the same facts; the
-seed-question eval is what shows a bank is healthy.
+Every source also runs a weekly reconcile: list the IDs it still has, delete documents it no
+longer has (FR-14). Each import replaces the whole document with its current content
+(`update_mode=replace`), so banks converge however often each computer syncs. LLM extraction
+isn't byte-for-byte deterministic, so two banks hold the same documents and nearly the same
+facts; the seed-question eval is what shows a bank is healthy.
+
+Depositor repos, in join order (FR-4):
+
+| Repo | Portal / owner | Default branch | Joins |
+|---|---|---|---|
+| `nf-osi/kg-pipeline` | NF, Anh | `develop` | Phase 1 (loads today; delta pipeline in #53) |
+| `Sage-Bionetworks/sagebrain-tap` | TAP (reactome) | `main` | once spec 004's release keys land |
+| `amp-als/kg-pipeline` | ALS, Ram | `main` | once it loads into Neptune |
+
+All three are public, so `gh api` reads them with anyone's login.
 
 **`tools/memory/`**
-- `hindsight.sh up|down|rebuild|sync|check`. It runs a preflight
-  `aws sts get-caller-identity --profile sage-bedrock-sso` and prints the SSO login hint if that
-  fails. `rebuild` deletes the bank and replays every source. `check` prints the fingerprint:
-  config hash, image, model, document count per source, last sync per source.
-- `ingest.py` + `adapters/{markdown,github}.py` — each adapter yields
+- `hindsight.sh install|up|down|rebuild|sync|check`. `install` (once per computer) starts the
+  server and writes the launchd job. `rebuild` deletes the bank and `state.json` together and
+  replays every source. `check` prints the fingerprint: config hash, image, model, document count
+  per source, last sync and last error per source.
+- `ingest.py` + `adapters/{markdown,github}.py`: each adapter yields
   `{content, document_id, tags, entities, timestamp, context}`; batched with
-  `hindsight_client.retain_batch(..., retain_async=True)`. Depositor repos are read from a local
-  checkout if one exists, otherwise via `gh`.
-- `entities.py` — the shared extractor. Its patterns are also documented in the skill so both
+  `hindsight_client.retain_batch(..., retain_async=True)`. Before any retain it checks
+  `aws sts get-caller-identity --profile sage-bedrock-sso` and, if that fails, records the error
+  and exits (FR-15). `--stdin` takes items from the `memory-sync` skill under the same conventions.
+- `entities.py`: the shared extractor. Its patterns are also documented in the skill so both
   ingestion paths agree.
-- `session_start.sh` — the `SessionStart` hook. It starts the container if it's down, rebuilds
-  on a `bank.yaml` version change, syncs git/GitHub incrementally, and runs or prompts
-  `/memory-sync` when the last Jira/Confluence sync is more than 7 days old. It never blocks the
-  session: on any failure it prints the README fallback.
-- `eval.yaml` + `eval.py` — ~15 seed questions with the entries that should come back, including
-  depositor questions ("what changed in the S3 contract?").
+- `session_start.sh`: the `SessionStart` hook. It rebuilds on a `bank.yaml` version change,
+  starts a background sync if the last one is more than an hour old, and prints one line if the
+  sync is paused for credentials or Jira hasn't synced in 14 days. It always exits 0; if the
+  server is down it prints the README fallback.
+- `eval.yaml` + `eval.py`: 15 seed questions with the entries that should come back, written
+  before `ingest.py` (see the spec's success criteria for their mix).
 
-**`.claude/skills/memory-sync/`** — reads Jira and Confluence through the Atlassian MCP server,
-within `bank.yaml`'s scope and since the last sync, then calls Hindsight's `sync_retain` with
-the same conventions. Because IDs are stable, re-runs are idempotent.
+**`memory-sync` skill.** Reads `SKG` through the Atlassian MCP server, since the last sync and
+within `bank.yaml`'s scope, and pipes items to `ingest.py --stdin`. Run weekly by launchd as
+`claude -p "/memory-sync"` with `--allowedTools` limited to the Atlassian read tools and that one
+`Bash` command. Because IDs are stable, re-runs are idempotent.
 
-**Agent wiring, per participating repo.**
-- `.mcp.json` points to the bank's MCP endpoint.
-- `.claude/settings.json` registers `session_start.sh` as the `SessionStart` hook.
-- `CLAUDE.md`: "call `recall` (low budget, ~1–2k tokens) before a task; if the server is down,
-  read `docs/memory/README.md`."
-- Depositor repos get these three from this repo: a copy step in `hindsight.sh install <repo>`,
-  or the tooling packaged as a Claude Code plugin. Which one is an open decision.
-- Read-only use in normal sessions (FR-11).
-- **Mental models** (answers kept up to date in the background, no retrieval at read time):
-  "infra changes affecting depositors", "open work by theme", "standing exceptions to the
-  constitution", "prod vs dev drift".
+**Claude Code plugin, published from this repo.** Every participating repo installs the same
+plugin, which bundles:
+- the MCP entry for the bank's endpoint;
+- the `SessionStart` hook;
+- the deny rules for Hindsight's retain and delete tools (FR-11);
+- the `memory-sync` skill.
+
+It must merge with a repo's existing `.claude/` (amp-als already has one). Each repo's
+`CLAUDE.md` gets one line: "call `recall` (budget ~1–2k tokens) at the start of a task and again
+only on a change of topic; if the server is down, read `docs/memory/README.md`."
+
+**Mental models** (answers kept up to date in the background, no retrieval at read time):
+"infra changes affecting depositors", "depositor changes affecting loading", "open work by
+theme", "standing exceptions to the constitution", "prod vs dev drift".
 
 ## Phases (each independently mergeable)
 - **Phase 0 — spike (no repo changes beyond notes).** Run the container against Bedrock with the
-  SSO profile. Confirm SSO credentials resolve inside the container (fallback: inject
-  `aws configure export-credentials --profile sage-bedrock-sso --format env`). Pick the model: a
-  Haiku-class `us.` inference profile, possibly in the `bedrock/converse/<arn>` form, with
-  `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` set within its output limit (Hindsight defaults to
-  64k). Confirm the model's Marketplace agreement in 042467473451. Retain `decisions.md` by hand,
-  time it, and retain it again on a second computer to see how close the two banks come out.
-- **Phase 1 — this repo, depositor repos, GitHub.** `bank.yaml`, `hindsight.sh`, `ingest.py`, the
-  adapters, the entity extractor, the session-start hook, `.mcp.json`, the `CLAUDE.md` change,
-  the install step for depositor repos, and the seed-question eval.
-- **Phase 2 — Jira and Confluence, weekly.** The `memory-sync` skill via the Atlassian MCP
-  server, triggered by the hook's 7-day check. Memory Defense is on before the first retain.
+  SSO profile. Pick the model: a Haiku-class `us.` inference profile, possibly in the
+  `bedrock/converse/<arn>` form, with `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` set within its
+  output limit (Hindsight defaults to 64k). Confirm the model's Marketplace agreement in
+  042467473451. Retain `decisions.md` by hand on two computers. **Go only if all hold:**
+  - SSO credentials resolve inside the container without the
+    `aws configure export-credentials` fallback;
+  - a full rebuild of the Phase 1 sources takes ≤ 15 min and ≤ $2 of Bedrock per computer;
+  - the two computers hold equal document counts;
+  - the hand-built bank answers ≥ 13/15 of the seed questions.
+
+  Otherwise stop and keep markdown only.
+- **Phase 1 — this repo, NF, GitHub.** The seed-question eval first, then `bank.yaml`,
+  `hindsight.sh` (with `install` and the launchd job), `ingest.py`, the adapters, the entity
+  extractor, `state.json` and the reconcile, the session hook, the plugin, the `CLAUDE.md` line,
+  and the spec 004 replay. TAP and ALS join afterwards as `bank.yaml` entries plus the plugin.
+- **Phase 2 — Jira `SKG`, weekly.** The `memory-sync` skill, run headless by the weekly launchd
+  job. Memory Defense is on before the first retain.
 - **Phase 3 (optional) — restructure the markdown.** Give every `docs/memory` entry a stable
   heading/slug if splitting bullets proves brittle.
 
 ## Risks / rollback
-- **Banks differ between computers.** Mitigations: the pinned `bank.yaml`, replace-not-delta
-  imports, version-triggered rebuilds, `check` fingerprints and the eval. What remains is the
-  non-determinism in LLM extraction.
-- **People can see different Jira/Confluence content.** Scope only projects and spaces everyone
-  using the bank can read (FR-13).
-- **Secrets or PII from Jira/Confluence** end up in a bank. Mitigations: allow-listed scope,
-  Memory Defense, local-only server.
+- **Banks differ between computers.** Mitigations: the pinned `bank.yaml`, default-branch reads,
+  replace-not-delta imports, version-triggered rebuilds, `check` fingerprints and the eval. What
+  remains is the non-determinism in LLM extraction.
+- **People can see different Jira content.** Scope only projects everyone using the bank can read
+  (FR-13).
+- **Secrets or PII from Jira** end up in a bank. Mitigations: allow-listed scope, Memory Defense,
+  local-only server.
 - **Rebuild cost** is repeated on every computer: one Bedrock extraction per item, per machine.
-  It's small at this volume (weekly Jira/Confluence deltas, tens of items), and the first full
-  build on a new machine is a one-time cost. Phase 0 measures it.
-- **Freshness.** Jira/Confluence knowledge can be up to a week old. Git and GitHub, which carry
-  the infra changes depositors most need, are current as of each session.
-- **Depositors' access.** Data engineers need `sage-bedrock-sso` access, Docker and the Atlassian
-  MCP server. Confirm this for each depositor team before Phase 1 rolls out to their repo.
-- **Stale facts.** Timestamps let recall prefer recent facts. Deleting a markdown entry deletes
-  its document on the next sync. A source deletion (an archived page or deleted ticket) needs the
-  skill to reconcile the document IDs it no longer sees.
-- **Rollback:** remove `.mcp.json` and the hook, and revert the `CLAUDE.md` line in each repo.
-  `docs/memory/` never stopped being complete, so nothing else changes.
+  It's small at this volume and the first full build on a new machine is a one-time cost. Phase
+  0's gate bounds it.
+- **Silent background failures.** Expired SSO sessions (8–12 h) and an expired Atlassian MCP
+  login stop the scheduled syncs. Mitigations: the credential check before any retain, errors in
+  `state.json`, the session hook's one-line warnings, and `check`.
+- **Freshness.** Git and GitHub are at most an hour old while the computer is awake; Jira up to a
+  week.
+- **Depositors' access.** Data engineers need `sage-bedrock-sso` access, Docker, a Mac, and (for
+  Jira) the Atlassian MCP server. Confirm this for each depositor team before their repo joins.
+- **Stale facts.** Timestamps let recall prefer recent facts; the weekly reconcile deletes
+  documents whose source item is gone.
+- **Rollback:** uninstall the plugin and revert the `CLAUDE.md` line in each repo, and
+  `hindsight.sh down` plus removing the launchd job on each computer. `docs/memory/` never stopped
+  being complete, so nothing else changes.
 
 ## Open decisions
-- Which repos deposit into the data bucket and join the bank, and which Jira projects and
-  Confluence spaces are in scope.
-- How depositor repos get the tooling: a copy step (`hindsight.sh install`) or a Claude Code
-  plugin installed from this repo.
 - Whether `CLAUDE.md` is slimmed and its reference sections moved into the bank. It is the larger
-  always-loaded context (~400 lines vs ~330 in `docs/memory/`). Flagged here, not solved.
+  always-loaded context (~410 lines vs ~340 in `docs/memory/`). Revisit only after the eval shows
+  recall is reliable.
 - **When to host a bank centrally.** Not now: it costs roughly $50–100/month (Hindsight on
   Fargate + RDS pgvector) plus the work of running it. The sketch is:
   - a VPN-only ALB like Graph Explorer, with Hindsight's API key in Secrets Manager;
   - a GitHub Action on merge that retains changed entries;
-  - an EventBridge Scheduler Lambda that polls Jira and Confluence with service-account tokens.
+  - an EventBridge Scheduler Lambda that polls Jira with a service-account token.
 
   Reconsider when any of these appears:
-  - Slack becomes a source.
-  - Someone needs Jira/Confluence fresher than weekly.
+  - Slack or Confluence becomes a source.
+  - Someone needs Jira fresher than weekly.
   - Depositors can't run Docker, Bedrock or the Atlassian MCP server locally.
   - The eval shows banks drifting in ways that matter.
 - Whether agents should ever retain directly (e.g. a gotcha found mid-task). Today the answer is

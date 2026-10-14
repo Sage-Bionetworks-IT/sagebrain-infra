@@ -365,6 +365,9 @@ Rules are in [docs/memory/constitution.md](docs/memory/constitution.md); each fe
 [specs/001-unified-api](specs/001-unified-api/spec.md) — merging the two REST APIs into one
 API Gateway endpoint (`/query`, `/ask`, public docs at `/api`) with an OpenAPI contract; see its
 [parity-matrix.md](specs/001-unified-api/parity-matrix.md) for where every threshold is enforced.
+Draft: [specs/003-agent-memory-hindsight](specs/003-agent-memory-hindsight/spec.md) — a local,
+rebuildable Hindsight bank per computer, synced on a schedule from this repo, the depositor repos,
+GitHub and SKG Jira, so agents recall facts instead of reading `docs/memory/`.
 
 - **Query limits are server-side.** The agent calls the shared query service in-process (not
   `POST /query` over HTTP), so every query limit and the `sparql_query` audit log live in that
