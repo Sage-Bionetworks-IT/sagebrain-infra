@@ -251,9 +251,10 @@ team rosters** at all, which shrinks what has to be stored.
   Synapse entity in a data snapshot (≈503k NF IRIs). governanceDUO's per-entity sync doesn't scale
   to that yet (research R-4). That's why dev runs the gate in `report`.
 - **DUO conditions, derived and non-Synapse nodes, Policy Fabric, Passports.** Phase H (research R-6).
-  Non-Synapse nodes such as `nf:Donor` don't pass through the gate, because only Synapse IRIs are
-  checked. They are governed only indirectly, by the ACLs and ARs of the Synapse entities in the
-  same snapshot.
+- **Non-Synapse nodes are allowed through (open question, research Q-2).** Only Synapse IRIs are
+  checked by the gate and the preflight; minted nodes such as `nf:Donor` and external vocabulary
+  pass unchecked. A query touching only those nodes is not governed. Stage 1 governs only the data
+  that needs governing today (Synapse entities); how to govern the rest is flagged, not solved.
 
 ## Success criteria
 - Unit, synth, pre-commit and redocly checks are clean, and the FR-16a and FR-16b tables pass.

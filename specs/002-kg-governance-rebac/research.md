@@ -157,10 +157,21 @@ Decisions:
   and `POST /accessRequirement/{id}/submissions` are **ACT-only**. `AccessApproval.expiredOn`
   supplies `gov:expiresAt`. The sync must run under an ACT (or AR-reviewer) credential. Without
   one, approvals are empty and AR-gated resources fail closed.
-- **Q-2 Governance for non-Synapse nodes.** Donor demographics are the most sensitive ungoverned
-  data. governanceDUO's answer is derivation labels via PROV-O / `sagebrain:derived_from`, but the
-  NF data graph has no such edges. Does the NF transform emit them, or do we infer them via
-  `nf:parentStudy`?
+- **Q-2 Governance for non-Synapse nodes (open; flagged, not solved).** Decision for this spec:
+  non-Synapse nodes are **allowed through** the gate and the preflight. Stage 1 governs only the
+  data that needs it today, Synapse entities. Findings from `nf/2026-07-14` (2026-10-14 scan):
+  - External vocabulary is identifiers only (DOI, PubMed, ORCID, EDAM, RRID); no MONDO/NCIT/gene IRIs.
+  - Minted `nf:<kind>/<uuid>` nodes (~5k) almost never link straight to Synapse. Only
+    `nf:hasModelSystem` (inbound) and `nf:biobankURL` do. Donors reach Synapse at 2–4 hops
+    (18% not at all); PatientDerivedModel (47, free-text `clinicalData` with age/sex/variant)
+    has no path at all. `nf:parentStudy` links Synapse to Synapse only.
+  - So a query that touches only minted nodes (e.g. donors' age/sex/race) is not checked.
+    That's acceptable only if these nodes are public by origin (believed to be NF Research Tools
+    Central; unconfirmed).
+  - Candidate answer: classify minted types as public or governed in config; governed types get an
+    explicit anchor predicate emitted by the depositor; an unclassified type fails the gate.
+    Alternatives: governanceDUO's derivation labels (`gov:ControlLabel`, Phase H).
+  - Revisit before Stage 2, or as soon as a depositor adds controlled non-Synapse content.
 - **Q-3 Machine principal.** Should it get a configured service team instead of public-only?
 - **Q-4 Service ACT credential.** Who owns it, and where does it live (Secrets Manager), if the
   sync is ever scheduled? governanceDUO's sync is on-demand CLI today.
