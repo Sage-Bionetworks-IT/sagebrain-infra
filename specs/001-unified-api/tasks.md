@@ -100,7 +100,7 @@ move on their own. The old APIs keep serving until Phase 5's gate.
   deployed the in-process agent, because it also deletes the two `export_value` lines (T126)
 - [ ] T402 After CI deploys `app-prod-api`: confirm the SNS email subscription
   (`aws-sagebrain-prod@sagebase.org`), check the alarms reach `OK` and the dashboard renders
-- [ ] T403 Parity probe in prod (old vs new, `--legacy apigw`); results in `research.md`. No load
+- [x] T403 Parity probe in prod (old vs new, `--legacy apigw`); results in `research.md`. No load
   or burst probe: T210 covered them in dev, and in prod they would compete with real users
 - [ ] T404 Announce to the Synapse team: the base URL (`ApiBaseUrl`, ending `/prod`), the docs at
   `/api`, and a sunset date for the two old URLs. Record the date here
