@@ -63,7 +63,7 @@ caller ─▶ submit (user_id on every job) ─▶ SQS ─▶ worker (/query) or
 
 Why the gate and PDP are separate Lambdas and not in-process in `sagebrain_core`: only one IAM role and one
 security group can ever touch the governance cluster or the policy store. The query worker, agent,
-FastAPI task and Graph Explorer keep their current access to the data cluster and gain none to the
+unified-API handlers and Graph Explorer keep their current access to the data cluster and gain none to the
 governance cluster.
 
 ## Files
@@ -71,8 +71,7 @@ governance cluster.
 |---|---|
 | `api/openapi.yaml` | `governance` object on `JobStatus` error; 404 owner semantics on both status ops |
 | `tests/contract/cases.yaml` | `query_status_governance_denied`, `*_status_other_owner`, `user_id` in `query_submit_ok` message |
-| `src/lambda/submit.py`, `app/sagebrain_api/routers/query.py` | put `user_id` on the SQS message + job item |
-| `src/lambda/status.py`, `src/lambda_agent/status.py`, `app/sagebrain_api/routers/{query,ask}.py`, `app/sagebrain_api/jobs.py` | owner check → 404 |
+| `src/lambda_edge/jobs.py` | owner check on both status handlers → 404 |
 | `src/governance_stack.py` (new) | private Neptune cluster, SG, governance bucket, load role, governance-Lambda SG, AVP policy store + policies, PDP Lambda, gate Lambda (read on the data bucket snapshot prefix, write `governance_report.json`) |
 | `src/neptune_pipeline_stack.py` | optional `governance_gate` (`off\|report\|enforce`) + gate function → `GovernanceGate` task before `StartLoad`; `REJECTED_GOVERNANCE` record path. Also instantiated a 2nd time (gate `off`) as `app-{env}-governance-pipeline` |
 | `src/lambda_governance_gate/gate.py` (new) | stream `data/` objects, regex Synapse IRIs, batch-check the invariant against the governance graph, write the report, return pass/fail |
@@ -95,7 +94,7 @@ governance cluster.
 | `tests/unit/governance/`, `tests/unit/core/test_governance.py`, `tests/unit/test_governance_stack.py`, `tests/unit/governance/test_worked_example.py`, `tests/unit/tools/test_publish_governance_snapshot.py` | new tests |
 
 ## Phases (each independently mergeable)
-- **A — Identity fixes (no governance yet).** `user_id` on `/query` jobs, plus job ownership on
+- **A — Identity fixes (no governance yet).** `user_id` on `/query` jobs (done by spec 001 D-19), plus job ownership on
   status (FR-15).
 - **B — Private governance infrastructure.**
   - `GovernanceStack`: cluster, SG, bucket, load role, governance-Lambda SG.
@@ -181,7 +180,8 @@ governance cluster.
   `pre-commit run --all-files` ·
   `npx @redocly/cli@2 lint api/openapi.yaml --config api/.redocly.yaml`
 - **Live (dev, `--profile sagebrain-dev`):**
-  1. `cdk deploy app-dev-governance app-dev-governance-pipeline app-dev-neptune-pipeline app-dev-neptune-api app-dev-neptune-agent`
+  1. Merge to `dev`; the CI/CD workflow deploys `app-dev-governance`, `app-dev-governance-pipeline`,
+     `app-dev-neptune-pipeline`, `app-dev-neptune-api` and `app-dev-neptune-agent` (no local `cdk deploy`)
   2. `python tools/publish_governance_snapshot.py tests/fixtures/governance/governance_graph.open.ttl`
      to publish the worked example (`open` variant). Later, publish governanceDUO's `sync_governance_graph.py`
      export for `poc_scope.yaml`. Then confirm the governance pipeline

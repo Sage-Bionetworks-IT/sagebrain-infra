@@ -2,15 +2,18 @@
 
 **Status:** Draft (POC). Plan only; no implementation yet.
 **Owner:** Thomas Yu
-**Depends on:** spec 001 (FastAPI service + shared `sagebrain_core` query service, branch
-`spec-driven-fastapi-phase0`) being merged into `dev` first. This spec builds on several things
-spec 001 adds:
-- `core/sagebrain_core` (the enforcement chokepoint, `run_query`, limits);
-- `app/sagebrain_api`;
+**Depends on:** spec 001 (unified API), merged into `dev` through Phase 4 (#74–#87). This spec
+builds on what it added:
+- `core/sagebrain_core` (the enforcement chokepoint, `run_query`, limits), shipped as a Lambda layer;
+- `src/lambda_edge/jobs.py`, the unified API's submit/status handlers (`app-{env}-api`). It already
+  puts `user_id` on the `/query` message and both job items (spec 001 D-19);
 - `api/openapi.yaml`, `tests/contract/cases.yaml`;
-- `.specify/memory/constitution.md` and `specs/_template/`.
+- `docs/memory/constitution.md` and `specs/_template/`.
 
-None of these exist on `dev` yet. Implementation starts after that merge.
+Spec 001 dropped the FastAPI service, so this spec has no FastAPI half. The old APIs
+(`app-{env}-neptune-api` / `-agent` front doors) keep serving until spec 001 Phase 5 removes them.
+**Interacts with:** spec 004 (latest-snapshot scoping, draft), which changes the pipeline's tracking
+table and the dataset every query reads.
 **Contract changes:**
 - `api/openapi.yaml`:
   - the job `error` shape gains `governance` on `GET /query/{job_id}` and `GET /ask/{job_id}`;
@@ -67,7 +70,7 @@ team rosters** at all, which shrinks what has to be stored.
   - IAM auth, encrypted, private subnets;
   - its SG's **only** ingress is the governance Lambdas' SG (the PDP and the ingest gate) on 8182.
 
-  The query worker, agent, FastAPI task and Graph Explorer have no IAM or network path to it.
+  The query worker, agent, unified-API handlers and Graph Explorer have no IAM or network path to it.
   *Tests:* `test_governance_stack.py::test_cluster_ingress_only_from_governance_lambdas`,
   `::test_data_plane_roles_have_no_governance_access`.
 - **FR-2 Ingest governanceDUO exports.** A governanceDUO export (`sync_governance_graph.py`) is
@@ -168,8 +171,8 @@ team rosters** at all, which shrinks what has to be stored.
   chokepoint.
 
 ### Cross-cutting
-- **FR-15 Caller identity and job ownership.** `POST /query` (Lambda and FastAPI) carries `user_id`
-  on the SQS message and job item. `GET /query/{job_id}` and `GET /ask/{job_id}` return 404 unless
+- **FR-15 Caller identity and job ownership.** `POST /query` carries `user_id` on the SQS message
+  and job item (already true on the unified API, spec 001 D-19). `GET /query/{job_id}` and `GET /ask/{job_id}` return 404 unless
   the caller owns the job. *Tests:* `cases.yaml` `*_status_other_owner`,
   `test_job_api_handlers.py::test_query_message_carries_user_id`.
 - **FR-16 Worked example is the golden test.** governanceDUO's worked example is vendored at a

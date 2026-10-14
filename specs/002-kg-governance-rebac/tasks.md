@@ -10,11 +10,9 @@ invariant (Stage 1). Query-time ACLs come after (Stage 2).
 - [ ] T003 `tests/contract/cases.yaml`: `query_status_governance_denied`, `query_status_other_owner`, `ask_status_other_owner`, `user_id` in the `query_submit_ok` message
 
 ## Phase A — identity fixes
-- [ ] T101 Test: Lambda `POST /query` puts `user_id` on the SQS message and job item → `src/lambda/submit.py`
-- [ ] T102 Test: FastAPI `POST /query` does the same → `app/sagebrain_api/routers/query.py`, `jobs.py`
-- [ ] T103 Test: the `/query` worker audits `principal=<user_id>`
-- [ ] T104 Test: `*_status_other_owner` (Lambda) → `src/lambda/status.py`, `src/lambda_agent/status.py`
-- [ ] T105 Test: the same vectors (FastAPI) → `app/sagebrain_api/routers/{query,ask}.py`
+- [x] T101 `POST /query` puts `user_id` on the SQS message and job item (unified API, spec 001 D-19)
+- [x] T103 The `/query` worker audits `principal=<user_id>` (spec 001 D-19)
+- [ ] T104 Test: `*_status_other_owner` → `src/lambda_edge/jobs.py`
 - [ ] T106 Test: a legacy job without `user_id` is readable only by `machine`
 
 ## Phase B — private governance infrastructure + fixtures
