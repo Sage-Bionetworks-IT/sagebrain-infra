@@ -18,8 +18,35 @@ NEPTUNE:
   create_parameter_group: false
   parameter_group_parameters: {}
 
+NEPTUNE_API:
+  # Reserved concurrency of the SQS query worker: the most SPARQL jobs that run on Neptune at
+  # once; extra jobs wait in the queue (spec 001 D-14). A safety bound, not a tuned value.
+  query_worker_concurrency: 10
+
+# The unified API (spec 001): one REST API for /query, /ask and /api docs, stack app-{env}-api.
+# Runs alongside the two old APIs until cutover; enable per env.
+API_EDGE:
+  enabled: false
+
+# Alarm thresholds for the unified API (spec 001 Phase 3). A top-level key, not under API_EDGE:
+# the config merge is shallow, so an env file's API_EDGE block would replace these.
+API_EDGE_ALARMS:
+  # 5XX responses other than 503 in 5 minutes, in 2 of 3 periods (handler errors, timeouts)
+  server_errors_per_5_minutes: 5
+  # 503s (the authorizer failed: Synapse down) in every 5 minutes for this long. Above Synapse's
+  # ~30 min Sunday maintenance, so that doesn't email. A multiple of 5
+  synapse_outage_minutes: 60
+  # Scaling path 1: above ~1M requests/day a fixed-cost front door is cheaper (reopens R-1)
+  requests_per_day: 1000000
+  # Scaling path 1: 429s on GET /query/{job_id} or GET /ask/{job_id} in every 5 minutes for this
+  # long, so one over-eager client doesn't email. A multiple of 5
+  status_throttled_minutes: 15
+  # Scaling path 2: oldest message in the query or ask job queue
+  queue_oldest_message_seconds: 300
+
 # Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
-# uploads and bulk-loads each snapshot into its own named graph.
+# uploads and bulk-loads {portal}/YYYY-MM-DD/data/ (Turtle only) into its own
+# named graph. The manifest is the trigger and stays outside the load path.
 NEPTUNE_PIPELINE:
   enabled: true
   graph_uri_template: "urn:sagebrain:{portal}:{date}"
@@ -35,6 +62,11 @@ NEPTUNE_VIZ:
   # e.g. "public.ecr.aws/neptune/graph-explorer@sha256:<digest>".
   image: "public.ecr.aws/neptune/graph-explorer:latest"
 
+AGENT:
+  # Bedrock cross-region inference profile for the agent worker (Claude 4+ needs the `us.`
+  # profile, not the base model ID). The worker's IAM allows us.anthropic.claude-* profiles.
+  # Each model needs its Bedrock Marketplace agreement accepted once per account.
+  bedrock_model_id: us.anthropic.claude-sonnet-5-5
+
 AUTH:
   synapse_team_id: "3605470"
-  # machine_api_key: ""  # set in env-specific config (not committed); enables x-api-key auth

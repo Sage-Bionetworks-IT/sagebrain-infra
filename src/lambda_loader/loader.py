@@ -17,12 +17,18 @@ The snapshot folder key drives everything:
     nf/2026-04-25/manifest.ttl
       → portal      = "nf"
       → date        = "2026-04-25"
-      → prefix      = "s3://<bucket>/nf/2026-04-25/"
+      → prefix      = "s3://<bucket>/nf/2026-04-25/data/"
       → named_graph = "urn:sagebrain:nf:2026-04-25"   (from GRAPH_URI_TEMPLATE)
 
-The whole folder prefix is loaded into a per-snapshot named graph, so every
-historical version stays isolated (append-only). manifest.ttl is loaded too —
-its provenance triples become queryable lineage.
+The whole ``data/`` subprefix is loaded into a per-snapshot named graph, so every
+historical version stays isolated (append-only).
+
+The manifest is the trigger only and deliberately sits *outside* the load path.
+Neptune's bulk loader takes a literal S3 prefix with no include/exclude or glob
+support — it parses every object under ``source`` as Turtle — and ``failOnError``
+is TRUE, so one non-RDF object would fail the whole snapshot. Loading from
+``{portal}/{date}/data/`` gives depositors a place to put anything non-Turtle
+(``{portal}/{date}/other/``) without breaking the load.
 """
 
 import json
@@ -64,6 +70,9 @@ def parse_snapshot(bucket: str, key: str) -> dict:
 
     Expects ``{portal}/{YYYY-MM-DD}/manifest.ttl``. Raises ValueError on any
     other shape so malformed keys fail loudly instead of loading the wrong data.
+
+    The load target is the sibling ``data/`` subprefix — the manifest itself is
+    not loaded (see the module docstring).
     """
     parts = key.split("/")
     if len(parts) != 3 or parts[2] != "manifest.ttl":
@@ -82,7 +91,9 @@ def parse_snapshot(bucket: str, key: str) -> dict:
         "date": date,
         # SK on the tracking table — an ordering-friendly per-portal history key.
         "snapshot": date,
-        "prefix": f"s3://{bucket}/{portal}/{date}/",
+        # Load only the data/ subprefix: Neptune parses every object under the
+        # prefix as Turtle, so non-RDF siblings must stay out of the load path.
+        "prefix": f"s3://{bucket}/{portal}/{date}/data/",
         "named_graph": GRAPH_URI_TEMPLATE.format(portal=portal, date=date),
     }
 
@@ -110,7 +121,15 @@ def _start_bulk_load(prefix: str, named_graph: str) -> str:
         "format": "turtle",
         "iamRoleArn": NEPTUNE_LOAD_ROLE_ARN,
         "region": REGION,
+        # NEW, never the AUTO default: AUTO resumes a prior job from the same
+        # source, and our source is byte-identical on a re-publish of the same
+        # date. RESUME semantics would then reload nothing and return success,
+        # so corrected data would never land while the tracking table recorded
+        # a completed load. NEW also means dropped graph data does get reloaded.
+        "mode": "NEW",
         # Append-only: surface bad data instead of silently skipping it.
+        # Caveat: on error the loader stops but data loaded up to that point
+        # persists, so a failed load leaves a partial named graph behind.
         "failOnError": "TRUE",
         "parallelism": PARALLELISM,
         # Queue behind any in-flight load rather than erroring on a busy cluster.
@@ -135,6 +154,32 @@ def _load_status(load_id: str) -> dict:
     resp = requests.get(url, headers=_signed_headers("GET", url, "", {}), timeout=25)
     resp.raise_for_status()
     return resp.json()["payload"]["overallStatus"]
+
+
+def _load_errors(load_id: str, limit: int = 5) -> list:
+    """Per-file parse/insert errors for a failed load (absent from overallStatus).
+
+    Calls ``GET /loader/{loadId}?errors=TRUE&details=TRUE`` which returns
+    ``errorLogs`` entries with ``errorCode``, ``errorMessage``, ``fileName``,
+    and ``recordNum`` — enough to identify the bad file and line without
+    manually querying Neptune from SageMaker Studio.
+    Returns an empty list if the request fails so a transient error here
+    never masks the original load failure.
+    """
+    url = (
+        f"https://{NEPTUNE_ENDPOINT}:{NEPTUNE_PORT}/loader/{load_id}"
+        f"?errors=TRUE&details=TRUE&errorsPerPage={limit}"
+    )
+    try:
+        resp = requests.get(
+            url, headers=_signed_headers("GET", url, "", {}), timeout=10
+        )
+        resp.raise_for_status()
+        payload = resp.json().get("payload", {})
+        return payload.get("errors", {}).get("errorLogs", [])
+    except Exception as exc:  # noqa: BLE001
+        _log(action="load_errors_fetch_failed", load_id=load_id, error=str(exc))
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -235,11 +280,14 @@ def _record(event: dict) -> dict:
     load_status = event.get("load_status", "UNKNOWN")
     succeeded = load_status == "LOAD_COMPLETED"
 
+    load_id = event.get("load_id")
+    errors = [] if succeeded else _load_errors(load_id)
+
     _put_load(
         portal,
         snapshot,
         status="complete" if succeeded else "error",
-        load_id=event.get("load_id"),
+        load_id=load_id,
         named_graph=event.get("named_graph"),
         prefix=event.get("prefix"),
         etag=event.get("etag", ""),
@@ -248,17 +296,19 @@ def _record(event: dict) -> dict:
         load_status=load_status,
         finished_at=int(time.time()),
         error="" if succeeded else json.dumps(overall)[:1000],
+        load_errors=json.dumps(errors) if errors else "",
     )
     _log(
         action="record",
         portal=portal,
         snapshot=snapshot,
-        load_id=event.get("load_id"),
+        load_id=load_id,
         named_graph=event.get("named_graph"),
         status="complete" if succeeded else "error",
         load_status=load_status,
         total_records=int(overall.get("totalRecords", 0)),
         parsing_errors=int(overall.get("parsingErrors", 0)),
+        load_errors=errors,
     )
     return {"status": "complete" if succeeded else "error", "load_status": load_status}
 

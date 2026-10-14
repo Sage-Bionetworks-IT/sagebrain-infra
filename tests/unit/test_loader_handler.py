@@ -55,7 +55,8 @@ def test_parse_snapshot_valid(loader):
     assert snap["portal"] == "nf"
     assert snap["date"] == "2026-04-25"
     assert snap["snapshot"] == "2026-04-25"
-    assert snap["prefix"] == "s3://mybucket/nf/2026-04-25/"
+    # Load path is the data/ subprefix; the manifest sits outside it.
+    assert snap["prefix"] == "s3://mybucket/nf/2026-04-25/data/"
     assert snap["named_graph"] == "urn:sagebrain:nf:2026-04-25"
 
 
@@ -97,9 +98,12 @@ def test_start_submits_load_into_named_graph(loader, mock_table):
     assert out["named_graph"] == "urn:sagebrain:nf:2026-04-25"
 
     body = json.loads(mock_post.call_args.kwargs["data"])
-    assert body["source"] == "s3://mybucket/nf/2026-04-25/"
+    assert body["source"] == "s3://mybucket/nf/2026-04-25/data/"
     assert body["format"] == "turtle"
     assert body["failOnError"] == "TRUE"
+    # Never AUTO: AUTO would resume the prior job for this source and no-op a
+    # re-publish of the same date, reporting success without loading anything.
+    assert body["mode"] == "NEW"
     assert body["parserConfiguration"]["namedGraphUri"] == "urn:sagebrain:nf:2026-04-25"
 
     # in_progress row written
@@ -167,7 +171,7 @@ def _record_event(load_status, records=100):
         "snapshot": "2026-04-25",
         "load_id": "load-42",
         "named_graph": "urn:sagebrain:nf:2026-04-25",
-        "prefix": "s3://mybucket/nf/2026-04-25/",
+        "prefix": "s3://mybucket/nf/2026-04-25/data/",
         "etag": "etag-1",
         "load_status": load_status,
         "overall_status": {
@@ -192,6 +196,32 @@ def test_record_failure(loader, mock_table):
     item = mock_table.put_item.call_args.kwargs["Item"]
     assert item["status"] == "error"
     assert item["error"]  # non-empty error payload
+
+
+def test_record_failure_fetches_and_stores_load_errors(loader, mock_table):
+    """_load_errors is called on failure; errors stored in DynamoDB + log."""
+    error_entries = [
+        {
+            "errorCode": "PARSE_ERROR",
+            "errorMessage": "unexpected token at line 42",
+            "fileName": "s3://mybucket/nf/2026-04-25/data/rdf/bad.ttl",
+            "recordNum": 42,
+        }
+    ]
+    errors_resp = MagicMock()
+    errors_resp.json.return_value = {
+        "payload": {"errors": {"errorLogs": error_entries}}
+    }
+    errors_resp.raise_for_status = MagicMock()
+
+    with patch.object(loader.requests, "get", return_value=errors_resp):
+        out = loader.handler(_record_event("LOAD_FAILED"), None)
+
+    assert out["status"] == "error"
+    item = mock_table.put_item.call_args.kwargs["Item"]
+    assert item["status"] == "error"
+    stored_errors = json.loads(item["load_errors"])
+    assert stored_errors == error_entries
 
 
 # ---------------------------------------------------------------------------

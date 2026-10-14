@@ -2,6 +2,7 @@ import os
 
 import aws_cdk as cdk
 
+from src.api_edge_stack import ApiEdgeStack
 from src.neptune_agent_stack import NeptuneAgentStack
 from src.network_stack import NetworkStack
 from src.neptune_api_stack import NeptuneApiStack
@@ -85,22 +86,48 @@ neptune_api_stack = NeptuneApiStack(
     neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
     neptune_security_group=neptune_stack.neptune_security_group,
     synapse_team_id=config["AUTH"]["synapse_team_id"],
-    machine_api_key=config["AUTH"].get("machine_api_key", ""),
+    query_worker_concurrency=config["NEPTUNE_API"]["query_worker_concurrency"],
     env=env,
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies
+
+# TODO(spec 001 1b): the deployed agent stack still imports these two auto-generated exports
+# (its old NEPTUNE_QUERY_URL). Keep them until app-dev-neptune-agent has been deployed without
+# them, then delete these two lines; removing them first fails the neptune-api update.
+neptune_api_stack.export_value(neptune_api_stack.api.rest_api_id)
+neptune_api_stack.export_value(neptune_api_stack.api.deployment_stage.stage_name)
 
 # Bedrock Strands AI agent: async POST /ask + GET /ask/{job_id}
 neptune_agent_stack = NeptuneAgentStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-neptune-agent",
     vpc=network_stack.vpc,
-    neptune_query_url=f"{neptune_api_stack.api.url}query",
-    neptune_query_status_url=f"{neptune_api_stack.api.url}query",
+    neptune_read_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
+    neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
+    neptune_security_group=neptune_stack.neptune_security_group,
+    bedrock_model_id=config["AGENT"]["bedrock_model_id"],
     synapse_team_id=config["AUTH"]["synapse_team_id"],
-    machine_api_key=config["AUTH"].get("machine_api_key", ""),
     env=env,
 )
+
+# Unified API (spec 001): one REST API in front of the existing job tables and queues. Runs
+# alongside the two old APIs until cutover. Its references to their tables and queues become
+# cross-stack exports, which Phase 5 releases before deleting the old APIs.
+if config.get("API_EDGE", {}).get("enabled", False):
+    ApiEdgeStack(
+        scope=cdk_app,
+        construct_id=f"{STACK_NAME_PREFIX}-api",
+        query_job_table=neptune_api_stack.job_table,
+        query_job_queue=neptune_api_stack.job_queue,
+        ask_job_table=neptune_agent_stack.job_table,
+        ask_job_queue=neptune_agent_stack.job_queue,
+        synapse_team_id=config["AUTH"]["synapse_team_id"],
+        # The base URL ends in /{env}; the old APIs keep CDK's default /prod in every env
+        stage_name=env_name,
+        alarm_thresholds=config["API_EDGE_ALARMS"],
+        alarm_email=config["ALARM_EMAIL"],
+        env=env,
+    )
 
 monitoring_stack = MonitoringStack(
     scope=cdk_app,

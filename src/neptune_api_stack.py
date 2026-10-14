@@ -9,6 +9,8 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
+from src.core_layer import sagebrain_core_layer
+
 _BUNDLING = cdk.BundlingOptions(
     image=lambda_.Runtime.PYTHON_3_11.bundling_image,
     command=[
@@ -40,7 +42,7 @@ class NeptuneApiStack(cdk.Stack):
         neptune_cluster_resource_id: str,
         neptune_security_group: ec2.SecurityGroup,
         synapse_team_id: str,
-        machine_api_key: str = "",
+        query_worker_concurrency: int,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -135,12 +137,14 @@ class NeptuneApiStack(cdk.Stack):
         # -------------------
         # Worker Lambda — SQS-triggered SPARQL executor (needs VPC)
         # -------------------
+        self.core_layer = sagebrain_core_layer(self)
         self.query_fn = lambda_.Function(
             self,
             "NeptuneQueryFunction",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="query.handler",
             code=lambda_.Code.from_asset("src/lambda", bundling=_BUNDLING),
+            layers=[self.core_layer],
             vpc=vpc,
             security_groups=[self.lambda_sg],
             vpc_subnets=ec2.SubnetSelection(
@@ -152,6 +156,8 @@ class NeptuneApiStack(cdk.Stack):
             },
             timeout=cdk.Duration.seconds(75),  # Neptune complex queries can take 40s+
             memory_size=512,
+            # Per-env cap on concurrent Neptune queries; extra jobs wait in SQS (spec 001 D-14)
+            reserved_concurrent_executions=query_worker_concurrency,
         )
         self.job_table.grant_read_write_data(self.query_fn)
         self.query_fn.add_event_source(
@@ -178,28 +184,21 @@ class NeptuneApiStack(cdk.Stack):
 
         # -------------------
         # Authorizer Lambda — no VPC (calls Synapse public API)
-        # Accepts x-api-key header (machine clients) or Authorization: Bearer
-        # (Synapse PAT or OAuth JWT).  Machine clients must also send
-        # Authorization: ApiKey so API Gateway's identity-source check passes.
+        # Accepts Authorization: Bearer (Synapse PAT or OAuth JWT) only.
         # -------------------
-        authorizer_env = {"SYNAPSE_TEAM_ID": synapse_team_id}
-        if machine_api_key:
-            authorizer_env["MACHINE_API_KEY"] = machine_api_key
-
         authorizer_fn = lambda_.Function(
             self,
             "SynapseAuthorizerFunction",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="authorizer.handler",
             code=lambda_.Code.from_asset("src/lambda_authorizer"),
-            environment=authorizer_env,
+            environment={"SYNAPSE_TEAM_ID": synapse_team_id},
             timeout=cdk.Duration.seconds(10),
             memory_size=256,
         )
 
-        # REQUEST authorizer so the Lambda can read both Authorization and
-        # x-api-key headers.  Caching is disabled here; the Lambda does its
-        # own in-process token cache (5 min TTL) for warm instances.
+        # Caching is disabled here; the Lambda does its own in-process token
+        # cache (5 min TTL) for warm instances.
         token_authorizer = apigw.RequestAuthorizer(
             self,
             "SynapseRequestAuthorizer",

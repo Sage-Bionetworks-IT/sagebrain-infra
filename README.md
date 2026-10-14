@@ -116,7 +116,7 @@ AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-api --context env=dev
 
 ### Direct SPARQL (`POST /query`)
 
-A read-only SPARQL endpoint is available over HTTPS. Requests must include a Synapse Personal Access Token (PAT) and the caller must be a member of Synapse team [273957](https://www.synapse.org/Team:273957).
+A read-only SPARQL endpoint is available over HTTPS. Requests must include a Synapse Personal Access Token (PAT) and the caller must be a member of Synapse team (dev: [273957](https://www.synapse.org/Team:273957), prod: [3605470](https://www.synapse.org/Team:3605470)) (configured as `AUTH.synapse_team_id` in `config/base.yaml`).
 
 Get the API URL from CDK outputs after deployment:
 
@@ -177,64 +177,37 @@ Response includes the answer and the SPARQL steps taken:
 
 ## Loading Data
 
-### 1. Upload data to S3
-
-Data is stored in a date-partitioned layout that preserves a historical data lake. Each contribution goes under its own date prefix:
+Data loads automatically through the ingestion pipeline (`app-dev-neptune-pipeline`). Upload a
+dated snapshot per portal, and write `manifest.ttl` **last**: its arrival starts a Neptune bulk
+load of that snapshot's `data/` prefix into the named graph `urn:sagebrain:{portal}:{date}`.
 
 ```
 s3://<NeptuneDataBucketName>/
-  YYYY-MM-DD/
-    schema/       ← ontology / schema TTL files
-    data/
-      rdf/        ← data TTL files
+  {portal}/YYYY-MM-DD/
+    data/          ← Turtle only; this whole prefix is bulk loaded
+    other/         ← optional: anything that is not Turtle
+    manifest.ttl   ← written LAST; its arrival triggers the load
 ```
 
-Get the bucket name from CloudFormation:
+Only Turtle may live under `data/`: the bulk loader parses every object there, and one non-RDF
+file fails the whole snapshot.
+
+Get the bucket name from CloudFormation and upload:
 
 ```console
-aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune \
-  --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
-  --output text
-```
-
-Then upload via the AWS Console S3 UI or AWS CLI:
-
-```console
-aws s3 cp ./schema/ s3://<NeptuneDataBucketName>/2026-02-20/schema/ --recursive
-aws s3 cp ./data/rdf/ s3://<NeptuneDataBucketName>/2026-02-20/data/rdf/ --recursive
-```
-
-### 2. Load into Neptune
-
-Read the required values from CloudFormation outputs, then run `tools/load_kg.py`:
-
-```console
-pip install requests aws-requests-auth
-
-export NEPTUNE_ENDPOINT=$(aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune \
-  --query "Stacks[0].Outputs[?OutputKey=='NeptuneClusterEndpoint'].OutputValue" \
-  --output text)
-
 export NEPTUNE_BUCKET=$(aws --profile sagebrain cloudformation describe-stacks \
   --stack-name app-dev-neptune \
   --query "Stacks[0].Outputs[?OutputKey=='NeptuneDataBucketName'].OutputValue" \
   --output text)
 
-export NEPTUNE_LOAD_ROLE=$(aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune \
-  --query "Stacks[0].Outputs[?OutputKey=='NeptuneLoadRoleArn'].OutputValue" \
-  --output text)
-
-python tools/load_kg.py --prefix 2026-02-20 --stats
+aws s3 cp ./data/ s3://$NEPTUNE_BUCKET/nf/2026-02-20/data/ --recursive
+aws s3 cp ./manifest.ttl s3://$NEPTUNE_BUCKET/nf/2026-02-20/manifest.ttl
 ```
 
 > [!NOTE]
-> Neptune has IAM auth enabled. All requests must be SigV4-signed — plain `curl` will return `AccessDeniedException`. Use `aws-requests-auth` or `awscurl`.
-
-> [!NOTE]
-> For detailed usage including SPARQL querying, see [docs/neptune.md](docs/neptune.md).
+> For the pipeline design, the manifest format and how to watch a load, see the "Automated
+> Ingestion Pipeline" section of [CLAUDE.md](CLAUDE.md). For SPARQL querying, see
+> [docs/neptune.md](docs/neptune.md).
 
 ## Secrets
 
