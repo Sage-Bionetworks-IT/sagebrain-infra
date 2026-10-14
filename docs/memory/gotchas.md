@@ -19,6 +19,11 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   with no changes doesn't update the status. Check `cdk diff` before assuming it's broken:
   `app-dev-monitoring` has shown it since the 2026-09-04 cost-anomaly attempt (#55, reverted in
   #57) with no differences from the code.
+- **Deleting a resource another stack references fails the deploy** ("Cannot delete export … as it
+  is in use by …"). CDK turns every cross-stack reference into an auto-generated export, and
+  CloudFormation updates the producer first. Two deploys: drop the reference and keep the export
+  with `producer.export_value(...)`, then delete both. Find importers with
+  `aws cloudformation list-imports --export-name <name>` (spec 001 T126, T502).
 - **Strands prints the streamed answer to stdout by default**, glued onto the next log line, so
   JSON log events stop parsing in Insights. Pass `callback_handler=None` to `Agent`.
 - **An unknown API Gateway route returns 403 `IncompleteSignatureException` when the request has a
