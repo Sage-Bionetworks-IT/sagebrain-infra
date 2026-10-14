@@ -32,7 +32,7 @@ aws --profile sagebrain sso login       # prod
 | NeptuneAgentStack | `app-dev-neptune-agent` | Bedrock Strands AI agent — async NL-to-SPARQL via `POST /ask` + `GET /ask/{job_id}` |
 | NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only) |
 | NeptunePipelineStack | `app-dev-neptune-pipeline` | Append-only ingestion — S3 `manifest.ttl` → EventBridge → Step Functions → Neptune bulk loader (one named graph per snapshot) |
-| ApiEdgeStack | `app-dev-api` | Unified API (spec 001): one REST API for `/query`, `/ask` and public docs at `/api`, in front of the existing job tables/queues. `API_EDGE.enabled` (dev on, prod off) |
+| ApiEdgeStack | `app-dev-api` | Unified API (spec 001): one REST API for `/query`, `/ask` and public docs at `/api`, in front of the existing job tables/queues. `API_EDGE.enabled` (on in dev and prod) |
 
 ## S3 Data Bucket
 

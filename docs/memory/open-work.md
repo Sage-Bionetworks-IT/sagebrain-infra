@@ -20,9 +20,6 @@ resolves it.
   correctness gap for `/query`, `/ask` and Graph Explorer.
 - Agent hardening: sanitize `/ask` errors (#22, PR #53); avoid logging full questions (#21);
   CORS / abuse protections (#23); `get_schema` can be unbounded (#30).
-- **Prod is still on the pre-#71 agent** (2026-10-12): it calls `POST /query` over HTTP and imports
-  two `app-prod-neptune-api` exports. Deploy `app-prod-neptune-agent` first, then delete the two
-  `export_value` lines in `app.py` and deploy the API stack; the reverse order fails the update.
 - Normalize header keys in the query Lambda's logs (#20).
 - **Status polling cost** (spec 001 plan, scaling path): each poll is billed per request; at a
   sustained ~1M requests/day a fixed-cost front door is cheaper. The request-volume alarm

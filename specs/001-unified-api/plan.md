@@ -58,7 +58,7 @@ query validation, the 60 s SigV4 Neptune call, the sparql_query audit log
 | 1b | The agent tool calls the shared service in-process (D-8/D-9); the agent worker gets read-only Neptune IAM and 8182 ingress, and accepts both message shapes | agent Lambda + IAM/SG |
 | 2 | Edge stack behind `API_EDGE.enabled`, deployed in parallel with the old APIs in dev: authorizer, submit/status Lambdas (with D-1, D-2, D-5, D-11, D-15, D-19), docs Lambda, gateway responses, status throttle override (D-17), route-vs-contract test, then the load probe | additive |
 | 3 | Alarms and a dashboard for the edge stack (5XX, latency, 429s per method), at least matching what the old APIs have (constitution VII), plus the two scaling signals below: total requests above 1M/day, and the oldest message in the query or agent queue above 5 minutes | additive |
-| 4 | Cutover dev → prod: clients move to the new base URL. At prod cutover, announce a sunset date for the old URLs to the Synapse team | config |
+| 4 | Prod: enable the edge stack, then announce its base URL and a sunset date for the old URLs to the Synapse team. Clients live outside this repo and move on their own; the old APIs keep serving until Phase 5 | config |
 | 5 | Once the old APIs have had ~0 requests for 7 days **and** the sunset date is at least 30 days past: release the cross-stack exports, then delete the two old RestApis, their authorizers and the old submit/status Lambdas; retire the legacy agent message shape | removal |
 | 6 | CLAUDE.md, README and docs | none |
 
