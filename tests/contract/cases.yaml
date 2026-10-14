@@ -1,9 +1,8 @@
 # Shared parity vectors for the job APIs.
 #
-# One list, three consumers:
-#   - tests/unit/test_job_api_handlers.py  — characterizes the current Lambda handlers (layer: handler)
-#   - the edge-stack handler tests (Phase 2) — the new submit/status Lambdas must satisfy every case
-#   - tools/parity_probe.py                — replays cases against live base URLs (skips cases with `given`)
+# One list, two consumers:
+#   - tests/unit/test_edge_handlers.py — the submit/status Lambdas must satisfy every case (layer: handler)
+#   - tools/parity_probe.py            — replays cases against live base URLs (skips cases with `given`)
 #
 # Fields:
 #   id        unique name
@@ -20,10 +19,8 @@
 #             stored_subset (DynamoDB item), enqueued_subset / enqueued_keys (SQS message).
 #             enqueued `user_id` is the authenticated principal, which the harness supplies.
 #   undocumented  true for edge behaviour that isn't an OpenAPI operation (CORS preflight, unknown routes)
-#   legacy    how the CURRENT Lambda behaves when it differs from `expect` (an accepted deviation
-#             recorded in specs/001-unified-api/spec.md). Tests of today's Lambdas assert `legacy`;
-#             tests of the edge-stack handlers assert `expect`.
-#             `legacy: {absent: true}` = the endpoint doesn't exist on the current deployment (probe skips it).
+#   The old APIs' behaviour, where it differed (`legacy` entries until spec 001 T503), is the
+#   "Today" column of spec 001's deviation table.
 
 cases:
   # ---------------------------------------------------------------- POST /query
@@ -39,11 +36,6 @@ cases:
       body_subset: { status: pending }
       body_keys: [job_id, status]
       enqueued_keys: [job_id, query, source, source_ip, user_agent, user_id]
-    legacy:  # deviation D-19: the message had no caller identity
-      status: 202
-      body_subset: { status: pending }
-      body_keys: [job_id, status]
-      enqueued_keys: [job_id, query, source, source_ip, user_agent]
 
   - id: query_submit_strips_whitespace
     api: query
@@ -142,7 +134,6 @@ cases:
     expect:
       status: 400
       body: { error: "'query' must be a string" }
-    legacy: { raises: AttributeError }  # deviation F5
 
   - id: query_submit_non_object
     api: query
@@ -154,7 +145,6 @@ cases:
     expect:
       status: 400
       body: { error: "Request body must be a JSON object" }
-    legacy: { raises: AttributeError }  # deviation F5
 
   - id: query_submit_records_source_header
     api: query
@@ -190,9 +180,6 @@ cases:
     expect:
       status: 202
       enqueued_subset: { source: agent, user_agent: parity-probe/1.0 }
-    legacy:  # deviation D-1
-      status: 202
-      enqueued_subset: { source: direct, user_agent: unknown }
 
   - id: query_submit_source_max_length
     api: query
@@ -217,7 +204,6 @@ cases:
     expect:
       status: 400
       body: { error: "'X-Source' exceeds maximum length of 64 characters" }
-    legacy: { status: 202, enqueued_subset: { source: "${repeat:s:65}" } }  # deviation D-11
 
   - id: query_submit_body_too_large
     api: query
@@ -229,7 +215,6 @@ cases:
     expect:
       status: 413
       body: { message: "Request Too Long" }
-    legacy: { status: 400, body: { error: "Missing 'query' field" } }  # deviation D-5
 
   # ---------------------------------------------------------------- GET /query/{job_id}
   - id: query_status_pending
@@ -242,7 +227,6 @@ cases:
       status: 200
       body: { job_id: job-pending, status: pending }
       headers: { retry-after: "2" }
-    legacy: { status: 200, body: { job_id: job-pending, status: pending } }  # deviation D-15
 
   - id: query_status_running
     api: query
@@ -254,7 +238,6 @@ cases:
       status: 200
       body: { job_id: job-running, status: running }
       headers: { retry-after: "2" }
-    legacy: { status: 200, body: { job_id: job-running, status: running } }  # deviation D-15
 
   - id: query_status_complete
     api: query
@@ -324,7 +307,6 @@ cases:
     expect:
       status: 400
       body: { error: "Missing job_id" }
-    legacy: { status: 404, body: { error: "Job not found" } }  # deviation D-3
 
   # ---------------------------------------------------------------- POST /ask
   - id: ask_submit_ok
@@ -342,10 +324,6 @@ cases:
       stored_subset: { status: pending, question: "What is NF1?" }
       enqueued_subset: { question: "What is NF1?" }
       enqueued_keys: [job_id, question, user_id, source_ip]
-    legacy:  # deviation D-8: the raw Authorization header used to ride along in SQS
-      status: 202
-      enqueued_subset: { question: "What is NF1?", authorization: "Bearer caller-token" }
-      enqueued_keys: [job_id, question, authorization]
 
   - id: ask_submit_strips_whitespace
     api: ask
@@ -411,7 +389,6 @@ cases:
     expect:
       status: 400
       body: { error: "'question' must be a string" }
-    legacy: { raises: AttributeError }  # deviation F5
 
   - id: ask_submit_non_object
     api: ask
@@ -423,7 +400,6 @@ cases:
     expect:
       status: 400
       body: { error: "Request body must be a JSON object" }
-    legacy: { raises: AttributeError }  # deviation F5
 
   # ---------------------------------------------------------------- GET /ask/{job_id}
   - id: ask_status_pending
@@ -436,7 +412,6 @@ cases:
       status: 200
       body: { job_id: ask-pending, status: pending }
       headers: { retry-after: "2" }
-    legacy: { status: 200, body: { job_id: ask-pending, status: pending } }  # deviation D-15
 
   - id: ask_status_running_with_steps
     api: ask
@@ -458,7 +433,6 @@ cases:
         steps:
           - { type: tool_call, tool: query_neptune, sparql: "SELECT 1" }
       headers: { retry-after: "2" }
-    legacy: { status: 200, body: *ask_running_body }  # deviation D-15
 
   - id: ask_status_empty_steps_omitted
     api: ask
@@ -470,7 +444,6 @@ cases:
       status: 200
       body: { job_id: ask-nosteps, status: running }
       headers: { retry-after: "2" }
-    legacy: { status: 200, body: { job_id: ask-nosteps, status: running } }  # deviation D-15
 
   - id: ask_status_complete
     api: ask
@@ -561,10 +534,6 @@ cases:
       status: 401
       body: { message: "Unauthorized" }
       headers: { access-control-allow-origin: "*" }
-    legacy:  # deviation D-10 (observed in dev 2026-10-03)
-      status: 401
-      body: { message: "User is not authorized to access this resource with an explicit deny in an identity-based policy" }
-      headers: { access-control-allow-origin: "*" }
 
   - id: query_preflight
     api: query
@@ -594,7 +563,6 @@ cases:
       status: 404
       body: { message: "Not Found" }
       headers: { access-control-allow-origin: "*" }
-    legacy: { status: 403 }  # deviation D-3: SigV4 parse error body, no CORS
 
   # ---------------------------------------------------------------- API docs (FR-8)
   - id: docs_ui
@@ -605,7 +573,6 @@ cases:
     expect:
       status: 200
       headers: { content-type: "text/html; charset=utf-8" }
-    legacy: { absent: true }
 
   - id: docs_openapi_json
     api: query
@@ -616,7 +583,6 @@ cases:
       status: 200
       body_subset: { openapi: "3.1.0" }
       headers: { content-type: "application/json" }
-    legacy: { absent: true }
 
   - id: docs_openapi_yaml
     api: query
@@ -625,7 +591,6 @@ cases:
     request: { method: GET, path: /api/openapi.yaml }
     expect:
       status: 200
-    legacy: { absent: true }
 
   - id: ask_no_credentials
     api: ask

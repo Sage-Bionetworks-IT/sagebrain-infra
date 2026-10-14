@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 import boto3
-from sagebrain_core.query_service import LEGACY_PRINCIPAL, run_query
+from sagebrain_core.query_service import run_query
 from sagebrain_core.errors import QueryRejected
 from strands import Agent, tool
 from strands.models.bedrock import BedrockModel
@@ -17,9 +17,6 @@ BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonne
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 
-# Legacy /ask Lambda messages carry the caller's raw token instead of a user_id (spec 001,
-# Constraints). The old authorizer already authenticated them; their queries are attributed to
-# sagebrain_core's LEGACY_PRINCIPAL, and the token is never used.
 UNKNOWN_SOURCE_IP = "unknown"
 
 # After stripping PREFIX declarations, the query must begin with SELECT.
@@ -318,20 +315,14 @@ def _process_job(job: _Job, question: str):
 
 
 def _job_from_message(body: dict) -> _Job | None:
-    """Accept both agent-queue shapes (spec 001, Constraints). The `authorization` value is never kept."""
-    if body.get("user_id"):
-        return _Job(
-            job_id=body["job_id"],
-            principal=str(body["user_id"]),
-            source_ip=body.get("source_ip") or UNKNOWN_SOURCE_IP,
-        )
-    if "authorization" in body:
-        return _Job(
-            job_id=body["job_id"],
-            principal=LEGACY_PRINCIPAL,
-            source_ip=UNKNOWN_SOURCE_IP,
-        )
-    return None
+    """The job a message names, or None when it has no caller (spec 001, Constraints)."""
+    if not body.get("user_id"):
+        return None
+    return _Job(
+        job_id=body["job_id"],
+        principal=str(body["user_id"]),
+        source_ip=body.get("source_ip") or UNKNOWN_SOURCE_IP,
+    )
 
 
 def handler(event, context):
@@ -344,7 +335,7 @@ def handler(event, context):
             _update_job(
                 body["job_id"],
                 status="error",
-                error="Agent job message has neither 'user_id' nor 'authorization'",
+                error="Agent job message has no 'user_id'",
             )
             continue
         _process_job(job, body["question"])

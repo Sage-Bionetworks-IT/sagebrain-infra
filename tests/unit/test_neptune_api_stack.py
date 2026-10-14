@@ -29,7 +29,6 @@ def template():
         neptune_read_endpoint="test-neptune.cluster-ro.us-east-1.neptune.amazonaws.com",
         neptune_cluster_resource_id="cluster-ABCDEFGHIJKLMNOP",
         neptune_security_group=neptune_sg,
-        synapse_team_id="273957",
         query_worker_concurrency=QUERY_WORKER_CONCURRENCY,
     )
     return Template.from_stack(stack)
@@ -54,17 +53,6 @@ def test_query_worker_lambda_timeout_is_75s(template):
     template.has_resource_properties(
         "AWS::Lambda::Function",
         {"Handler": "query.handler", "Timeout": 75},
-    )
-
-
-def test_submit_and_status_lambda_timeout_is_10s(template):
-    template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {"Handler": "submit.handler", "Timeout": 10},
-    )
-    template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {"Handler": "status.handler", "Timeout": 10},
     )
 
 
@@ -162,140 +150,51 @@ def test_neptune_ingress_rule_on_port_8182(template):
 
 
 # ---------------------------------------------------------------------------
-# API Gateway
+# Spec 001 T503 — the old API is gone; the job backend keeps its logical IDs
 # ---------------------------------------------------------------------------
 
-
-def test_api_gateway_created(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::RestApi",
-        {"Name": "neptune-query-api"},
-    )
-
-
-def test_post_method_exists(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::Method",
-        {"HttpMethod": "POST"},
-    )
-
-
-def test_get_method_exists_for_status_polling(template):
-    # GET /query/{job_id} is required for async status polling
-    template.has_resource_properties(
-        "AWS::ApiGateway::Method",
-        {"HttpMethod": "GET"},
-    )
+# The unified API (app-*-api) imports the table and queue, and the table is RemovalPolicy.DESTROY:
+# a changed logical ID would replace it and drop its jobs.
+KEPT_LOGICAL_IDS = {
+    "QueryJobTableEE5582B4",
+    "QueryJobDLQE4A49099",
+    "QueryJobQueueCEFE3CFA",
+    "NeptuneQueryFunctionSG19038A6B",
+    "LambdaToNeptuneIngress",
+    "NeptuneQueryFunctionB8541B6D",
+    "NeptuneQueryFunctionServiceRole499C98DA",
+    "NeptuneQueryFunctionServiceRoleDefaultPolicy1D59776F",
+    "SageBrainCoreLayerA5AFF5B7",
+}
 
 
-def test_options_method_exists_for_cors(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::Method",
-        {"HttpMethod": "OPTIONS"},
-    )
+def test_job_backend_logical_ids_unchanged(template):
+    resources = template.to_json()["Resources"]
+    assert KEPT_LOGICAL_IDS <= set(resources)
+    added = {
+        resources[k]["Type"]
+        for k in set(resources) - KEPT_LOGICAL_IDS
+        if not k.startswith("NeptuneQueryFunctionSqsEventSource")
+    }
+    assert added == set()
 
 
-def test_post_method_has_custom_authorizer(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::Method",
-        {
-            "HttpMethod": "POST",
-            "AuthorizationType": "CUSTOM",
-            "AuthorizerId": Match.any_value(),
-        },
-    )
+def test_no_api_gateway_resources(template):
+    types = {r["Type"] for r in template.to_json()["Resources"].values()}
+    assert not {t for t in types if t.startswith("AWS::ApiGateway::")}
 
 
-def test_get_method_has_custom_authorizer(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::Method",
-        {
-            "HttpMethod": "GET",
-            "AuthorizationType": "CUSTOM",
-            "AuthorizerId": Match.any_value(),
-        },
-    )
+def test_only_the_worker_lambda(template):
+    handlers = [
+        f["Properties"]["Handler"]
+        for f in template.find_resources("AWS::Lambda::Function").values()
+    ]
+    assert handlers == ["query.handler"]
 
 
-def test_options_method_has_no_authorizer(template):
-    # CORS preflight must not be gated — browsers can't send auth on OPTIONS
-    template.has_resource_properties(
-        "AWS::ApiGateway::Method",
-        {"HttpMethod": "OPTIONS", "AuthorizationType": "NONE"},
-    )
-
-
-def test_request_authorizer_created(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::Authorizer",
-        {
-            "Type": "REQUEST",
-            "AuthorizerResultTtlInSeconds": 0,
-            "IdentitySource": "method.request.header.Authorization",
-        },
-    )
-
-
-def test_authorizer_lambda_has_team_id_env(template):
-    template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {
-            "Handler": "authorizer.handler",
-            "Environment": {"Variables": {"SYNAPSE_TEAM_ID": "273957"}},
-        },
-    )
-
-
-def test_gateway_response_remaps_access_denied_to_401(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::GatewayResponse",
-        {"ResponseType": "ACCESS_DENIED", "StatusCode": "401"},
-    )
-
-
-def test_gateway_response_unauthorized_has_cors_header(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::GatewayResponse",
-        {
-            "ResponseType": "UNAUTHORIZED",
-            "ResponseParameters": {
-                "gatewayresponse.header.Access-Control-Allow-Origin": "'*'"
-            },
-        },
-    )
-
-
-def test_stage_has_throttling(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::Stage",
-        {
-            "DefaultRouteSettings": Match.absent(),
-            "MethodSettings": Match.any_value(),
-        },
-    )
-
-
-def test_access_log_group_created_with_retention(template):
-    template.has_resource_properties(
-        "AWS::Logs::LogGroup",
-        {"RetentionInDays": 30},
-    )
-
-
-def test_cloudwatch_role_configured(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::Account",
-        {"CloudWatchRoleArn": Match.any_value()},
-    )
-
-
-# ---------------------------------------------------------------------------
-# Outputs
-# ---------------------------------------------------------------------------
-
-
-def test_api_url_output_exists(template):
-    template.has_output("ApiUrl", {})
+def test_job_table_output_exists(template):
+    template.has_output("QueryJobTableName", {})
+    assert "ApiUrl" not in template.to_json()["Outputs"]
 
 
 # ---------------------------------------------------------------------------

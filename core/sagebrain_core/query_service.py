@@ -1,9 +1,6 @@
 from .neptune import NeptuneConfig, NeptuneResult, execute_query
 from .validation import validate_query
 
-# Principal for jobs from the old API Gateway APIs, whose messages carry no caller id (spec 001 D-19).
-LEGACY_PRINCIPAL = "legacy-apigw"
-
 
 def run_query(
     query,

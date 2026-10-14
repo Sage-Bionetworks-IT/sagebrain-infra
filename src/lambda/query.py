@@ -5,7 +5,6 @@ from decimal import Decimal
 import boto3
 from sagebrain_core import limits  # Lambda layer
 from sagebrain_core.neptune import NeptuneConfig, execute_query
-from sagebrain_core.query_service import LEGACY_PRINCIPAL
 
 DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 
@@ -35,6 +34,10 @@ RESULT_TOO_LARGE = "Result exceeds 350 KB; add LIMIT or narrow the query"
 def _execute_job(job: dict):
     """Run one admitted query job. Validation happened at submit time."""
     job_id = job["job_id"]
+    if not job.get("user_id"):
+        # Retrying can't fix a message with no caller; fail the job instead of the batch.
+        _update_job(job_id, status="error", error="Query job message has no 'user_id'")
+        return
     _update_job(job_id, status="running")
     try:
         # Signing, the Neptune timeout and the sparql_query audit log live in sagebrain_core.
@@ -43,8 +46,7 @@ def _execute_job(job: dict):
             config=NeptuneConfig.from_env(),
             job_id=job_id,
             source=job.get("source", "direct"),
-            # Messages from the old /query submit Lambda carry no user_id (spec 001 D-19).
-            principal=str(job.get("user_id") or LEGACY_PRINCIPAL),
+            principal=str(job["user_id"]),
             source_ip=job.get("source_ip", "unknown"),
             user_agent=job.get("user_agent", "unknown"),
         )

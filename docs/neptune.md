@@ -7,8 +7,8 @@ Amazon Neptune cluster for the Sage Brain knowledge graph.
 - **Neptune Cluster**: Managed graph database in private subnets, IAM auth enabled
 - **Security Groups**: No broad ingress — each consumer stack adds a targeted SG-to-SG rule on port 8182
 - **Graph Explorer** (`app-dev-neptune-viz`): Visual graph browsing interface running on Fargate behind an IP-restricted ALB (VPN-only access). Open-source Neptune Graph Explorer for non-technical users to explore the knowledge graph visually.
-- **Public SPARQL API** (`app-dev-neptune-api`): Async read-only SPARQL interface. `POST /query` submits a job and returns a `job_id`. A worker Lambda executes the SPARQL against Neptune and writes results to DynamoDB. Callers poll `GET /query/{job_id}`. All queries logged to CloudWatch with source, IP, duration, and query text.
-- **AI Agent API** (`app-dev-neptune-agent`): Async natural-language interface. `POST /ask` enqueues a job and returns a `job_id` immediately. A worker Lambda (Bedrock Strands / Claude Sonnet 4.6) processes the job via SQS, writes the result to DynamoDB, and the caller polls `GET /ask/{job_id}` for the answer.
+- **Public SPARQL API** (`app-dev-api`, jobs in `app-dev-neptune-api`): Async read-only SPARQL interface. `POST /query` submits a job and returns a `job_id`. A worker Lambda executes the SPARQL against Neptune and writes results to DynamoDB. Callers poll `GET /query/{job_id}`. All queries logged to CloudWatch with source, IP, duration, and query text.
+- **AI Agent API** (`app-dev-api`, jobs in `app-dev-neptune-agent`): Async natural-language interface. `POST /ask` enqueues a job and returns a `job_id` immediately. A worker Lambda (Bedrock Strands / Claude Sonnet 4.6) processes the job via SQS, writes the result to DynamoDB, and the caller polls `GET /ask/{job_id}` for the answer.
 - **Backup & Monitoring**: Automated backups and CloudWatch audit/slow-query logging
 
 ## Accessing Neptune
@@ -50,13 +50,13 @@ SPARQL queries use the same async job pattern as `/ask`:
 
 ```bash
 # 1. Submit query — returns immediately with a job_id
-curl -X POST <ApiUrl> \
+curl -X POST <ApiBaseUrl>/query \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }"}'
 # → {"job_id": "abc-123", "status": "pending"}
 
 # 2. Poll until status is "complete" or "error"
-curl <ApiUrl>/abc-123
+curl <ApiBaseUrl>/query/abc-123
 # → {"job_id": "abc-123", "status": "complete", "results": "{...sparql-results+json...}", "content_type": "..."}
 ```
 
@@ -68,13 +68,13 @@ Ask questions in plain English using the async job pattern:
 
 ```bash
 # 1. Submit a question — returns immediately with a job_id
-curl -X POST <AgentApiUrl> \
+curl -X POST <ApiBaseUrl>/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "What genes are linked to NF1?"}'
 # → {"job_id": "abc-123", "status": "pending"}
 
 # 2. Poll until status is "complete" or "error"
-curl <AgentApiUrl>/abc-123
+curl <ApiBaseUrl>/ask/abc-123
 # → {"job_id": "abc-123", "status": "complete", "answer": "...", "steps": [...]}
 ```
 

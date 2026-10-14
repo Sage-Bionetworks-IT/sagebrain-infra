@@ -1,7 +1,6 @@
 """Edge-stack submit/status handlers (src/lambda_edge/jobs.py) against the shared vectors.
 
-Same vectors as tests/unit/test_job_api_handlers.py, but every case is checked against
-`expect`: the edge handlers carry the spec 001 deviations, today's Lambdas carry `legacy`.
+Every handler case is checked against `expect`, which carries the spec 001 deviations.
 """
 
 import base64

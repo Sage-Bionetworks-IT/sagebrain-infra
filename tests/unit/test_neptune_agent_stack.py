@@ -31,7 +31,6 @@ def template():
         neptune_cluster_resource_id="cluster-ABCDEFGHIJKLMNOP",
         neptune_security_group=neptune_sg,
         bedrock_model_id=MODEL_ID,
-        synapse_team_id="273957",
     )
     return Template.from_stack(stack)
 
@@ -50,17 +49,6 @@ def _worker(template):
 # ---------------------------------------------------------------------------
 
 
-def test_submit_and_status_lambda_created(template):
-    template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {"Handler": "submit.handler", "Timeout": 10},
-    )
-    template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {"Handler": "status.handler", "Timeout": 10},
-    )
-
-
 def test_agent_worker_lambda_created(template):
     template.has_resource_properties(
         "AWS::Lambda::Function",
@@ -68,95 +56,22 @@ def test_agent_worker_lambda_created(template):
     )
 
 
-def test_authorizer_lambda_has_team_id_env(template):
-    template.has_resource_properties(
-        "AWS::Lambda::Function",
-        {
-            "Handler": "authorizer.handler",
-            "Environment": {"Variables": {"SYNAPSE_TEAM_ID": "273957"}},
-        },
-    )
+def test_only_the_worker_lambda(template):
+    handlers = [
+        f["Properties"]["Handler"]
+        for f in template.find_resources("AWS::Lambda::Function").values()
+    ]
+    assert handlers == ["agent.handler"]
 
 
-# ---------------------------------------------------------------------------
-# API Gateway — authentication
-# ---------------------------------------------------------------------------
+def test_no_api_gateway_resources(template):
+    types = {r["Type"] for r in template.to_json()["Resources"].values()}
+    assert not {t for t in types if t.startswith("AWS::ApiGateway::")}
 
 
-def test_api_gateway_created(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::RestApi",
-        {"Name": "neptune-agent-api"},
-    )
-
-
-def test_post_method_has_custom_authorizer(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::Method",
-        {
-            "HttpMethod": "POST",
-            "AuthorizationType": "CUSTOM",
-            "AuthorizerId": Match.any_value(),
-        },
-    )
-
-
-def test_get_method_has_custom_authorizer(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::Method",
-        {
-            "HttpMethod": "GET",
-            "AuthorizationType": "CUSTOM",
-            "AuthorizerId": Match.any_value(),
-        },
-    )
-
-
-def test_options_method_has_no_authorizer(template):
-    # CORS preflight must not be gated — browsers can't send auth on OPTIONS
-    template.has_resource_properties(
-        "AWS::ApiGateway::Method",
-        {"HttpMethod": "OPTIONS", "AuthorizationType": "NONE"},
-    )
-
-
-def test_request_authorizer_created(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::Authorizer",
-        {
-            "Type": "REQUEST",
-            "AuthorizerResultTtlInSeconds": 0,
-            "IdentitySource": "method.request.header.Authorization",
-        },
-    )
-
-
-def test_gateway_response_remaps_access_denied_to_401(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::GatewayResponse",
-        {"ResponseType": "ACCESS_DENIED", "StatusCode": "401"},
-    )
-
-
-def test_gateway_response_unauthorized_has_cors_header(template):
-    template.has_resource_properties(
-        "AWS::ApiGateway::GatewayResponse",
-        {
-            "ResponseType": "UNAUTHORIZED",
-            "ResponseParameters": {
-                "gatewayresponse.header.Access-Control-Allow-Origin": "'*'"
-            },
-        },
-    )
-
-
-# ---------------------------------------------------------------------------
-# Outputs
-# ---------------------------------------------------------------------------
-
-
-def test_agent_api_url_output_exists(template):
-    template.has_output("AgentApiUrl", {})
+def test_job_table_output_exists(template):
+    template.has_output("AgentJobTableName", {})
+    assert "AgentApiUrl" not in template.to_json()["Outputs"]
 
 
 # ---------------------------------------------------------------------------
@@ -280,55 +195,24 @@ def test_worker_limits_unchanged(template):
     )
 
 
-# Every logical ID the stack had before T124 (the API deployment's ID is a content hash).
-EXISTING_LOGICAL_IDS = {
+# The job backend's logical IDs, unchanged since before T124. The unified API (app-*-api) imports
+# the table and queue, and the table is RemovalPolicy.DESTROY: a changed ID would replace it.
+KEPT_LOGICAL_IDS = {
     "AgentJobDLQ30F7FF98",
     "AgentJobQueueEAEF08DA",
     "AgentJobTable5482E7EB",
-    "NeptuneAgentAccessLogsC1007D96",
-    "NeptuneAgentApi4F3F5290",
-    "NeptuneAgentApiAccessDeniedAs4017A6B8C52",
-    "NeptuneAgentApiAccount07E6D351",
-    "NeptuneAgentApiCloudWatchRoleE723F6F6",
-    "NeptuneAgentApiDeploymentStageprodC71B2C9E",
-    "NeptuneAgentApiOPTIONS9894226E",
-    "NeptuneAgentApiUnauthorizedWithCors629D3313",
-    "NeptuneAgentApiask0E99693D",
-    "NeptuneAgentApiaskOPTIONS056871A6",
-    "NeptuneAgentApiaskPOST7AF4927F",
-    "NeptuneAgentApiaskjobid56745EF3",
-    "NeptuneAgentApiaskjobidGET1F378ACF",
-    "NeptuneAgentApiaskjobidOPTIONS9B782B66",
     "NeptuneAgentFunctionSGC9AE14F1",
-    "NeptuneAgentStatusFunctionFB033FB1",
-    "NeptuneAgentStatusFunctionServiceRole415BA59A",
-    "NeptuneAgentStatusFunctionServiceRoleDefaultPolicy1B844915",
-    "NeptuneAgentSubmitFunction7F9431EE",
-    "NeptuneAgentSubmitFunctionServiceRole9E13EF94",
-    "NeptuneAgentSubmitFunctionServiceRoleDefaultPolicy182D6619",
     "NeptuneAgentWorkerFunction0009DF71",
     "NeptuneAgentWorkerFunctionServiceRole59D98EA4",
     "NeptuneAgentWorkerFunctionServiceRoleDefaultPolicy3492502D",
-    "SynapseAuthorizerFunction4072D60B",
-    "SynapseAuthorizerFunctionServiceRoleC8515237",
-    "SynapseRequestAuthorizer7349CCBD",
-    "NeptuneAgentApiaskPOSTApiPermissionTestNeptuneAgentStackNeptuneAgentApiC2C49D5CPOSTask64FF7BE9",
-    "NeptuneAgentApiaskPOSTApiPermissionTestTestNeptuneAgentStackNeptuneAgentApiC2C49D5CPOSTask7F6F1E07",
-    "NeptuneAgentApiaskjobidGETApiPermissionTestNeptuneAgentStackNeptuneAgentApiC2C49D5CGETaskjobid18BA9D54",
-    "NeptuneAgentApiaskjobidGETApiPermissionTestTestNeptuneAgentStackNeptuneAgentApiC2C49D5CGETaskjobid3ABCF580",
     "NeptuneAgentWorkerFunctionSqsEventSourceTestNeptuneAgentStackAgentJobQueue2FFEAA7999F89FD9",
-    "SynapseAuthorizerFunctionTestNeptuneAgentStackSynapseRequestAuthorizer9CC15965Permissions26CDE25E",
 }
 
 
 def test_logical_ids_unchanged(template):
     resources = template.to_json()["Resources"]
-    assert EXISTING_LOGICAL_IDS <= set(resources)
-    added = {
-        resources[k]["Type"]
-        for k in set(resources) - EXISTING_LOGICAL_IDS
-        if not k.startswith("NeptuneAgentApiDeployment")
-    }
+    assert KEPT_LOGICAL_IDS <= set(resources)
+    added = {resources[k]["Type"] for k in set(resources) - KEPT_LOGICAL_IDS}
     assert added == {"AWS::Lambda::LayerVersion", "AWS::EC2::SecurityGroupIngress"}
 
 
