@@ -368,6 +368,9 @@ API Gateway endpoint (`/query`, `/ask`, public docs at `/api`) with an OpenAPI c
 Draft: [specs/003-agent-memory-hindsight](specs/003-agent-memory-hindsight/spec.md) — a local,
 rebuildable Hindsight bank per computer, synced on a schedule from this repo, the depositor repos,
 GitHub and SKG Jira, so agents recall facts instead of reading `docs/memory/`.
+Draft: [specs/004-latest-graph-scoping](specs/004-latest-graph-scoping/spec.md) — queries see only
+the latest published snapshot of each portal (via `default-graph-uri`/`named-graph-uri`),
+release-keyed tags (#61), invisible failed loads (#51).
 
 - **Query limits are server-side.** The agent calls the shared query service in-process (not
   `POST /query` over HTTP), so every query limit and the `sparql_query` audit log live in that
