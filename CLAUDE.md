@@ -365,6 +365,9 @@ Rules are in [docs/memory/constitution.md](docs/memory/constitution.md); each fe
 [specs/001-unified-api](specs/001-unified-api/spec.md) — merging the two REST APIs into one
 API Gateway endpoint (`/query`, `/ask`, public docs at `/api`) with an OpenAPI contract; see its
 [parity-matrix.md](specs/001-unified-api/parity-matrix.md) for where every threshold is enforced.
+Draft: [specs/003-agent-memory-hindsight](specs/003-agent-memory-hindsight/spec.md) — a local,
+rebuildable Hindsight bank per computer, synced on a schedule from this repo, the depositor repos,
+GitHub and SKG Jira, so agents recall facts instead of reading `docs/memory/`.
 Draft: [specs/004-latest-graph-scoping](specs/004-latest-graph-scoping/spec.md) — queries see only
 the latest published snapshot of each portal (via `default-graph-uri`/`named-graph-uri`),
 release-keyed tags (#61), invisible failed loads (#51).
