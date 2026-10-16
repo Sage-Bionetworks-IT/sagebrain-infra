@@ -55,7 +55,12 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
 - **A `cw.Alarm` without `add_alarm_action` notifies nobody.** The job DLQ and pipeline alarms
   had none until 2026-10-16; prod's query DLQ alarm had sat in `ALARM` since 2026-09-16 unseen.
   Actions fire only on a transition into `ALARM`, so wiring one to an alarm already in `ALARM`
-  sends nothing until it clears and fires again.
+  sends nothing until it clears and fires again. That also makes an alarm one email per
+  incident: failures while it's in `ALARM` stay silent. For one email per failure, use an
+  EventBridge rule on the event (the pipeline's `PipelineFailureEmailRule`).
+- **An SNS topic-policy grant to `events.amazonaws.com` has no source condition**, so any
+  account's rule could publish, and the new policy replaces SNS's default one. Use
+  `targets.SnsTopic(..., authorize_using_role=True)` instead.
 - **A CDK metric with a `label` makes an alarm use the `Metrics` (math) form**, with no top-level
   `MetricName`. Label the dashboard copy (`metric.with_(label=…)`), not the alarm's metric.
 - **An API Gateway REST throttle is not a strict token bucket.** 300 concurrent `POST /query` (273

@@ -222,6 +222,15 @@ def test_record_failure_fetches_and_stores_load_errors(loader, mock_table):
     assert item["status"] == "error"
     stored_errors = json.loads(item["load_errors"])
     assert stored_errors == error_entries
+    # The state machine's LoadFailed cause, and so the failure email
+    assert out["error"] == (
+        "nf/2026-04-25 LOAD_FAILED: PARSE_ERROR unexpected token at line 42"
+        " (s3://mybucket/nf/2026-04-25/data/rdf/bad.ttl, record 42)"
+    )
+
+
+def test_record_success_has_empty_error(loader, mock_table):
+    assert loader.handler(_record_event("LOAD_COMPLETED"), None)["error"] == ""
 
 
 # ---------------------------------------------------------------------------

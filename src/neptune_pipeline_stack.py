@@ -221,15 +221,30 @@ class NeptunePipelineStack(cdk.Stack):
             payload=sfn.TaskInput.from_object({"action": "record", **record_common}),
             payload_response_only=True,
             result_path="$.record",
-        ).next(sfn.Fail(self, "LoadFailed", cause="Neptune bulk load did not complete"))
+        ).next(
+            # The cause is the snapshot plus Neptune's load errors; the failure email shows it
+            sfn.Fail(
+                self,
+                "LoadFailed",
+                error="LoadFailed",
+                cause_path=sfn.JsonPath.string_at("$.record.error"),
+            )
+        )
 
-        # Malformed key or unrecoverable Lambda error before we have a load id.
+        # Malformed key or unrecoverable Lambda error before we have a load id. The catch
+        # puts the Lambda's error at $.error, so the execution fails with the real message.
         bad_input = sfn.Fail(
-            self, "BadManifestKey", cause="Could not start load for manifest event"
+            self,
+            "BadManifestKey",
+            error_path=sfn.JsonPath.string_at("$.error.Error"),
+            cause_path=sfn.JsonPath.string_at("$.error.Cause"),
         )
         # Load status could not be polled after retries.
         check_failed = sfn.Fail(
-            self, "LoadCheckFailed", cause="Could not poll Neptune load status"
+            self,
+            "LoadCheckFailed",
+            error_path=sfn.JsonPath.string_at("$.error.Error"),
+            cause_path=sfn.JsonPath.string_at("$.error.Cause"),
         )
 
         skipped = sfn.Succeed(self, "LoadSkipped", comment="Snapshot already loaded")
@@ -265,14 +280,14 @@ class NeptunePipelineStack(cdk.Stack):
             interval=cdk.Duration.seconds(3),
             backoff_rate=2.0,
         )
-        start_load.add_catch(bad_input, errors=["States.ALL"])
+        start_load.add_catch(bad_input, errors=["States.ALL"], result_path="$.error")
         check_load.add_retry(
             errors=transient + ["States.TaskFailed"],
             max_attempts=4,
             interval=cdk.Duration.seconds(5),
             backoff_rate=2.0,
         )
-        check_load.add_catch(check_failed, errors=["States.ALL"])
+        check_load.add_catch(check_failed, errors=["States.ALL"], result_path="$.error")
 
         # StartLoad → (skip? → Succeed) → Wait → CheckLoad → Choice
         definition = start_load.next(
@@ -329,7 +344,9 @@ class NeptunePipelineStack(cdk.Stack):
         # -------------------
         # Alarms
         # -------------------
-        failed_alarm = cw.Alarm(
+        # No email action: the rule below emails each failure, where an alarm would send one
+        # email per incident (it stays in ALARM while later failures happen)
+        cw.Alarm(
             self,
             "PipelineExecutionsFailedAlarm",
             metric=self.state_machine.metric_failed(period=cdk.Duration.minutes(5)),
@@ -352,8 +369,8 @@ class NeptunePipelineStack(cdk.Stack):
             alarm_description="EventBridge failed to start a load pipeline execution",
         )
         if alarm_topic:
-            for alarm in (failed_alarm, rule_dlq_alarm):
-                alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
+            rule_dlq_alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
+            self._email_each_failure(alarm_topic)
 
         # -------------------
         # Outputs
@@ -369,4 +386,39 @@ class NeptunePipelineStack(cdk.Stack):
             "LoadTrackingTableName",
             value=self.load_table.table_name,
             description="DynamoDB table tracking per-snapshot load status / lineage",
+        )
+
+    def _email_each_failure(self, topic: sns.ITopic):
+        """One email per failed or timed-out execution, with its error and a console link."""
+        detail = events.EventField.from_path
+        console = (
+            f"https://{self.region}.console.aws.amazon.com/states/home?region={self.region}"
+            "#/v2/executions/details/"
+        )
+        events.Rule(
+            self,
+            "PipelineFailureEmailRule",
+            description="Email ALARM_EMAIL for each failed Neptune load pipeline execution",
+            event_pattern=events.EventPattern(
+                source=["aws.states"],
+                detail_type=["Step Functions Execution Status Change"],
+                detail={
+                    "status": ["FAILED", "TIMED_OUT"],
+                    "stateMachineArn": [self.state_machine.state_machine_arn],
+                },
+            ),
+            targets=[
+                targets.SnsTopic(
+                    topic,
+                    # Publish with the rule's own role: a topic-policy grant to EventBridge
+                    # has no source condition and would replace SNS's default policy
+                    authorize_using_role=True,
+                    message=events.RuleTargetInput.from_multiline_text(
+                        f"Neptune load pipeline execution {detail('$.detail.status')}\n"
+                        f"Error: {detail('$.detail.error')}\n"
+                        f"Cause: {detail('$.detail.cause')}\n"
+                        f"Execution: {console}{detail('$.detail.executionArn')}"
+                    ),
+                )
+            ],
         )

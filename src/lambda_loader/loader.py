@@ -310,7 +310,24 @@ def _record(event: dict) -> dict:
         parsing_errors=int(overall.get("parsingErrors", 0)),
         load_errors=errors,
     )
-    return {"status": "complete" if succeeded else "error", "load_status": load_status}
+    return {
+        "status": "complete" if succeeded else "error",
+        "load_status": load_status,
+        # The LoadFailed state's cause, which the failure email shows
+        "error": (
+            "" if succeeded else _error_summary(portal, snapshot, load_status, errors)
+        ),
+    }
+
+
+def _error_summary(portal: str, snapshot: str, load_status: str, errors: list) -> str:
+    """One line per load error, prefixed with the snapshot, capped for the email."""
+    details = "; ".join(
+        f"{e.get('errorCode')} {e.get('errorMessage')}"
+        f" ({e.get('fileName')}, record {e.get('recordNum')})"
+        for e in errors
+    )
+    return f"{portal}/{snapshot} {load_status}: {details or 'no error details'}"[:1000]
 
 
 _ACTIONS = {"start": _start, "check": _check, "record": _record}
