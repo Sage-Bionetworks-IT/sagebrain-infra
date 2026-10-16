@@ -120,7 +120,8 @@ that a deployed stack still imports.
   gets T502 and T503 in two separate promotions
 - [x] T502 Release: `app-*-monitoring` stops graphing the old submit/status Lambdas, and `app.py`
   keeps their four exports with `export_value` until that deploy is done. Templates of the two
-  old stacks unchanged
+  old stacks unchanged. Prod: promoted alone in #96, deployed 2026-10-16 17:19 UTC; afterwards
+  `list-imports` showed no importer for any of the four exports
 - [x] T503 Removal (after T502 is deployed and T501 holds): delete the `export_value` lines, the
   two old RestApis with their authorizers, access logs and URL outputs, and the old submit/status
   Lambdas; the monitoring dashboard loses the old API widgets. The workers accept only the new
