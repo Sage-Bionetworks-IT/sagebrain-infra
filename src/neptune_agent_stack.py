@@ -9,7 +9,7 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
-from src.core_layer import sagebrain_core_layer
+from src.core_layer import sagebrain_core_layer, scope_to_live_graphs
 
 # Caps Bedrock/Neptune load under burst traffic. Also the rate bound on the agent's in-process
 # queries, which skip API Gateway; equals the contract's agent_worker_concurrency (stack test).
@@ -50,6 +50,8 @@ class NeptuneAgentStack(cdk.Stack):
         neptune_security_group: ec2.SecurityGroup,
         bedrock_model_id: str,
         synapse_team_id: str,
+        live_registry_table_name: str,
+        graph_scoping: bool,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -190,6 +192,12 @@ class NeptuneAgentStack(cdk.Stack):
             reserved_concurrent_executions=WORKER_RESERVED_CONCURRENCY,
         )
         self.job_table.grant_read_write_data(self.agent_fn)
+        # Spec 004: the agent's in-process queries are scoped like POST /query's
+        scope_to_live_graphs(
+            self.agent_fn,
+            registry_table_name=live_registry_table_name,
+            graph_scoping=graph_scoping,
+        )
         self.agent_fn.add_event_source(
             lambda_event_sources.SqsEventSource(
                 self.job_queue,

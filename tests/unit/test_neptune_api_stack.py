@@ -8,6 +8,8 @@ from src.utils import load_context_config
 
 # Differs from both env values, so the test shows the stack passes the config value through.
 QUERY_WORKER_CONCURRENCY = 7
+REGISTRY_TABLE = "app-test-neptune-pipeline-loads"
+WORKER_HANDLER = "query.handler"
 
 
 @pytest.fixture(scope="module")
@@ -31,6 +33,8 @@ def template():
         neptune_security_group=neptune_sg,
         synapse_team_id="273957",
         query_worker_concurrency=QUERY_WORKER_CONCURRENCY,
+        live_registry_table_name=REGISTRY_TABLE,
+        graph_scoping=True,
     )
     return Template.from_stack(stack)
 
@@ -329,3 +333,49 @@ def test_only_query_worker_uses_core_layer(template):
         if f["Properties"].get("Layers")
     ]
     assert with_layers == ["query.handler"]
+
+
+# ---------------------------------------------------------------------------
+# Spec 004: the live registry and graph scoping
+# ---------------------------------------------------------------------------
+
+
+def _registry_statement(template):
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        for st in policy["Properties"]["PolicyDocument"]["Statement"]:
+            if st["Action"] == "dynamodb:Query":
+                return st
+    raise AssertionError("no dynamodb:Query statement")
+
+
+def test_worker_reads_only_the_live_partition_of_the_registry(template):
+    st = _registry_statement(template)
+    assert st["Effect"] == "Allow"
+    assert st["Condition"] == {
+        "ForAllValues:StringEquals": {"dynamodb:LeadingKeys": ["_live"]}
+    }
+    # The registry table, by its deterministic name (no cross-stack export)
+    arn = "".join(
+        p if isinstance(p, str) else "" for p in st["Resource"]["Fn::Join"][1]
+    )
+    assert arn.endswith(":table/" + REGISTRY_TABLE)
+
+
+def test_worker_env_has_registry_and_scoping_flag(template):
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "Handler": WORKER_HANDLER,
+            "Environment": {
+                "Variables": Match.object_like(
+                    {"LOAD_TABLE_NAME": REGISTRY_TABLE, "GRAPH_SCOPING": "true"}
+                )
+            },
+        },
+    )
+
+
+@pytest.mark.parametrize("env_name, expected", [("dev", True), ("prod", False)])
+def test_graph_scoping_per_env(env_name, expected):
+    """Phase 4 turns scoping on in dev; prod follows after its registry is seeded (Phase 5)."""
+    assert load_context_config(env_name)["NEPTUNE_API"].get("graph_scoping") is expected

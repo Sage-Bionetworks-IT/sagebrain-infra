@@ -119,13 +119,19 @@ prefix) — the manifest is purely the completion sentinel. A future Strategy-A 
 parse it for explicit insert/delete file lists.
 
 ### Querying a snapshot
-Neptune's SPARQL **default graph is the union of all named graphs**, so `SELECT ?s ?p ?o`
-returns every snapshot merged. To target one version, scope to its graph:
+Neptune's own SPARQL **default graph is the union of all named graphs**. With
+`NEPTUNE_API.graph_scoping` on (dev; prod in spec 004 Phase 5), `/query` and `/ask` don't see
+that union: `sagebrain_core.execute_query` sends each portal's live graph from the registry as
+**both** `default-graph-uri` and `named-graph-uri` (one alone empties either plain patterns or
+`GRAPH` patterns). Those protocol parameters override `FROM` / `FROM NAMED`, so callers can't
+reach older, failed or unregistered graphs. An empty registry sends `urn:sagebrain:none`
+(matches nothing, never the union); a registry read error fails the query. The list is cached
+60 s (`live_graphs_cache_seconds`) per Lambda instance, and logged as `graphs` in `sparql_query`.
+
+Graph Explorer and the bastion still see every graph. To read one version directly there:
 ```sparql
 SELECT (COUNT(*) AS ?n) WHERE { GRAPH <urn:sagebrain:nf:2026-04-25> { ?s ?p ?o } }
 ```
-**Not yet implemented:** query API / agent defaulting to "latest snapshot per portal" — that
-query-side change is the required follow-up for append-only.
 
 ### Deploy / operate
 ```bash
@@ -168,7 +174,7 @@ Use `--hotswap` only for Lambda code changes. API Gateway method/stage/IAM chang
 Three Lambdas + SQS + DynamoDB — mirrors the agent's async pattern.
 
 ### submit.py — POST /query
-- Validates query (max 8000 chars), writes `status=pending` to DynamoDB, enqueues to SQS
+- Validates query (max 8000 chars; the unified API's `jobs.py` also rejects `SERVICE`), writes `status=pending` to DynamoDB, enqueues to SQS
 - Returns `202 {"job_id": "...", "status": "pending"}` immediately
 - Captures caller metadata (IP, user agent, X-Source) and passes it in the SQS message for audit logging
 
@@ -193,8 +199,10 @@ Three Lambdas + SQS + DynamoDB — mirrors the agent's async pattern.
 
 ### core/sagebrain_core — shared server-side query service
 - `limits.py` — every threshold value; a test asserts it equals `api/openapi.yaml` `x-sagebrain-limits`
-- `validation.py` — `validate_query` / `validate_question` (trim, type, length; contract error strings)
-- `neptune.py` — `execute_query`: SigV4, timeout, `sparql_query` audit log
+- `validation.py` — `validate_query` / `validate_question` (trim, type, length, no `SERVICE`;
+  contract error strings)
+- `neptune.py` — `execute_query`: SigV4, timeout, graph scoping, `sparql_query` audit log
+- `graphs.py` — `live_graphs`: the registry's live graph per portal, cached 60 s (spec 004)
 - `query_service.py` — `run_query` = validate + execute, for in-process callers (the agent);
   `LEGACY_PRINCIPAL` (`legacy-apigw`)
 - No rate limiting here (spec 001 R-5): API Gateway throttles HTTP callers, each worker's reserved

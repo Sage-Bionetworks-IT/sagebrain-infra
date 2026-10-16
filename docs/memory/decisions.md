@@ -11,9 +11,13 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   "latest" is simply the last arrival (`released_at`, the execution start time), not a sort of tags.
   Duplicate S3 deliveries are detected by `object.sequencer`: an identical re-upload has the same
   etag but is a new PUT.
-- **Neptune's default graph is the union of all named graphs.** Unscoped SPARQL reads every
-  snapshot at once. "Query the latest snapshot per portal" is the required follow-up, and it is
-  still not built.
+- **Queries see only each portal's latest published snapshot (2026-10-15, spec 004).** Neptune's
+  own default graph is the union of every named graph; the query service overrides it on every
+  request with the SPARQL Protocol `default-graph-uri` + `named-graph-uri` lists from the live
+  registry (Neptune honors both and they override `FROM`, though AWS's docs don't say so; spec 004
+  research Q4–Q5). Chosen over rewriting queries (fragile) and over deleting old snapshots (loses
+  history and rollback). Fail closed: empty registry → a sentinel graph, read error → the query
+  fails. Behind `NEPTUNE_API.graph_scoping` per env. `SERVICE` is rejected outright (D-3).
 - **The live registry is the tracking table's `_live` partition (2026-10-15, spec 004).** One item
   per portal, written by the pipeline's Publish step with a conditional put (absent or older
   `released_at`), so out-of-order completions can't roll a portal back. Chosen over deleting old

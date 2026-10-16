@@ -404,3 +404,22 @@ def test_principal_is_legacy_apigw_when_the_message_has_no_user_id(
     handler(make_sqs_event(default_job()), {})
 
     assert _audit_event(capsys)["principal"] == "legacy-apigw"
+
+
+# ---------------------------------------------------------------------------
+# Spec 004 FR-15: SERVICE from the old submit Lambda, which doesn't validate it
+# ---------------------------------------------------------------------------
+
+
+@patch("sagebrain_core.neptune.requests.post")
+def test_service_query_marks_job_error_without_calling_neptune(
+    mock_post, handler, mock_table
+):
+    job = default_job(query="SELECT * WHERE { SERVICE <https://x> { ?s ?p ?o } }")
+    handler(make_sqs_event(job), None)
+
+    mock_post.assert_not_called()
+    (call,) = mock_table.update_item.call_args_list
+    values = call.kwargs["ExpressionAttributeValues"]
+    assert values[":status"] == "error"
+    assert values[":error"] == "SERVICE (federated query) is not permitted"

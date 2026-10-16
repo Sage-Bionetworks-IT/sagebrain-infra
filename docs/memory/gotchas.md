@@ -38,6 +38,14 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   Prepare marks the row `error` (Abort), but an execution that's stopped by hand or times out
   (12 h) leaves it `in_progress`. Check no load is running for it, set the row's `status` to
   `error` in `app-{env}-neptune-pipeline-loads`, and re-upload the manifest.
+- **`default-graph-uri` / `named-graph-uri` work on Neptune but must be sent together** (spec 004
+  research Q4). Only `default-graph-uri` → `GRAPH ?g` patterns match nothing; only
+  `named-graph-uri` → plain patterns match nothing. Repeated values merge. They override `FROM`.
+- **`SERVICE` can exhaust Neptune's memory.** A self-`SERVICE` to the cluster's own endpoint (not
+  SigV4-signed, so it fails after ~43 s) pinned dev's FreeableMemory at 0 for ~7 minutes, during
+  which every query fast-failed with `MemoryLimitExceededException`. `validate_query` rejects it.
+- **A 500 from the query worker hides Neptune's reason**: the body (e.g.
+  `MemoryLimitExceededException`) is only visible from the bastion's raw `curl`.
 - **Never `DROP DEFAULT` / `CLEAR DEFAULT`** to remove "default graph" data. In Neptune the default
   graph is the union of every graph. Name `<http://aws.amazon.com/neptune/vocab/v01/DefaultNamedGraph>`
   explicitly.

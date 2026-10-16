@@ -45,12 +45,19 @@ neptune_stack = NeptuneStack(
 )
 neptune_stack.add_dependency(network_stack)
 
+# The pipeline's tracking table; its `_live` partition is the registry of each portal's latest
+# published snapshot, which the query service scopes every query to (spec 004). The name is
+# deterministic so the readers' grants need no cross-stack export.
+PIPELINE_STACK_NAME = f"{STACK_NAME_PREFIX}-neptune-pipeline"
+LIVE_REGISTRY_TABLE_NAME = f"{PIPELINE_STACK_NAME}-loads"
+GRAPH_SCOPING = config["NEPTUNE_API"].get("graph_scoping", False)
+
 # Append-only ingestion pipeline: S3 manifest.ttl → EventBridge → Step Functions
-# → Neptune bulk loader (one named graph per dated snapshot).
+# → Neptune bulk loader (one named graph per snapshot).
 if config.get("NEPTUNE_PIPELINE", {}).get("enabled", True):
     NeptunePipelineStack(
         scope=cdk_app,
-        construct_id=f"{STACK_NAME_PREFIX}-neptune-pipeline",
+        construct_id=PIPELINE_STACK_NAME,
         vpc=network_stack.vpc,
         data_bucket=neptune_stack.data_bucket,
         neptune_security_group=neptune_stack.neptune_security_group,
@@ -87,6 +94,8 @@ neptune_api_stack = NeptuneApiStack(
     neptune_security_group=neptune_stack.neptune_security_group,
     synapse_team_id=config["AUTH"]["synapse_team_id"],
     query_worker_concurrency=config["NEPTUNE_API"]["query_worker_concurrency"],
+    live_registry_table_name=LIVE_REGISTRY_TABLE_NAME,
+    graph_scoping=GRAPH_SCOPING,
     env=env,
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies
@@ -101,6 +110,8 @@ neptune_agent_stack = NeptuneAgentStack(
     neptune_security_group=neptune_stack.neptune_security_group,
     bedrock_model_id=config["AGENT"]["bedrock_model_id"],
     synapse_team_id=config["AUTH"]["synapse_team_id"],
+    live_registry_table_name=LIVE_REGISTRY_TABLE_NAME,
+    graph_scoping=GRAPH_SCOPING,
     env=env,
 )
 

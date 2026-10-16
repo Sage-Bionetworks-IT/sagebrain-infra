@@ -48,6 +48,11 @@ You have access to a Neptune RDF graph containing biomedical data about genes, d
 pathways, and their relationships. The primary ontology namespace is
 <http://nf-osi.github.com/terms#> (prefix: nf:).
 
+Every query already runs against the latest published snapshot of each portal: that is the
+default graph, and older snapshots are not reachable. Do not use FROM, FROM NAMED or GRAPH
+clauses to choose a snapshot or version; write plain triple patterns. SERVICE (federated
+queries) is not permitted.
+
 When a user asks a question:
 1. Call get_schema to discover available classes and properties if you are unsure of the graph structure.
    Pass a namespace — one of "nf-osi", "obo", "efo", or "edam".

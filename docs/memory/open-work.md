@@ -4,18 +4,21 @@ Durable context only. Check current status with `gh issue view N`. Delete an ent
 resolves it.
 
 ## Ingestion pipeline
-- **Failed or partial loads stay live in the union** until someone re-publishes that date. Options
-  are drop-before-load (self-healing on re-publish) vs drop-on-failure (covers the gap), and a
-  staging cluster would make the question moot (#51). That depends on a staging → prod promotion
-  strategy (#52).
+- **Retention of old snapshots** (#88): nothing deletes superseded graphs, so storage grows by
+  ~200 B/triple per snapshot (spec 004 research Q8). A staging cluster (#52) is a separate thread.
 - **Bulk loader mode**: `NEW` vs the inherited `AUTO` (#44). Move the loader to the boto3
   `neptunedata` client (#50). Note: `neptunedata` has **no SPARQL execute API**, only loader,
   openCypher and Gremlin.
 - **Turtle file size vs serverless capacity** (#10): aim for 100 MB–1 GB per file.
 
 ## Query path / agent
-- **Scope queries to the latest snapshot per portal** (see decisions.md). This is the main
-  correctness gap for `/query`, `/ask` and Graph Explorer.
+- **Scoped query cost grows with portals listed** (spec 004 research Q6): two or more listed
+  graphs add a de-duplicating merge (~1.5× summed execution time at 2 graphs, ~2× at 3). Signal:
+  summed execution time of scoped queries vs portal count. Graph Explorer and the bastion are
+  still unscoped (they see every snapshot).
+- **Neptune's error body is dropped** by `raise_for_status()` (the job shows only `500 Server
+  Error`), and the query worker re-raises so SQS redelivers Neptune 5xx failures ~3×, adding load
+  (spec 004 research Q7). Neptune audit/slow-query logs are exported but disabled.
 - Agent hardening: sanitize `/ask` errors (#22, PR #53); avoid logging full questions (#21);
   CORS / abuse protections (#23); `get_schema` can be unbounded (#30).
 - Normalize header keys in the query Lambda's logs (#20).

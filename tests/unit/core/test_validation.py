@@ -80,3 +80,65 @@ def test_source_limit_boundary():
     with pytest.raises(QueryRejected) as exc:
         validate_source("s" * (limits.SOURCE_MAX_CHARS + 1))
     assert exc.value.message == "'X-Source' exceeds maximum length of 64 characters"
+
+
+# ---------------------------------------------------------------------------
+# Spec 004 FR-15 / D-3: SERVICE (federated query) is rejected
+# ---------------------------------------------------------------------------
+
+SERVICE_ERROR = "SERVICE (federated query) is not permitted"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT * WHERE { SERVICE <https://example.org/sparql> { ?s ?p ?o } }",
+        "SELECT * WHERE { service <https://x> { ?s ?p ?o } }",
+        "SELECT * WHERE { SERVICE SILENT <https://x> { ?s ?p ?o } }",
+        "SELECT * WHERE { SERVICE ?endpoint { ?s ?p ?o } }",
+        "SELECT * WHERE {SERVICE<https://x>{?s ?p ?o}}",
+        "SELECT * WHERE { ?a ?b ?c .SERVICE <https://x> { ?s ?p ?o } }",
+        "SELECT * WHERE {\n  # a comment\n  SERVICE <https://x> { ?s ?p ?o }\n}",
+        'SELECT * WHERE { ?s ?p "a" . SERVICE <https://x> { ?s ?p "b" } }',
+        "SELECT * WHERE { <https://x#frag> ?p ?o . SERVICE <https://x> { ?s ?p ?o } }",
+        "SELECT * WHERE { FILTER(?a<0) SERVICE <https://x> { ?s ?p ?o } }",
+        # Codepoint escapes are decoded before parsing (SPARQL 1.1 §19.2)
+        r"SELECT * WHERE { \u0053ERVICE <https://x> { ?s ?p ?o } }",
+        r"SELECT * WHERE { SERVIC\U00000045 <https://x> { ?s ?p ?o } }",
+    ],
+)
+def test_service_is_rejected(query):
+    with pytest.raises(QueryRejected) as exc:
+        validate_query(query)
+    assert exc.value.message == SERVICE_ERROR
+    assert exc.value.status == 400
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT * WHERE { ?s ?p ?o } LIMIT 1",
+        # Not the keyword: in a comment, a string, an IRI, a prefixed name or a variable
+        "# SERVICE <https://x>\nSELECT * WHERE { ?s ?p ?o }",
+        "SELECT * WHERE { ?s ?p ?o } # uses no SERVICE",
+        'SELECT * WHERE { ?s rdfs:label ?l FILTER(CONTAINS(?l, "health service")) }',
+        "SELECT * WHERE { ?s rdfs:label 'SERVICE' }",
+        'SELECT * WHERE { ?s rdfs:comment """multi\nline SERVICE text""" }',
+        "SELECT * WHERE { ?s ?p <http://example.org/service/1> }",
+        "SELECT * WHERE { <http://example.org/a#SERVICE> ?p ?o }",
+        "PREFIX service: <http://x/>\nSELECT * WHERE { ?s service:name ?o }",
+        "SELECT * WHERE { ?s ex:service ?o . ?s ex:foo-service ?x }",
+        "SELECT ?service WHERE { ?service a ?t }",
+        "SELECT * WHERE { ?s ?p $service }",
+        "SELECT * WHERE { ?s ex:serviceType ?o }",
+    ],
+)
+def test_service_word_outside_the_keyword_is_allowed(query):
+    assert validate_query(query) == query.strip()
+
+
+def test_service_rule_applies_after_the_length_check():
+    # Over-length queries still get the length error, whatever they contain.
+    with pytest.raises(QueryRejected) as exc:
+        validate_query("SERVICE " + "a" * limits.QUERY_MAX_CHARS)
+    assert "maximum length" in exc.value.message
