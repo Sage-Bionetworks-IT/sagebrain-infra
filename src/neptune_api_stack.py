@@ -1,11 +1,9 @@
 import aws_cdk as cdk
-from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_lambda_event_sources as lambda_event_sources
-from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
@@ -23,11 +21,11 @@ _BUNDLING = cdk.BundlingOptions(
 
 class NeptuneApiStack(cdk.Stack):
     """
-    Public read-only API for Neptune via async job pattern.
+    Query job backend for the unified API's /query routes (app-*-api, spec 001).
 
     Flow:
-      POST /query  →  submit Lambda  →  SQS  →  worker Lambda (query.py)  →  DynamoDB
-      GET /query/{job_id}  →  status Lambda  →  DynamoDB
+      POST /query (app-*-api)  →  SQS  →  worker Lambda (query.py)  →  DynamoDB
+      GET /query/{job_id} (app-*-api)  →  DynamoDB
 
     Decouples HTTP from SPARQL execution so Neptune's 40s+ complex queries
     don't hit API Gateway's 29s hard timeout.
@@ -41,7 +39,6 @@ class NeptuneApiStack(cdk.Stack):
         neptune_read_endpoint: str,
         neptune_cluster_resource_id: str,
         neptune_security_group: ec2.SecurityGroup,
-        synapse_team_id: str,
         query_worker_concurrency: int,
         **kwargs,
     ) -> None:
@@ -99,42 +96,6 @@ class NeptuneApiStack(cdk.Stack):
         )
 
         # -------------------
-        # Submit Lambda — POST /query (no VPC needed)
-        # -------------------
-        self.submit_fn = lambda_.Function(
-            self,
-            "NeptuneQuerySubmitFunction",
-            runtime=lambda_.Runtime.PYTHON_3_11,
-            handler="submit.handler",
-            code=lambda_.Code.from_asset("src/lambda", bundling=_BUNDLING),
-            environment={
-                "JOB_TABLE_NAME": self.job_table.table_name,
-                "JOB_QUEUE_URL": self.job_queue.queue_url,
-            },
-            timeout=cdk.Duration.seconds(10),
-            memory_size=256,
-        )
-        self.job_table.grant_write_data(self.submit_fn)
-        self.job_queue.grant_send_messages(self.submit_fn)
-
-        # -------------------
-        # Status Lambda — GET /query/{job_id} (no VPC needed)
-        # -------------------
-        self.status_fn = lambda_.Function(
-            self,
-            "NeptuneQueryStatusFunction",
-            runtime=lambda_.Runtime.PYTHON_3_11,
-            handler="status.handler",
-            code=lambda_.Code.from_asset("src/lambda", bundling=_BUNDLING),
-            environment={
-                "JOB_TABLE_NAME": self.job_table.table_name,
-            },
-            timeout=cdk.Duration.seconds(10),
-            memory_size=256,
-        )
-        self.job_table.grant_read_data(self.status_fn)
-
-        # -------------------
         # Worker Lambda — SQS-triggered SPARQL executor (needs VPC)
         # -------------------
         self.core_layer = sagebrain_core_layer(self)
@@ -183,122 +144,8 @@ class NeptuneApiStack(cdk.Stack):
         )
 
         # -------------------
-        # Authorizer Lambda — no VPC (calls Synapse public API)
-        # Accepts Authorization: Bearer (Synapse PAT or OAuth JWT) only.
-        # -------------------
-        authorizer_fn = lambda_.Function(
-            self,
-            "SynapseAuthorizerFunction",
-            runtime=lambda_.Runtime.PYTHON_3_11,
-            handler="authorizer.handler",
-            code=lambda_.Code.from_asset("src/lambda_authorizer"),
-            environment={"SYNAPSE_TEAM_ID": synapse_team_id},
-            timeout=cdk.Duration.seconds(10),
-            memory_size=256,
-        )
-
-        # Caching is disabled here; the Lambda does its own in-process token
-        # cache (5 min TTL) for warm instances.
-        token_authorizer = apigw.RequestAuthorizer(
-            self,
-            "SynapseRequestAuthorizer",
-            handler=authorizer_fn,
-            identity_sources=[apigw.IdentitySource.header("Authorization")],
-            results_cache_ttl=cdk.Duration.seconds(0),
-        )
-
-        # -------------------
-        # API Gateway
-        # -------------------
-        access_log_group = logs.LogGroup(
-            self,
-            "NeptuneApiAccessLogs",
-            retention=logs.RetentionDays.ONE_MONTH,
-        )
-
-        self.api = apigw.RestApi(
-            self,
-            "NeptuneApi",
-            rest_api_name="neptune-query-api",
-            description="Async read-only API for Neptune graph queries",
-            cloud_watch_role=True,
-            default_cors_preflight_options=apigw.CorsOptions(
-                allow_origins=apigw.Cors.ALL_ORIGINS,
-                allow_methods=["POST", "GET", "OPTIONS"],
-                allow_headers=[
-                    "Content-Type",
-                    "Authorization",
-                    "X-Source",
-                    "x-api-key",
-                ],
-            ),
-            deploy_options=apigw.StageOptions(
-                access_log_destination=apigw.LogGroupLogDestination(access_log_group),
-                access_log_format=apigw.AccessLogFormat.json_with_standard_fields(
-                    caller=True,
-                    http_method=True,
-                    ip=True,
-                    protocol=True,
-                    request_time=True,
-                    resource_path=True,
-                    response_length=True,
-                    status=True,
-                    user=True,
-                ),
-                logging_level=apigw.MethodLoggingLevel.ERROR,
-                metrics_enabled=True,
-                throttling_rate_limit=50,
-                throttling_burst_limit=100,
-            ),
-        )
-
-        # Remap 403 (Deny policy from token authorizer) → 401 so clients get a
-        # consistent Unauthorized response. CORS header included so browser
-        # clients can read the status code.
-        self.api.add_gateway_response(
-            "AccessDeniedAs401",
-            type=apigw.ResponseType.ACCESS_DENIED,
-            status_code="401",
-            response_headers={"Access-Control-Allow-Origin": "'*'"},
-        )
-        # Missing/empty Authorization header → API GW returns UNAUTHORIZED before
-        # running the authorizer, which by default omits CORS headers. Browser
-        # clients need the header to read the 401 status.
-        self.api.add_gateway_response(
-            "UnauthorizedWithCors",
-            type=apigw.ResponseType.UNAUTHORIZED,
-            response_headers={"Access-Control-Allow-Origin": "'*'"},
-        )
-
-        query_resource = self.api.root.add_resource("query")
-        query_resource.add_method(
-            "POST",
-            apigw.LambdaIntegration(self.submit_fn, timeout=cdk.Duration.seconds(10)),
-            authorizer=token_authorizer,
-        )
-
-        query_job_resource = query_resource.add_resource("{job_id}")
-        query_job_resource.add_method(
-            "GET",
-            apigw.LambdaIntegration(self.status_fn, timeout=cdk.Duration.seconds(10)),
-            authorizer=token_authorizer,
-        )
-
-        # -------------------
         # Outputs
         # -------------------
-        cdk.CfnOutput(
-            self,
-            "ApiUrl",
-            value=f"{self.api.url}query",
-            description='Submit endpoint — POST {"query": "..."}  →  {"job_id": "...", "status": "pending"}',
-        )
-        cdk.CfnOutput(
-            self,
-            "QueryJobStatusUrl",
-            value=f"{self.api.url}query/{{job_id}}",
-            description="Poll endpoint — GET /query/{job_id}",
-        )
         cdk.CfnOutput(
             self,
             "QueryJobTableName",

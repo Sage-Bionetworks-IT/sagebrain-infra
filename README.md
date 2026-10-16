@@ -118,19 +118,19 @@ AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-api --context env=dev
 
 A read-only SPARQL endpoint is available over HTTPS. Requests must include a Synapse Personal Access Token (PAT) and the caller must be a member of Synapse team (dev: [273957](https://www.synapse.org/Team:273957), prod: [3605470](https://www.synapse.org/Team:3605470)) (configured as `AUTH.synapse_team_id` in `config/base.yaml`).
 
-Get the API URL from CDK outputs after deployment:
+Get the API's base URL (it ends in `/dev` or `/prod`; docs at `<API_BASE>/api`) from CDK outputs after deployment:
 
 ```console
 aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune-api \
-  --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+  --stack-name app-dev-api \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiBaseUrl'].OutputValue" \
   --output text
 ```
 
 Send a `POST` request with a JSON body containing your SPARQL query:
 
 ```console
-curl -X POST <API_URL> \
+curl -X POST <API_BASE>/query \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-synapse-pat>" \
   -d '{"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 10"}'
@@ -142,19 +142,12 @@ The endpoint returns `application/sparql-results+json`. Queries are limited to 8
 
 Ask questions in plain English. The agent (Bedrock Strands + Claude Sonnet 4.6) translates your question into SPARQL, queries Neptune, and returns a plain-language answer with the full reasoning trace.
 
-Get the agent URL from CDK outputs:
-
-```console
-aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-neptune-agent \
-  --query "Stacks[0].Outputs[?OutputKey=='AgentApiUrl'].OutputValue" \
-  --output text
-```
+The agent is on the same base URL as `/query`.
 
 Send a `POST` request with a `question` field:
 
 ```console
-curl -X POST <AGENT_URL> \
+curl -X POST <API_BASE>/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-synapse-pat>" \
   -d '{"question": "What types of biological entities are in this knowledge graph?"}'

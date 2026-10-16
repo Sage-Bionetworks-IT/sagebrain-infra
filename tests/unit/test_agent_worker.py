@@ -32,11 +32,11 @@ NEW_MESSAGE = {
     "user_id": "3412345",
     "source_ip": "198.51.100.7",
 }
-LEGACY_TOKEN = "Bearer legacy-secret-token"
-LEGACY_MESSAGE = {
+OTHER_MESSAGE = {
     "job_id": "agent-job-2",
     "question": "q?",
-    "authorization": LEGACY_TOKEN,
+    "user_id": "3499999",
+    "source_ip": "203.0.113.9",
 }
 
 
@@ -288,62 +288,36 @@ def test_rejection_is_tool_result_error_and_job_continues(
 
 
 # ---------------------------------------------------------------------------
-# T123 — both message shapes during cutover; the credential is never logged/stored
+# T123 / T503 — only the {job_id, question, user_id, source_ip} shape; never a credential
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_message_runs_as_legacy_principal(agent, monkeypatch, capsys):
-    _use_agent(agent, monkeypatch, lambda tools: tools["query_neptune"](SELECT))
-    run_query = MagicMock(return_value=RESULT)
-    monkeypatch.setattr(agent, "run_query", run_query)
-
-    with _no_http():
-        job = _run(agent, LEGACY_MESSAGE)
-
-    assert run_query.call_args.kwargs["principal"] == "legacy-apigw"
-    assert run_query.call_args.kwargs["job_id"] == "agent-job-2"
-    assert job["status"] == "complete"
-    assert LEGACY_TOKEN not in json.dumps(agent.jobs)
-    assert "legacy-secret-token" not in capsys.readouterr().out
-
-
-def test_user_id_wins_when_both_shapes_present(agent, monkeypatch):
-    _use_agent(agent, monkeypatch, lambda tools: tools["query_neptune"](SELECT))
-    run_query = MagicMock(return_value=RESULT)
-    monkeypatch.setattr(agent, "run_query", run_query)
-
-    _run(agent, {**NEW_MESSAGE, "authorization": LEGACY_TOKEN})
-
-    assert run_query.call_args.kwargs["principal"] == "3412345"
-
-
-def test_invocation_log_carries_principal_and_never_the_token(
-    agent, monkeypatch, capsys
-):
+def test_invocation_log_carries_principal(agent, monkeypatch, capsys):
     _use_agent(agent, monkeypatch, lambda tools: "answer")
 
     _run(agent, NEW_MESSAGE)
-    _run(agent, LEGACY_MESSAGE)
+    _run(agent, OTHER_MESSAGE)
 
     out = capsys.readouterr().out
     events = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
     invocations = [e for e in events if e["event"] == "agent_invocation"]
-    assert [e["principal"] for e in invocations] == ["3412345", "legacy-apigw"]
-    assert "legacy-secret-token" not in out
+    assert [e["principal"] for e in invocations] == ["3412345", "3499999"]
 
 
-def test_error_log_never_carries_the_token(agent, monkeypatch, capsys):
-    def boom(tools):
-        raise RuntimeError("bedrock exploded")
+def test_old_api_message_fails_the_job_and_never_keeps_the_token(
+    agent, monkeypatch, capsys
+):
+    """A straggler from the deleted /ask API has no user_id: fail it, don't run or log the token."""
+    scripted = _use_agent(agent, monkeypatch, lambda tools: "answer")
+    ScriptedAgent.instances.clear()
+    token = "Bearer legacy-secret-token"
 
-    _use_agent(agent, monkeypatch, boom)
+    _run(agent, {"job_id": "agent-job-4", "question": "q?", "authorization": token})
 
-    with pytest.raises(RuntimeError):
-        _run(agent, LEGACY_MESSAGE)
-
-    assert agent.jobs["agent-job-2"]["status"] == "error"
+    assert agent.jobs["agent-job-4"]["status"] == "error"
+    assert scripted not in ScriptedAgent.instances
     assert "legacy-secret-token" not in capsys.readouterr().out
-    assert LEGACY_TOKEN not in json.dumps(agent.jobs)
+    assert token not in json.dumps(agent.jobs)
 
 
 def test_message_without_identity_fails_the_job_without_running(agent, monkeypatch):
@@ -375,13 +349,13 @@ def test_no_state_leaks_between_jobs_on_a_warm_instance(agent, monkeypatch):
     monkeypatch.setattr(agent, "run_query", run_query)
 
     _run(agent, NEW_MESSAGE)
-    _run(agent, LEGACY_MESSAGE)
+    _run(agent, OTHER_MESSAGE)
 
     first, second = run_query.call_args_list
     assert first.kwargs["principal"] == "3412345"
     assert first.kwargs["source_ip"] == "198.51.100.7"
-    assert second.kwargs["principal"] == "legacy-apigw"
-    assert second.kwargs["source_ip"] != "198.51.100.7"
+    assert second.kwargs["principal"] == "3499999"
+    assert second.kwargs["source_ip"] == "203.0.113.9"
     assert second.kwargs["job_id"] == "agent-job-2"
     # Each job's trace holds only its own steps.
     assert len(agent.jobs["agent-job-1"]["steps"]) == 2
@@ -492,19 +466,3 @@ def test_over_length_agent_query_never_reaches_neptune(agent, monkeypatch, neptu
         "error": message,
     }
     assert job["status"] == "complete"
-
-
-def test_legacy_job_audit_event_names_legacy_apigw(agent, monkeypatch, neptune, capsys):
-    """Spec 001 Constraints: a legacy {authorization} job runs as `legacy-apigw`."""
-    _use_agent(agent, monkeypatch, _queries(1))
-
-    _run(agent, LEGACY_MESSAGE)
-
-    events = [
-        json.loads(line)
-        for line in capsys.readouterr().out.splitlines()
-        if line.startswith("{")
-    ]
-    (event,) = [e for e in events if e["event"] == "sparql_query"]
-    assert event["principal"] == "legacy-apigw"
-    assert event["source"] == "agent"

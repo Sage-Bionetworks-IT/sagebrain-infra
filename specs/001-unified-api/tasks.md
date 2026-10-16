@@ -117,12 +117,16 @@ that a deployed stack still imports.
 - [x] T502 Release: `app-*-monitoring` stops graphing the old submit/status Lambdas, and `app.py`
   keeps their four exports with `export_value` until that deploy is done. Templates of the two
   old stacks unchanged
-- [ ] T503 Removal (after T502 is deployed and T501 holds): delete the `export_value` lines, the
+- [x] T503 Removal (after T502 is deployed and T501 holds): delete the `export_value` lines, the
   two old RestApis with their authorizers, access logs and URL outputs, and the old submit/status
   Lambdas; the monitoring dashboard loses the old API widgets. The workers accept only the new
-  messages (spec, Constraints). `test_job_api_handlers.py` and the vectors' `legacy` entries go
+  messages (spec, Constraints). `test_job_api_handlers.py`, the vectors' `legacy` entries and the
+  parity probe's `--legacy` go. Synth diffed: only API Gateway, authorizer and submit/status
+  resources leave the two stacks, and the table/queue exports the edge stack imports stay
 - [ ] T504 After CI deploys T503: `apigateway get-account` still names the edge stack's
-  CloudWatch role, and the edge API still writes access logs
+  CloudWatch role, and the edge API still writes access logs. The old APIs' CloudWatch roles
+  (`Neptune{,Agent}ApiCloudWatchRole*`) and access-log groups are `Retain`, so they stay behind;
+  delete them by hand or leave them
 
 ## Phase 6 onward
 Tasks for docs (Phase 6) are added here when its PR starts.

@@ -76,11 +76,6 @@ def test_expected_body_conforms_to_spec(case):
     if body is not None:
         _validator(schema).validate(body)
 
-    legacy = case.get("legacy") or {}
-    if "body" in legacy and str(legacy["status"]) == status:
-        # A legacy body at the same status must still fit the declared schema (e.g. D-10).
-        _validator(schema).validate(legacy["body"])
-
 
 SUBMIT_OK = [
     c

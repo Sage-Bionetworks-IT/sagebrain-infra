@@ -1,6 +1,5 @@
 import aws_cdk as cdk
 import pytest
-from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_lambda as lambda_
@@ -42,24 +41,13 @@ def template():
             ),
         )
 
-    def _api(name: str, api_name: str) -> apigw.RestApi:
-        api = apigw.RestApi(stub, name, rest_api_name=api_name)
-        # RestApi requires at least one method to pass CDK validation
-        api.root.add_method("GET", apigw.MockIntegration())
-        return api
-
-    query_api = _api("QueryApi", "neptune-query-api")
-    agent_api = _api("AgentApi", "neptune-agent-api")
-
     stack = MonitoringStack(
         app,
         "TestMonitoringStack",
-        query_api=query_api,
         query_worker_fn=_fn("QWorker"),
         query_job_queue=_queue("QQueue"),
         query_dlq=_queue("QDLQ"),
         query_job_table=_table("QTable"),
-        agent_api=agent_api,
         agent_worker_fn=_fn("AWorker"),
         agent_job_queue=_queue("AQueue"),
         agent_dlq=_queue("ADLQ"),
@@ -136,16 +124,16 @@ def _dashboard_body(template) -> str:
     return props["DashboardBody"]["Fn::Join"][1]  # CDK serialises as Fn::Join
 
 
-def test_dashboard_contains_query_api_section(template):
+def test_dashboard_contains_query_jobs_section(template):
     parts = _dashboard_body(template)
     combined = "".join(str(p) for p in parts)
-    assert "Query API" in combined
+    assert "Query jobs" in combined
 
 
-def test_dashboard_contains_agent_api_section(template):
+def test_dashboard_contains_agent_jobs_section(template):
     parts = _dashboard_body(template)
     combined = "".join(str(p) for p in parts)
-    assert "Agent API" in combined
+    assert "Agent jobs" in combined
 
 
 def test_dashboard_contains_neptune_section(template):
@@ -158,3 +146,8 @@ def test_dashboard_references_neptune_cluster_id(template):
     parts = _dashboard_body(template)
     combined = "".join(str(p) for p in parts)
     assert "cluster-TESTCLUSTERID" in combined
+
+
+def test_dashboard_graphs_no_api_gateway_metrics(template):
+    """The API's metrics live on the edge stack's dashboard (spec 001 T503)."""
+    assert "AWS/ApiGateway" not in "".join(str(p) for p in _dashboard_body(template))

@@ -77,7 +77,7 @@ if config.get("NEPTUNE_VIZ", {}).get("enabled", False):
         env=env,
     )
 
-# Public read-only API for Neptune
+# Query job backend (table, queue, worker) behind the unified API's /query routes
 neptune_api_stack = NeptuneApiStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-neptune-api",
@@ -85,13 +85,12 @@ neptune_api_stack = NeptuneApiStack(
     neptune_read_endpoint=neptune_stack.neptune_cluster.attr_read_endpoint,
     neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
     neptune_security_group=neptune_stack.neptune_security_group,
-    synapse_team_id=config["AUTH"]["synapse_team_id"],
     query_worker_concurrency=config["NEPTUNE_API"]["query_worker_concurrency"],
     env=env,
 )
 # Note: No explicit dependency needed as the direct references create implicit dependencies
 
-# Bedrock Strands AI agent: async POST /ask + GET /ask/{job_id}
+# Bedrock Strands AI agent: job backend behind the unified API's /ask routes
 neptune_agent_stack = NeptuneAgentStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-neptune-agent",
@@ -100,13 +99,10 @@ neptune_agent_stack = NeptuneAgentStack(
     neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
     neptune_security_group=neptune_stack.neptune_security_group,
     bedrock_model_id=config["AGENT"]["bedrock_model_id"],
-    synapse_team_id=config["AUTH"]["synapse_team_id"],
     env=env,
 )
 
-# Unified API (spec 001): one REST API in front of the existing job tables and queues. Runs
-# alongside the two old APIs until cutover. Its references to their tables and queues become
-# cross-stack exports, which Phase 5 releases before deleting the old APIs.
+# Unified API (spec 001): the one REST API in front of the job tables and queues
 if config.get("API_EDGE", {}).get("enabled", False):
     ApiEdgeStack(
         scope=cdk_app,
@@ -123,22 +119,13 @@ if config.get("API_EDGE", {}).get("enabled", False):
         env=env,
     )
 
-# TODO(spec 001 T502): the deployed app-*-monitoring still imports these four auto-generated
-# exports (the old submit/status Lambdas). Keep them until it has been deployed without them;
-# T503 deletes these lines with the Lambdas, and deleting them first fails the old stacks' update.
-for _stack in (neptune_api_stack, neptune_agent_stack):
-    _stack.export_value(_stack.submit_fn.function_name)
-    _stack.export_value(_stack.status_fn.function_name)
-
 monitoring_stack = MonitoringStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-monitoring",
-    query_api=neptune_api_stack.api,
     query_worker_fn=neptune_api_stack.query_fn,
     query_job_queue=neptune_api_stack.job_queue,
     query_dlq=neptune_api_stack.dlq,
     query_job_table=neptune_api_stack.job_table,
-    agent_api=neptune_agent_stack.api,
     agent_worker_fn=neptune_agent_stack.agent_fn,
     agent_job_queue=neptune_agent_stack.job_queue,
     agent_dlq=neptune_agent_stack.dlq,
