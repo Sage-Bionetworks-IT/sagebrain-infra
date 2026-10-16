@@ -24,7 +24,7 @@ NEPTUNE_API:
   query_worker_concurrency: 10
 
 # The unified API (spec 001): one REST API for /query, /ask and /api docs, stack app-{env}-api.
-# Runs alongside the two old APIs until cutover; enable per env.
+# The only API since spec 001 Phase 5: an env with it off serves no /query or /ask.
 API_EDGE:
   enabled: false
 

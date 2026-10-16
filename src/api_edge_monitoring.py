@@ -1,6 +1,6 @@
 """Alarms and a dashboard for the unified API (spec 001 Phase 3).
 
-At least what the old APIs have in the monitoring stack (constitution VII), split per route
+At least what the old APIs had in the monitoring stack (constitution VII), split per route
 by the stage's method-level metrics, plus the scaling-path signals from the plan: daily
 request volume, 429s on the status methods, and the age of the oldest queued job.
 

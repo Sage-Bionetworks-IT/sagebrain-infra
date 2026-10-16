@@ -31,6 +31,15 @@ resolves it.
   escape `<` in the `/api` page's spec URL (`src/lambda_docs/docs.py`): a mapping changes what
   `requestContext.path` can contain (security review 2026-10-13).
 
+## Spec 001 follow-ups
+- **Prod Phase 5 is gated.** T503 (delete the old APIs) is on `dev` but must not reach `prod`
+  until T501 holds there: 7 days at ~0 `Count` on `neptune-query-api` / `neptune-agent-api`
+  **and** 30 days past the sunset date that T404 announces. T502 and T503 also need two
+  separate promotions: one `cdk deploy --all` can't drop exports the deployed
+  `app-prod-monitoring` still imports.
+- **Retained leftovers** (T504): the old APIs' `Neptune{,Agent}ApiCloudWatchRole*` roles and
+  access-log groups are `Retain`, so they outlive the stacks in each account. Delete by hand or leave.
+
 ## Infra hygiene
 - Narrow Neptune SG egress to the S3 prefix list (#15). Make the endpoint configurable per env (#14).
 - Extract the Synapse authorizer into a reusable construct (#32). Stop reading env at import time (#8).

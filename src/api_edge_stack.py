@@ -46,9 +46,8 @@ class ApiEdgeStack(cdk.Stack):
       POST /ask,   GET /ask/{job_id}    →  authorizer  →  submit/status Lambdas  →  ask table/queue
       GET /api, /api/openapi.{json,yaml}  →  docs Lambda (public)
 
-    The job tables, queues and workers stay in the API and agent stacks; this stack only
-    replaces their front doors. It runs alongside the two old APIs until cutover
-    (`API_EDGE.enabled`).
+    The job tables, queues and workers stay in the API and agent stacks; this stack is their
+    only front door (`API_EDGE.enabled`).
     """
 
     def __init__(

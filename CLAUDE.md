@@ -33,6 +33,7 @@ aws --profile sagebrain sso login       # prod
 | NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only) |
 | NeptunePipelineStack | `app-dev-neptune-pipeline` | Append-only ingestion — S3 `manifest.ttl` → EventBridge → Step Functions → Neptune bulk loader (one named graph per snapshot) |
 | ApiEdgeStack | `app-dev-api` | Unified API (spec 001): the one REST API: `/query`, `/ask` and public docs at `/api`, in front of the job tables/queues. `API_EDGE.enabled` (on in dev and prod) |
+| MonitoringStack | `app-dev-monitoring` | Dashboard for the workers, queues/DLQs, job tables and Neptune (the API's own alarms and dashboard are in `app-dev-api`) |
 
 ## S3 Data Bucket
 
@@ -113,9 +114,7 @@ query-side change is the required follow-up for append-only.
 
 ### Deploy / operate
 ```bash
-# Deploy (redeploys app-dev-neptune too, for EventBridge on the bucket)
-cdk deploy app-dev-neptune app-dev-neptune-pipeline --profile sagebrain --require-approval never
-
+# Deployed by CI with the rest (see Deployment); app-dev-neptune holds EventBridge on the bucket
 # Watch executions
 aws --profile sagebrain stepfunctions list-executions \
   --state-machine-arn $(aws --profile sagebrain cloudformation describe-stacks \
@@ -127,20 +126,15 @@ Config lives under `NEPTUNE_PIPELINE` in `config/base.yaml` (`enabled`, `graph_u
 
 ## Deployment
 
+Never run `cdk deploy`. CI deploys on push to the env branch: merging to `dev` runs
+`.github/workflows/deploy-dev.yaml` and merging to `prod` runs `deploy-prod.yaml`, each
+`cdk deploy --all --require-approval never`. Promotion to prod is a `dev` → `prod` PR. Because every
+stack deploys at once, ordering constraints between stacks (e.g. dropping a cross-stack export
+that a deployed stack still imports) need separate PRs, each deployed before the next merges.
+
 ```bash
-# Full deploy (all stacks)
-cdk deploy --all --profile sagebrain
-
-# Lambda code only (fast, skips CloudFormation for unchanged infra)
-cdk deploy app-dev-neptune-api --hotswap --profile sagebrain
-cdk deploy app-dev-neptune-agent --hotswap --profile sagebrain
-
-# API Gateway or IAM changes (requires full deploy + approval bypass)
-cdk deploy app-dev-neptune-api --profile sagebrain --require-approval never
-cdk deploy app-dev-neptune-agent --profile sagebrain --require-approval never
+cdk diff --context env=dev --profile sagebrain-dev   # what a merge to dev would change
 ```
-
-Use `--hotswap` only for Lambda code changes. API Gateway method/stage/IAM changes need a full deploy — hotswap will silently skip them.
 
 ## Query jobs: src/lambda/ (async job pattern)
 
@@ -183,7 +177,7 @@ GET /ask/{job_id} (app-*-api)  →  DynamoDB
 
 ### agent.py — SQS worker
 - SQS-triggered (batch size 1). Uses [Strands Agents SDK](https://strandsagents.com) with a `query_neptune` tool
-- Model: `us.anthropic.claude-sonnet-5-5` (cross-region inference profile), set per environment by
+- Model: `us.anthropic.claude-sonnet-5-5` in dev, `us.anthropic.claude-sonnet-4-6` in prod (cross-region inference profiles), set per environment by
   `AGENT.bedrock_model_id` in `config/base.yaml` (override in `config/<env>.yaml`). Each model needs its
   Bedrock Marketplace agreement accepted once per account, or calls fail with `AccessDeniedException`
 - Calls `sagebrain_core.query_service.run_query` **in-process** (spec 001 Phase 1b): validation, the 60 s
@@ -232,7 +226,6 @@ APIs, deleted in Phase 5 (T503). The tables, queues and workers stay in `app-*-n
   the spec's `research.md`.
 
 ```bash
-cdk deploy app-dev-api --profile sagebrain-dev   # imports the job tables/queues from the two job stacks
 aws --profile sagebrain-dev cloudformation describe-stacks --stack-name app-dev-api \
   --query "Stacks[0].Outputs" --output table      # ApiBaseUrl, ApiDocsUrl
 ```

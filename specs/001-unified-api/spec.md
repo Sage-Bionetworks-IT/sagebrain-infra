@@ -1,6 +1,6 @@
 # 001 — One API Gateway endpoint for `/query` and `/ask`
 
-**Status:** Proposed
+**Status:** Implemented in dev through Phase 5; prod runs Phase 4 until its Phase 5 gate (T501) holds
 **Contract:** the first deliverable after this spec is a hand-written OpenAPI 3.1 contract,
 `api/openapi.yaml` ([R-0](research.md)). It describes the existing API plus the deviations below.
 
