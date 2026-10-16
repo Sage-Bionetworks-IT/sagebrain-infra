@@ -45,23 +45,6 @@ neptune_stack = NeptuneStack(
 )
 neptune_stack.add_dependency(network_stack)
 
-# Append-only ingestion pipeline: S3 manifest.ttl → EventBridge → Step Functions
-# → Neptune bulk loader (one named graph per dated snapshot).
-if config.get("NEPTUNE_PIPELINE", {}).get("enabled", True):
-    NeptunePipelineStack(
-        scope=cdk_app,
-        construct_id=f"{STACK_NAME_PREFIX}-neptune-pipeline",
-        vpc=network_stack.vpc,
-        data_bucket=neptune_stack.data_bucket,
-        neptune_security_group=neptune_stack.neptune_security_group,
-        # Bulk loads must target the writer/cluster endpoint, not the reader.
-        neptune_cluster_endpoint=neptune_stack.neptune_cluster.attr_endpoint,
-        neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
-        neptune_load_role_arn=neptune_stack.neptune_load_role.role_arn,
-        pipeline_config=config.get("NEPTUNE_PIPELINE", {}),
-        env=env,
-    )
-
 # Graph Explorer visualization UI (skipped in envs where enabled=false)
 if config.get("NEPTUNE_VIZ", {}).get("enabled", False):
     NeptuneVizStack(
@@ -102,9 +85,11 @@ neptune_agent_stack = NeptuneAgentStack(
     env=env,
 )
 
-# Unified API (spec 001): the one REST API in front of the job tables and queues
+# Unified API (spec 001): the one REST API in front of the job tables and queues.
+# Its alarm topic (email to ALARM_EMAIL) is the env's one; the stacks below notify it too.
+alarm_topic = None
 if config.get("API_EDGE", {}).get("enabled", False):
-    ApiEdgeStack(
+    api_edge_stack = ApiEdgeStack(
         scope=cdk_app,
         construct_id=f"{STACK_NAME_PREFIX}-api",
         query_job_table=neptune_api_stack.job_table,
@@ -116,6 +101,25 @@ if config.get("API_EDGE", {}).get("enabled", False):
         stage_name=env_name,
         alarm_thresholds=config["API_EDGE_ALARMS"],
         alarm_email=config["ALARM_EMAIL"],
+        env=env,
+    )
+    alarm_topic = api_edge_stack.alarm_topic
+
+# Append-only ingestion pipeline: S3 manifest.ttl → EventBridge → Step Functions
+# → Neptune bulk loader (one named graph per dated snapshot).
+if config.get("NEPTUNE_PIPELINE", {}).get("enabled", True):
+    NeptunePipelineStack(
+        scope=cdk_app,
+        construct_id=f"{STACK_NAME_PREFIX}-neptune-pipeline",
+        vpc=network_stack.vpc,
+        data_bucket=neptune_stack.data_bucket,
+        neptune_security_group=neptune_stack.neptune_security_group,
+        # Bulk loads must target the writer/cluster endpoint, not the reader.
+        neptune_cluster_endpoint=neptune_stack.neptune_cluster.attr_endpoint,
+        neptune_cluster_resource_id=neptune_stack.neptune_cluster.attr_cluster_resource_id,
+        neptune_load_role_arn=neptune_stack.neptune_load_role.role_arn,
+        pipeline_config=config.get("NEPTUNE_PIPELINE", {}),
+        alarm_topic=alarm_topic,
         env=env,
     )
 
@@ -131,6 +135,7 @@ monitoring_stack = MonitoringStack(
     agent_dlq=neptune_agent_stack.dlq,
     agent_job_table=neptune_agent_stack.job_table,
     neptune_cluster_id=neptune_stack.neptune_cluster.ref,
+    alarm_topic=alarm_topic,
     env=env,
 )
 

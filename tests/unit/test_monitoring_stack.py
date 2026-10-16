@@ -3,6 +3,7 @@ import pytest
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_lambda as lambda_
+from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sqs as sqs
 from aws_cdk.assertions import Template
 
@@ -53,6 +54,7 @@ def template():
         agent_dlq=_queue("ADLQ"),
         agent_job_table=_table("ATable"),
         neptune_cluster_id="cluster-TESTCLUSTERID",
+        alarm_topic=sns.Topic(stub, "AlarmTopic"),
     )
     return Template.from_stack(stack)
 
@@ -84,6 +86,14 @@ def test_dashboard_url_output_exists(template):
 
 def test_two_dlq_alarms_created(template):
     template.resource_count_is("AWS::CloudWatch::Alarm", 2)
+
+
+def test_every_alarm_notifies_the_alarm_topic(template):
+    alarms = template.find_resources("AWS::CloudWatch::Alarm")
+    assert alarms
+    for props in (a["Properties"] for a in alarms.values()):
+        assert len(props["AlarmActions"]) == 1
+        assert "AlarmTopic" in str(props["AlarmActions"][0])
 
 
 def test_query_dlq_alarm_threshold_is_one(template):

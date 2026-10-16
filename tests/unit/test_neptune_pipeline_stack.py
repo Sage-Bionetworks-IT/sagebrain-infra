@@ -2,6 +2,7 @@ import aws_cdk as cdk
 import pytest
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_sns as sns
 from aws_cdk.assertions import Match, Template
 
 from src.neptune_pipeline_stack import NeptunePipelineStack
@@ -32,6 +33,7 @@ def template():
             "parallelism": "HIGH",
             "wait_seconds": 30,
         },
+        alarm_topic=sns.Topic(base, "AlarmTopic"),
     )
     return Template.from_stack(stack)
 
@@ -174,6 +176,15 @@ def test_rule_dlq_created(template):
 
 def test_alarms_created(template):
     template.resource_count_is("AWS::CloudWatch::Alarm", 2)
+
+
+def test_every_alarm_notifies_the_alarm_topic(template):
+    for props in (
+        a["Properties"]
+        for a in template.find_resources("AWS::CloudWatch::Alarm").values()
+    ):
+        assert len(props["AlarmActions"]) == 1
+        assert "AlarmTopic" in str(props["AlarmActions"][0])
 
 
 def test_outputs_exist(template):
