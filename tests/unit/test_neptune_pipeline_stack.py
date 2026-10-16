@@ -1,3 +1,5 @@
+import json
+
 import aws_cdk as cdk
 import pytest
 from aws_cdk import aws_ec2 as ec2
@@ -5,6 +7,10 @@ from aws_cdk import aws_s3 as s3
 from aws_cdk.assertions import Match, Template
 
 from src.neptune_pipeline_stack import NeptunePipelineStack
+from src.utils import load_context_config
+
+# Differs from both env values, so the test shows the stack passes the config value through.
+DROP_BATCH_SIZE = 12345
 
 
 @pytest.fixture(scope="module")
@@ -31,6 +37,7 @@ def template():
             "graph_uri_template": "urn:sagebrain:{portal}:{tag}",
             "parallelism": "HIGH",
             "wait_seconds": 30,
+            "drop_batch_size": DROP_BATCH_SIZE,
         },
     )
     return Template.from_stack(stack)
@@ -96,6 +103,74 @@ def test_loader_iam_bulk_load_actions(template):
     )
 
 
+def test_loader_iam_query_and_delete_for_drop(template):
+    # Spec 004 FR-8: the batched DELETE + ASK that clear a failed tag's graph.
+    template.has_resource_properties(
+        "AWS::IAM::Policy",
+        {
+            "PolicyDocument": {
+                "Statement": Match.array_with(
+                    [
+                        Match.object_like(
+                            {
+                                "Effect": "Allow",
+                                "Action": Match.array_equals(
+                                    [
+                                        "neptune-db:ReadDataViaQuery",
+                                        "neptune-db:DeleteDataViaQuery",
+                                    ]
+                                ),
+                                "Resource": {
+                                    "Fn::Join": [
+                                        "",
+                                        Match.array_with(
+                                            [":cluster-ABCDEFGHIJKLMNOP/*"]
+                                        ),
+                                    ]
+                                },
+                            }
+                        )
+                    ]
+                )
+            }
+        },
+    )
+
+
+def test_loader_timeout_fits_one_drop_batch(template):
+    # A drop batch may run up to Neptune's 120 s query timeout, plus its ASK.
+    template.has_resource_properties(
+        "AWS::Lambda::Function", {"Handler": "loader.handler", "Timeout": 150}
+    )
+
+
+def test_loader_drop_batch_size_comes_from_config(template):
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "Handler": "loader.handler",
+            "Environment": {
+                "Variables": Match.object_like(
+                    {"DROP_BATCH_SIZE": str(DROP_BATCH_SIZE)}
+                )
+            },
+        },
+    )
+
+
+@pytest.mark.parametrize("env_name, expected", [("dev", 100000), ("prod", 300000)])
+def test_drop_batch_size_per_env(env_name, expected):
+    config = load_context_config(env_name)
+    assert config["NEPTUNE_PIPELINE"]["drop_batch_size"] == expected
+
+
+def test_dev_pipeline_block_keeps_base_values():
+    # dev.yaml's NEPTUNE_PIPELINE replaces base.yaml's (shallow merge); it must repeat the rest.
+    dev, prod = load_context_config("dev"), load_context_config("prod")
+    for key in ("enabled", "graph_uri_template", "parallelism", "wait_seconds"):
+        assert dev["NEPTUNE_PIPELINE"][key] == prod["NEPTUNE_PIPELINE"][key], key
+
+
 def test_neptune_ingress_rule_on_port_8182(template):
     template.has_resource_properties(
         "AWS::EC2::SecurityGroupIngress",
@@ -144,11 +219,76 @@ def _state_machine_definition(template) -> str:
     return "".join(p if isinstance(p, str) else "" for p in parts)
 
 
-def test_start_load_passes_execution_start_time_as_released_at(template):
+def _states(template) -> dict:
+    return json.loads(_state_machine_definition(template))["States"]
+
+
+def test_prepare_passes_execution_start_time_as_released_at(template):
     # Spec 004 FR-4: arrival order is the execution start time, not anything in the event.
-    assert '"released_at.$":"$$.Execution.StartTime"' in _state_machine_definition(
-        template
+    prepare = _states(template)["Prepare"]
+    assert prepare["Parameters"]["action"] == "prepare"
+    assert prepare["Parameters"]["released_at.$"] == "$$.Execution.StartTime"
+
+
+def test_execution_starts_at_prepare_and_routes_each_case(template):
+    states = _states(template)
+    assert json.loads(_state_machine_definition(template))["StartAt"] == "Prepare"
+    assert states["Prepare"]["Next"] == "Route"
+    assert states["Prepare"]["Catch"][0]["Next"] == "BadManifestKey"
+    routes = {c["StringEquals"]: c["Next"] for c in states["Route"]["Choices"]}
+    assert routes == {
+        "skip": "LoadSkipped",
+        "publish": "Publish",  # FR-7: no reload
+        "drop": "DropBatch",  # FR-8
+        "load": "StartLoad",
+    }
+    assert states["Route"]["Default"] == "BadManifestKey"
+
+
+def test_drop_loops_until_the_graph_is_empty_then_loads(template):
+    states = _states(template)
+    assert states["DropBatch"]["Next"] == "GraphCleared?"
+    (loop,) = states["GraphCleared?"]["Choices"]
+    assert (loop["Variable"], loop["BooleanEquals"], loop["Next"]) == (
+        "$.drop.remaining",
+        True,
+        "DropBatch",
     )
+    assert states["GraphCleared?"]["Default"] == "StartLoad"
+
+
+def test_only_a_completed_load_or_a_loaded_tag_publishes(template):
+    # FR-10: a failed load is never published.
+    states = _states(template)
+    into_publish = sorted(
+        name
+        for name, st in states.items()
+        if st.get("Next") == "Publish"
+        or any(c.get("Next") == "Publish" for c in st.get("Choices", []))
+    )
+    assert into_publish == ["RecordSuccess", "Route"]
+    assert states["RecordFailure"]["Next"] == "LoadFailed"
+    assert states["Publish"]["Next"] == "LoadSucceeded"
+    assert (
+        "Catch" not in states["Publish"]
+    )  # a publish failure must not mark the tag for drop
+
+
+def test_failures_after_the_claim_mark_the_row_error(template):
+    states = _states(template)
+    for name in (
+        "StartLoad",
+        "CheckLoad",
+        "DropBatch",
+        "RecordSuccess",
+        "RecordFailure",
+    ):
+        (catch,) = states[name]["Catch"]
+        assert catch["Next"] == "Abort", name
+        assert catch["ResultPath"] == "$.error"
+    assert states["Abort"]["Parameters"]["action"] == "abort"
+    assert states["Abort"]["Next"] == "LoadAborted"
+    assert states["LoadAborted"]["Type"] == "Fail"
 
 
 def test_eventbridge_rule_matches_manifest_suffix(template):

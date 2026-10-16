@@ -78,14 +78,26 @@ entire snapshot load rather than being skipped. So the contract for depositors i
 ### Flow
 ```
 S3 "Object Created" (EventBridge) → EventBridge Rule (key suffix "manifest.ttl")
-  → Step Functions:  StartLoad → Wait 30s → CheckLoad → Choice
+  → Step Functions:  Prepare → Route
+       ├─ duplicate event / load in progress → Skip (Succeed)
+       ├─ tag already loaded  → Publish → Succeed             (rollback or no-op; no reload)
+       ├─ tag's last load failed → DropBatch (loop) ─┐
+       └─ new tag ───────────────────────────────────┴→ StartLoad → Wait 30s → CheckLoad → Choice
                                                  ├─ IN_PROGRESS → Wait (loop)
-                                                 ├─ LOAD_COMPLETED → RecordSuccess → Succeed
+                                                 ├─ LOAD_COMPLETED → RecordSuccess → Publish → Succeed
                                                  └─ failed → RecordFailure → Fail → Alarm
+     any step after Prepare fails → Abort (row → error) → Fail → Alarm
 ```
-- **Step Functions** (not a polling Lambda) owns the Wait/Check loop, so very large loads
-  aren't bounded by the 15-min Lambda timeout. Each `loader.py` invocation is one fast
-  SigV4-signed HTTP call to Neptune (`start` / `check` / `record` via the `action` field).
+- **Step Functions** (not a polling Lambda) owns the Wait/Check and drop loops, so very large
+  loads aren't bounded by the 15-min Lambda timeout. Each `loader.py` invocation is one
+  SigV4-signed HTTP call to Neptune or one DynamoDB write (`prepare` / `drop` / `start` / `check`
+  / `record` / `publish` / `abort` via the `action` field); the Lambda timeout is 150 s for a drop batch.
+- **Live registry** — `Publish` writes `{portal: "_live", snapshot: <portal>, named_graph,
+  released_at}` into the tracking table, only if absent or older than this arrival. Of a portal's
+  loaded snapshots, the **last to arrive** (`released_at` = execution start time) is live; a failed
+  load is never published. Re-uploading an older tag's `manifest.ttl` rolls the portal back without
+  a reload. Re-uploading a failed tag first deletes its (never-published) graph in
+  `NEPTUNE_PIPELINE.drop_batch_size` batches (dev 100k, prod 300k), then reloads it.
 - **One named graph per snapshot** — each snapshot's `data/` prefix loads into
   `urn:sagebrain:{portal}:{tag}` (via the bulk loader's `parserConfiguration.namedGraphUri`),
   so every historical version stays isolated. `manifest.ttl` is the trigger only and is **not**
@@ -127,7 +139,12 @@ aws --profile sagebrain stepfunctions list-executions \
     --query "Stacks[0].Outputs[?OutputKey=='LoadPipelineStateMachineArn'].OutputValue" --output text)
 ```
 Config lives under `NEPTUNE_PIPELINE` in `config/base.yaml` (`enabled`, `graph_uri_template`,
-`parallelism`, `wait_seconds`).
+`parallelism`, `wait_seconds`, `drop_batch_size`). `config/dev.yaml` repeats the whole block
+(shallow merge).
+
+Seed the registry from the tracking table once per env, before turning on query scoping:
+`python tools/backfill_live_registry.py --profile sagebrain-dev --env dev --portal nf --dry-run`
+(then without `--dry-run`). It never overwrites an existing entry.
 
 ## Deployment
 

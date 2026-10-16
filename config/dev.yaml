@@ -16,6 +16,15 @@ NEPTUNE_API:
 API_EDGE:
   enabled: true  # deployed alongside the old APIs (spec 001 Phase 2)
 
+# The whole block, not just drop_batch_size: the config merge is shallow, so this replaces
+# base.yaml's NEPTUNE_PIPELINE.
+NEPTUNE_PIPELINE:
+  enabled: true
+  graph_uri_template: "urn:sagebrain:{portal}:{tag}"
+  parallelism: "HIGH"
+  wait_seconds: 30
+  drop_batch_size: 100000  # dev's Neptune maxes at 4 NCU (prod 300000, from base.yaml)
+
 NEPTUNE_VIZ:
   enabled: true
   allowed_cidrs:

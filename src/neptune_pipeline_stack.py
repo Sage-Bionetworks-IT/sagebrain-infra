@@ -41,7 +41,15 @@ class NeptunePipelineStack(cdk.Stack):
     Flow:
       S3 "Object Created" (EventBridge)
         → EventBridge Rule (key suffix "manifest.ttl")
-          → Step Functions: StartLoad → Wait/Check loop → Record{Success,Failure}
+          → Step Functions: Prepare → Route
+              ├─ duplicate / in progress → Skip
+              ├─ published tag          → Publish            (rollback / no-op, no reload)
+              ├─ failed tag             → DropLoop → StartLoad ┐
+              └─ new tag                → StartLoad ───────────┴→ Wait/Check loop
+                  → RecordSuccess → Publish | RecordFailure → Fail
+
+    Publish writes the portal's entry in the live registry (partition ``_live`` of the
+    tracking table), which the query service reads to scope every query (spec 004).
 
     Only ``data/`` is loaded — Neptune's bulk loader has no include/exclude filter
     and parses everything under the prefix as Turtle, so with failOnError=TRUE a
@@ -73,6 +81,7 @@ class NeptunePipelineStack(cdk.Stack):
         )
         parallelism = pipeline_config.get("parallelism", "HIGH")
         wait_seconds = pipeline_config.get("wait_seconds", 30)
+        drop_batch_size = pipeline_config.get("drop_batch_size", 100000)
 
         # -------------------
         # DynamoDB — load tracking / lineage (append-only audit trail, no TTL)
@@ -130,8 +139,11 @@ class NeptunePipelineStack(cdk.Stack):
                 "NEPTUNE_LOAD_ROLE_ARN": neptune_load_role_arn,
                 "GRAPH_URI_TEMPLATE": graph_uri_template,
                 "LOAD_PARALLELISM": parallelism,
+                "DROP_BATCH_SIZE": str(drop_batch_size),
             },
-            timeout=cdk.Duration.seconds(30),  # each task is a single fast HTTP call
+            # Each task is one HTTP call. A drop batch can run up to Neptune's 120 s query
+            # timeout, plus its ASK (spec 004 thresholds).
+            timeout=cdk.Duration.seconds(150),
             memory_size=256,
         )
         self.load_table.grant_read_write_data(self.loader_fn)
@@ -152,25 +164,59 @@ class NeptunePipelineStack(cdk.Stack):
                 ],
             )
         )
+        # Clearing a failed tag's never-published graph before its retry (spec 004 FR-8):
+        # a batched DELETE plus an ASK for what remains. A write path with no user-facing
+        # caller, so it runs outside the query service (constitution V exception).
+        self.loader_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "neptune-db:ReadDataViaQuery",
+                    "neptune-db:DeleteDataViaQuery",
+                ],
+                resources=[
+                    f"arn:{self.partition}:neptune-db:{self.region}:{self.account}:{neptune_cluster_resource_id}/*"
+                ],
+            )
+        )
 
         # -------------------
-        # Step Functions — submit + poll loop
+        # Step Functions — prepare, [drop], load + poll loop, publish
         # -------------------
-        start_load = tasks.LambdaInvoke(
-            self,
+        def invoke(name, payload, result_path):
+            return tasks.LambdaInvoke(
+                self,
+                name,
+                lambda_function=self.loader_fn,
+                payload=sfn.TaskInput.from_object(payload),
+                payload_response_only=True,
+                result_path=result_path,
+            )
+
+        snap = {
+            "portal": sfn.JsonPath.string_at("$.load.portal"),
+            "snapshot": sfn.JsonPath.string_at("$.load.snapshot"),
+            "named_graph": sfn.JsonPath.string_at("$.load.named_graph"),
+            "sequencer": sfn.JsonPath.string_at("$.load.sequencer"),
+            "released_at": sfn.JsonPath.string_at("$.load.released_at"),
+        }
+
+        prepare = invoke(
+            "Prepare",
+            {
+                "action": "prepare",
+                "bucket": sfn.JsonPath.object_at("$.bucket"),
+                "object": sfn.JsonPath.object_at("$.object"),
+                # Arrival order of this manifest (spec 004 FR-4)
+                "released_at": sfn.JsonPath.string_at("$$.Execution.StartTime"),
+            },
+            "$.load",
+        )
+        drop_batch = invoke("DropBatch", {"action": "drop", **snap}, "$.drop")
+        start_load = invoke(
             "StartLoad",
-            lambda_function=self.loader_fn,
-            payload=sfn.TaskInput.from_object(
-                {
-                    "action": "start",
-                    "bucket": sfn.JsonPath.object_at("$.bucket"),
-                    "object": sfn.JsonPath.object_at("$.object"),
-                    # Arrival order of this manifest (spec 004 FR-4)
-                    "released_at": sfn.JsonPath.string_at("$$.Execution.StartTime"),
-                }
-            ),
-            payload_response_only=True,
-            result_path="$.load",
+            {"action": "start", "snap": sfn.JsonPath.object_at("$.load")},
+            "$.load",
         )
 
         wait = sfn.Wait(
@@ -178,64 +224,97 @@ class NeptunePipelineStack(cdk.Stack):
             "WaitForLoad",
             time=sfn.WaitTime.duration(cdk.Duration.seconds(wait_seconds)),
         )
-
-        check_load = tasks.LambdaInvoke(
-            self,
+        check_load = invoke(
             "CheckLoad",
-            lambda_function=self.loader_fn,
-            payload=sfn.TaskInput.from_object(
-                {
-                    "action": "check",
-                    "load_id": sfn.JsonPath.string_at("$.load.load_id"),
-                }
-            ),
-            payload_response_only=True,
-            result_path="$.check",
+            {"action": "check", "load_id": sfn.JsonPath.string_at("$.load.load_id")},
+            "$.check",
         )
 
         record_common = {
-            "portal": sfn.JsonPath.string_at("$.load.portal"),
-            "snapshot": sfn.JsonPath.string_at("$.load.snapshot"),
+            **snap,
             "load_id": sfn.JsonPath.string_at("$.load.load_id"),
-            "named_graph": sfn.JsonPath.string_at("$.load.named_graph"),
             "prefix": sfn.JsonPath.string_at("$.load.prefix"),
             "etag": sfn.JsonPath.string_at("$.load.etag"),
-            "sequencer": sfn.JsonPath.string_at("$.load.sequencer"),
-            "released_at": sfn.JsonPath.string_at("$.load.released_at"),
             "load_status": sfn.JsonPath.string_at("$.check.load_status"),
             "overall_status": sfn.JsonPath.object_at("$.check.overall_status"),
         }
+        record_success = invoke(
+            "RecordSuccess", {"action": "record", **record_common}, "$.record"
+        )
+        record_failure = invoke(
+            "RecordFailure", {"action": "record", **record_common}, "$.record"
+        )
+        # The only way into the registry: after a completed load, or for an already-loaded tag.
+        publish = invoke("Publish", {"action": "publish", **snap}, "$.publish")
+        # A step failed after Prepare claimed the row: mark it error so the tag can retry.
+        abort = invoke(
+            "Abort",
+            {
+                "action": "abort",
+                **snap,
+                "error": sfn.JsonPath.object_at("$.error"),
+            },
+            "$.abort",
+        )
 
-        record_success = tasks.LambdaInvoke(
-            self,
-            "RecordSuccess",
-            lambda_function=self.loader_fn,
-            payload=sfn.TaskInput.from_object({"action": "record", **record_common}),
-            payload_response_only=True,
-            result_path="$.record",
-        ).next(sfn.Succeed(self, "LoadSucceeded"))
-
-        record_failure = tasks.LambdaInvoke(
-            self,
-            "RecordFailure",
-            lambda_function=self.loader_fn,
-            payload=sfn.TaskInput.from_object({"action": "record", **record_common}),
-            payload_response_only=True,
-            result_path="$.record",
-        ).next(sfn.Fail(self, "LoadFailed", cause="Neptune bulk load did not complete"))
-
-        # Malformed key or unrecoverable Lambda error before we have a load id.
+        # Malformed key or unrecoverable Lambda error before a row is claimed.
         bad_input = sfn.Fail(
-            self, "BadManifestKey", cause="Could not start load for manifest event"
+            self, "BadManifestKey", cause="Could not prepare load for manifest event"
         )
-        # Load status could not be polled after retries.
-        check_failed = sfn.Fail(
-            self, "LoadCheckFailed", cause="Could not poll Neptune load status"
+        aborted = sfn.Fail(
+            self,
+            "LoadAborted",
+            cause="A pipeline step failed after the snapshot was claimed",
+        )
+        skipped = sfn.Succeed(
+            self, "LoadSkipped", comment="Duplicate event or load already in progress"
+        )
+        published = sfn.Succeed(self, "LoadSucceeded")
+
+        # Transient Lambda/HTTP failures retry; a bad manifest key stops fast.
+        transient = [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+        ]
+
+        def retry(task, *, http=False, interval=3, attempts=3):
+            task.add_retry(
+                errors=transient + (["States.TaskFailed"] if http else []),
+                max_attempts=attempts,
+                interval=cdk.Duration.seconds(interval),
+                backoff_rate=2.0,
+            )
+
+        retry(prepare)
+        prepare.add_catch(bad_input, errors=["States.ALL"])
+        retry(start_load)
+        retry(check_load, http=True, interval=5, attempts=4)
+        retry(drop_batch, http=True, interval=10)
+        retry(record_success)
+        retry(record_failure)
+        retry(publish, http=True)
+        retry(abort, http=True)
+        for task in (
+            start_load,
+            check_load,
+            drop_batch,
+            record_success,
+            record_failure,
+        ):
+            task.add_catch(abort, errors=["States.ALL"], result_path="$.error")
+        # A publish failure leaves a complete row: re-uploading the manifest retries the
+        # publish. It must not abort, which would mark a loaded tag for drop and reload.
+
+        abort.next(aborted)
+        publish.next(published)
+        record_success.next(publish)
+        record_failure.next(
+            sfn.Fail(self, "LoadFailed", cause="Neptune bulk load did not complete")
         )
 
-        skipped = sfn.Succeed(self, "LoadSkipped", comment="Snapshot already loaded")
-
-        choice = (
+        load_complete = (
             sfn.Choice(self, "LoadComplete?")
             .when(
                 sfn.Condition.string_equals("$.check.load_status", "LOAD_COMPLETED"),
@@ -252,34 +331,25 @@ class NeptunePipelineStack(cdk.Stack):
             )
             .otherwise(record_failure)
         )
+        start_load.next(wait)
+        wait.next(check_load).next(load_complete)
 
-        # Transient Lambda/HTTP failures retry; a bad manifest key stops fast.
-        transient = [
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException",
-            "Lambda.TooManyRequestsException",
-        ]
-        start_load.add_retry(
-            errors=transient,
-            max_attempts=3,
-            interval=cdk.Duration.seconds(3),
-            backoff_rate=2.0,
+        drop_batch.next(
+            sfn.Choice(self, "GraphCleared?")
+            .when(sfn.Condition.boolean_equals("$.drop.remaining", True), drop_batch)
+            .otherwise(start_load)
         )
-        start_load.add_catch(bad_input, errors=["States.ALL"])
-        check_load.add_retry(
-            errors=transient + ["States.TaskFailed"],
-            max_attempts=4,
-            interval=cdk.Duration.seconds(5),
-            backoff_rate=2.0,
-        )
-        check_load.add_catch(check_failed, errors=["States.ALL"])
 
-        # StartLoad → (skip? → Succeed) → Wait → CheckLoad → Choice
-        definition = start_load.next(
-            sfn.Choice(self, "AlreadyLoaded?")
-            .when(sfn.Condition.boolean_equals("$.load.skip", True), skipped)
-            .otherwise(wait.next(check_load).next(choice))
+        def route_is(value):
+            return sfn.Condition.string_equals("$.load.route", value)
+
+        definition = prepare.next(
+            sfn.Choice(self, "Route")
+            .when(route_is("skip"), skipped)
+            .when(route_is("publish"), publish)
+            .when(route_is("drop"), drop_batch)
+            .when(route_is("load"), start_load)
+            .otherwise(bad_input)
         )
 
         sm_log_group = logs.LogGroup(
