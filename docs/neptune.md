@@ -7,8 +7,8 @@ Amazon Neptune cluster for the Sage Brain knowledge graph.
 - **Neptune Cluster**: Managed graph database in private subnets, IAM auth enabled
 - **Security Groups**: No broad ingress — each consumer stack adds a targeted SG-to-SG rule on port 8182
 - **Graph Explorer** (`app-dev-neptune-viz`): Visual graph browsing interface running on Fargate behind an IP-restricted ALB (VPN-only access). Open-source Neptune Graph Explorer for non-technical users to explore the knowledge graph visually.
-- **Public SPARQL API** (`app-dev-api`, jobs in `app-dev-neptune-api`): Async read-only SPARQL interface. `POST /query` submits a job and returns a `job_id`. A worker Lambda executes the SPARQL against Neptune and writes results to DynamoDB. Callers poll `GET /query/{job_id}`. All queries logged to CloudWatch with source, IP, duration, and query text.
-- **AI Agent API** (`app-dev-api`, jobs in `app-dev-neptune-agent`): Async natural-language interface. `POST /ask` enqueues a job and returns a `job_id` immediately. A worker Lambda (Bedrock Strands / Claude Sonnet 4.6) processes the job via SQS, writes the result to DynamoDB, and the caller polls `GET /ask/{job_id}` for the answer.
+- **SPARQL API** (`app-dev-api`, jobs in `app-dev-neptune-api`): Async read-only SPARQL interface, Synapse team-gated. `POST /query` submits a job and returns a `job_id`. A worker Lambda executes the SPARQL against Neptune and writes results to DynamoDB. Callers poll `GET /query/{job_id}`. All queries logged to CloudWatch with source, principal, IP, duration, and query text.
+- **AI Agent API** (`app-dev-api`, jobs in `app-dev-neptune-agent`): Async natural-language interface. `POST /ask` enqueues a job and returns a `job_id` immediately. A worker Lambda (Bedrock Strands, model from `AGENT.bedrock_model_id`) processes the job via SQS, writes the result to DynamoDB, and the caller polls `GET /ask/{job_id}` for the answer.
 - **Backup & Monitoring**: Automated backups and CloudWatch audit/slow-query logging
 
 ## Accessing Neptune
@@ -44,19 +44,22 @@ aws --profile sagebrain cloudformation describe-stacks \
   --output text
 ```
 
-### From the Public SPARQL API (read-only, no auth)
+### From the SPARQL API (read-only, Synapse team-gated)
 
-SPARQL queries use the same async job pattern as `/ask`:
+Every request needs a Synapse PAT from a member of the environment's team (see the README's
+"Using the API"; full reference at `<ApiBaseUrl>/api`). SPARQL queries use the same async job
+pattern as `/ask`:
 
 ```bash
 # 1. Submit query — returns immediately with a job_id
 curl -X POST <ApiBaseUrl>/query \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <synapse-pat>" \
   -d '{"query": "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }"}'
 # → {"job_id": "abc-123", "status": "pending"}
 
 # 2. Poll until status is "complete" or "error"
-curl <ApiBaseUrl>/query/abc-123
+curl -H "Authorization: Bearer <synapse-pat>" <ApiBaseUrl>/query/abc-123
 # → {"job_id": "abc-123", "status": "complete", "results": "{...sparql-results+json...}", "content_type": "..."}
 ```
 
@@ -70,26 +73,32 @@ Ask questions in plain English using the async job pattern:
 # 1. Submit a question — returns immediately with a job_id
 curl -X POST <ApiBaseUrl>/ask \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <synapse-pat>" \
   -d '{"question": "What genes are linked to NF1?"}'
 # → {"job_id": "abc-123", "status": "pending"}
 
 # 2. Poll until status is "complete" or "error"
-curl <ApiBaseUrl>/ask/abc-123
+curl -H "Authorization: Bearer <synapse-pat>" <ApiBaseUrl>/ask/abc-123
 # → {"job_id": "abc-123", "status": "complete", "answer": "...", "steps": [...]}
 ```
 
-The agent routes all SPARQL through `/query`, so every agent-generated query appears in the query audit log with `"source": "agent"`.
+The agent runs its SPARQL in-process through the shared query service (`sagebrain_core.run_query`),
+so every agent-generated query gets the same limits and appears in the audit log with
+`"source": "agent"` and the asking user as `principal`.
 
 ## Query Audit Logging
 
-Every SPARQL query through `/query` is logged to CloudWatch as structured JSON:
+Every SPARQL query, from the `/query` worker or the agent, is logged to CloudWatch as structured JSON
+(by `sagebrain_core.neptune`):
 
 ```json
 {
   "event": "sparql_query",
+  "job_id": "abc-123",
   "query": "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }",
   "query_length": 42,
   "source": "direct",
+  "principal": "3421234",
   "source_ip": "1.2.3.4",
   "user_agent": "curl/8.7.1",
   "status_code": 200,
@@ -98,7 +107,9 @@ Every SPARQL query through `/query` is logged to CloudWatch as structured JSON:
 }
 ```
 
-`source` is `"agent"` when called by the Bedrock agent, `"direct"` for all other callers.
+`source` is `"agent"` when called by the Bedrock agent, and otherwise the caller's `X-Source` header
+(default `"direct"`). `principal` is the Synapse user id of the caller. `/query` lines are in the
+query worker's log group; the agent's are in the agent worker's.
 
 **Query logs in CloudWatch Insights:**
 
@@ -188,11 +199,7 @@ NEPTUNE_VIZ:
     - "1.2.3.4/32"      # Additional user
 ```
 
-Then redeploy:
-
-```bash
-cdk deploy app-dev-neptune-viz --profile sagebrain
-```
+Then open a PR; merging it deploys the change through CI.
 
 ## Configuration
 
@@ -231,8 +238,8 @@ CloudWatch logs enabled for:
 | Graph Explorer won't load | Not connected to Sage VPN, or your IP not in `allowed_cidrs` — check ALB security group rules |
 | `AccessDeniedException` on Neptune | Request not SigV4-signed, or IAM role missing Neptune permissions |
 | `TimeoutError` on port 8182 | Security group rule missing, or VPC routing issue |
-| `POST /ask` returns 504 | Should not happen — submit Lambda only enqueues. Check if the stack was redeployed with the new async stack. |
+| `POST /query` or `/ask` returns 5XX | Should not happen — the submit Lambda only enqueues. Check the submit Lambda in `app-{env}-api` and the API's access log; a 503 means the authorizer couldn't reach Synapse |
 | `GET /ask/{job_id}` returns `{"status": "pending"}` indefinitely | Worker Lambda may have errored — check the worker log group (`NeptuneAgentWorkerFunction`). Failed jobs land in the DLQ after 2 retries. |
 | `GET /ask/{job_id}` returns `{"status": "error"}` | Agent error (Bedrock timeout, bad SPARQL, etc.) — `"error"` field has the message; `"steps"` shows how far it got. |
-| `AccessDeniedException` on Bedrock | Claude Sonnet 4.6 model access not enabled — go to **AWS Console → Bedrock → Model access** and request access |
-| Agent answers but no query logs | Agent is calling `/query` correctly — check the query Lambda log group, not the agent log group |
+| `AccessDeniedException` on Bedrock | Model access for `AGENT.bedrock_model_id` not enabled — go to **AWS Console → Bedrock → Model access** and accept it |
+| Agent answers but no query logs | The agent's `sparql_query` lines are in the agent worker's log group, not the query worker's |

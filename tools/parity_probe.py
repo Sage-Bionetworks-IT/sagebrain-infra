@@ -28,6 +28,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -113,14 +114,19 @@ def run_case(case, target, token):
         error = None
     except AssertionError as e:
         error = str(e)
-    return {"status": status, "body": decoded, "error": error}
+    return {"status": status, "body": decoded, "error": error, "base": base}
 
 
 def _comparable(result):
+    """Status and body, minus what differs by design: job ids and the docs' own stage URL."""
     body = result["body"]
     if isinstance(body, dict):
         body = {k: v for k, v in body.items() if k != "job_id"}
-    return result["status"], body
+    base = result["base"].rstrip("/")
+    # Swagger UI loads the contract from "/{stage}/api/..."
+    stage = urllib.parse.urlparse(base).path
+    text = json.dumps(body, sort_keys=True).replace(base, "<base>")
+    return result["status"], text.replace(f'"{stage}/api/', '"<stage>/api/')
 
 
 def _parse_args():
@@ -165,7 +171,7 @@ def _probe_case(case, args) -> int:
             print(f"       {r['error']}")
             failures += 1
 
-    distinct = {json.dumps(_comparable(r), sort_keys=True) for r in results.values()}
+    distinct = {_comparable(r) for r in results.values()}
     if len(distinct) > 1:
         print(f"DIFF {case['id']}: targets disagree")
         failures += 1

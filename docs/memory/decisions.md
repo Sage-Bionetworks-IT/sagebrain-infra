@@ -57,6 +57,10 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   the single serverless Neptune instance to max NCU and drain the account's Lambda pool. Neptune
   Serverless scales up one instance, not out, so the cap is per env. Stage isn't deployed, so
   rollout is dev → prod; old URLs retire after 7 quiet days and 30 days past an announced sunset.
+- **Prod's old APIs were deleted without the full Phase 5 gate (2026-10-16, team meeting).** Their
+  last client traffic was 10-12, and the team chose not to wait out the 7 quiet days or announce
+  a sunset date (T404). Prod got T502 and T503 as two promotions: one `cdk deploy --all` can't
+  drop exports a deployed stack still imports.
 - **Constitution I and IV amended for Lambda (2026-10-12, #74).** Article I no longer requires
   generated Pydantic models (pydantic's compiled deps complicate the x86 Lambdas); routes and
   responses are tested against the contract instead. Article IV no longer says "ECS secrets".

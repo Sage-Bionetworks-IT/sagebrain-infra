@@ -14,7 +14,7 @@ NEPTUNE_API:
   query_worker_concurrency: 5  # dev's Neptune maxes at 4 NCU (prod: 10, from base.yaml)
 
 API_EDGE:
-  enabled: true  # deployed alongside the old APIs (spec 001 Phase 2)
+  enabled: true
 
 NEPTUNE_VIZ:
   enabled: true

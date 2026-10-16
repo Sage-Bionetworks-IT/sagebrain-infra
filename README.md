@@ -1,14 +1,15 @@
 
 # sage-brain-infra
 
-AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a public read-only SPARQL API and an AI agent interface.
+AWS CDK infrastructure for the Sage Brain project, deploying an Amazon Neptune graph database with a Synapse team-gated, read-only SPARQL API and an AI agent interface, both served by one API Gateway REST API.
 
 ## Features
 
 - **VPC Networking**: Isolated network environment with public and private subnets
 - **Amazon Neptune**: Managed graph database for knowledge graphs
-- **SPARQL API**: Read-only API Gateway + Lambda endpoint for querying Neptune over HTTPS (Synapse team-gated)
-- **AI Agent API**: Natural-language query interface powered by Bedrock Strands (Claude Sonnet 4.6) — converts plain-language questions to SPARQL and returns answers with full reasoning trace
+- **SPARQL API** (`/query`): Async, read-only SPARQL jobs against Neptune over HTTPS (Synapse team-gated)
+- **AI Agent API** (`/ask`): Natural-language query interface powered by Bedrock Strands (the Claude model in `AGENT.bedrock_model_id`) — converts plain-language questions to SPARQL and returns answers with full reasoning trace
+- **API docs** (`/api`): Swagger UI and the OpenAPI contract ([api/openapi.yaml](api/openapi.yaml)), public
 - **Automated Ingestion Pipeline**: Append-only, event-driven loader — an S3 `manifest.ttl` upload triggers EventBridge → Step Functions → Neptune bulk load, one named graph per dated snapshot
 - **Query Audit Logging**: All SPARQL queries logged to CloudWatch with source tracking (direct vs. agent)
 
@@ -38,7 +39,6 @@ pip install -r requirements.txt
 
  * `cdk ls`          list all stacks in the app
  * `cdk synth`       emits the synthesized CloudFormation template
- * `cdk deploy`      deploy this stack to your default AWS account/region
  * `cdk diff`        compare deployed stack with current state
  * `cdk docs`        open CDK documentation
 
@@ -81,82 +81,96 @@ Environment-specific config files live in [config/](./config). A `base.yaml` is 
 
 # Deployment
 
+Deploys run in CI: merging to `dev` deploys the dev account, merging to `prod` deploys prod
+([.github/workflows/](.github/workflows)), each with `cdk deploy --all`. Don't deploy from a laptop.
+
 ## Login with the AWS CLI
 
 > [!NOTE]
 > Requires AWS CLI v2. Check your version with `aws --version`. If needed, [install AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
 
-Configure SSO interactively (first time only):
+Each environment has its own account. Configure SSO interactively (first time only):
 
 ```console
 aws configure sso
 ```
 
-When prompted, select the `org-sagebase-sagebrain-prod` account and set the profile name to `sagebrain`.
-
-Login:
-
-```console
-aws --profile sagebrain sso login
-```
-
-## Deploy
+Name the dev account's profile `sagebrain-dev` (account `442650749796`) and the prod account's
+`sagebrain` (`org-sagebase-sagebrain-prod`, `620117233256`). Then log in:
 
 ```console
-AWS_PROFILE=sagebrain cdk deploy --context env=dev --all
+aws --profile sagebrain-dev sso login   # dev
+aws --profile sagebrain sso login       # prod
 ```
 
-To deploy a specific stack:
+Compare your branch with what is deployed:
 
 ```console
-AWS_PROFILE=sagebrain cdk deploy app-dev-neptune-api --context env=dev
+cdk diff --context env=dev --profile sagebrain-dev
 ```
 
-## Querying Neptune via the Public API
+## Using the API
 
-### Direct SPARQL (`POST /query`)
+One REST API serves `/query`, `/ask` and the docs. Its full reference, with "Try it out", is the
+Swagger UI at `<API_BASE>/api`; the contract is also at `<API_BASE>/api/openapi.json` and
+`<API_BASE>/api/openapi.yaml`.
 
-A read-only SPARQL endpoint is available over HTTPS. Requests must include a Synapse Personal Access Token (PAT) and the caller must be a member of Synapse team (dev: [273957](https://www.synapse.org/Team:273957), prod: [3605470](https://www.synapse.org/Team:3605470)) (configured as `AUTH.synapse_team_id` in `config/base.yaml`).
-
-Get the API's base URL (it ends in `/dev` or `/prod`; docs at `<API_BASE>/api`) from CDK outputs after deployment:
+Get the base URL (it ends in `/dev` or `/prod`) from the `app-{env}-api` stack outputs:
 
 ```console
 aws --profile sagebrain cloudformation describe-stacks \
-  --stack-name app-dev-api \
+  --stack-name app-prod-api \
   --query "Stacks[0].Outputs[?OutputKey=='ApiBaseUrl'].OutputValue" \
   --output text
 ```
 
-Send a `POST` request with a JSON body containing your SPARQL query:
+Every `/query` and `/ask` request needs a Synapse personal access token (PAT) or OAuth token in
+`Authorization: Bearer`, and its user must be a member of the environment's Synapse team (dev:
+[273957](https://www.synapse.org/Team:273957), prod: [3605470](https://www.synapse.org/Team:3605470);
+`AUTH.synapse_team_id` in `config/`). Any denial returns 401 `{"message": "Unauthorized"}`.
+
+Both endpoints are asynchronous: the `POST` returns `202 {"job_id", "status": "pending"}`, and you
+poll `GET .../{job_id}` until `status` is `complete` or `error`. While a job is `pending` or
+`running`, wait the `Retry-After` header's seconds (2) between polls. Jobs expire after 24 hours.
+
+### Direct SPARQL (`POST /query`)
 
 ```console
 curl -X POST <API_BASE>/query \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-synapse-pat>" \
   -d '{"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 10"}'
+# → {"job_id": "abc-123", "status": "pending"}
+
+curl -H "Authorization: Bearer <your-synapse-pat>" <API_BASE>/query/abc-123
+# → {"job_id": "abc-123", "status": "complete", "results": "{...sparql-results+json...}", ...}
 ```
 
-The endpoint returns `application/sparql-results+json`. Queries are limited to 8000 characters and throttled to 50 requests/second (burst: 100).
+`results` is the SPARQL JSON result as a string. Queries are read-only, at most 8000 characters,
+and time out after 60 s in Neptune; a result over 350 KB returns `status: error`.
 
 ### Natural Language Agent (`POST /ask`)
 
-Ask questions in plain English. The agent (Bedrock Strands + Claude Sonnet 4.6) translates your question into SPARQL, queries Neptune, and returns a plain-language answer with the full reasoning trace.
-
-The agent is on the same base URL as `/query`.
-
-Send a `POST` request with a `question` field:
+Ask questions in plain English. The agent (Bedrock Strands + Claude) translates your question into
+SPARQL, queries Neptune, and returns a plain-language answer with the full reasoning trace.
+Questions are at most 2000 characters.
 
 ```console
 curl -X POST <API_BASE>/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-synapse-pat>" \
   -d '{"question": "What types of biological entities are in this knowledge graph?"}'
+# → {"job_id": "def-456", "status": "pending"}
+
+curl -H "Authorization: Bearer <your-synapse-pat>" <API_BASE>/ask/def-456
 ```
 
-Response includes the answer and the SPARQL steps taken:
+The finished job has the answer and the SPARQL steps taken:
 
 ```json
 {
+  "job_id": "def-456",
+  "status": "complete",
   "answer": "The graph contains 408,644 files, 1,332 cell lines, 734 donors...",
   "steps": [
     {"type": "tool_call", "tool": "query_neptune", "sparql": "SELECT ?type (COUNT(?e) AS ?count) ..."},
@@ -165,8 +179,17 @@ Response includes the answer and the SPARQL steps taken:
 }
 ```
 
+### Limits and errors
+
+`POST` requests are throttled to 50 requests/second (burst 100) and status polls to 100 (burst
+200), shared by all callers; a throttled request gets 429 with `Retry-After: 1`. Request bodies
+are capped at 256 KiB. Application errors (validation, unknown job) return `{"error": "..."}`;
+errors from the API's front door (auth, throttling, size, unknown paths) return
+`{"message": "..."}`. Every limit is listed in the contract's `info.x-sagebrain-limits`.
+
 > [!NOTE]
-> Requires Claude Sonnet 4.6 model access to be enabled in **AWS Console → Bedrock → Model access**. This is a one-time account-level setup.
+> The agent's Bedrock model needs its model access (Marketplace agreement) accepted once per
+> account in **AWS Console → Bedrock → Model access**.
 
 ## Loading Data
 
@@ -204,24 +227,6 @@ aws s3 cp ./manifest.ttl s3://$NEPTUNE_BUCKET/nf/2026-02-20/manifest.ttl
 
 ## Secrets
 
-Secrets can be manually created in the
-[AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/create_secret.html).
-When naming your secret make sure that the secret does not end in a pattern that matches
-`-??????`, this will cause issues with how AWS CDK looks up secrets.
-
-To pass secrets to a container set the secrets manager `container_secrets`
-In this repository, the infrastructure does not define application-specific helpers such as `ServiceProps` or `ServiceSecret`. Instead, it assumes that:
-
-- Sensitive values (for example, Neptune credentials or application API keys) are stored in **AWS Secrets Manager** or **SSM Parameter Store**.
-- Client applications that connect to Neptune (from trusted workloads in the VPC) are responsible for retrieving those secrets and exposing them to their own runtime (for example, as environment variables or in their own configuration layer).
-
-A typical pattern is:
-
-1. Store connection details (host, port, user, password, etc.) in a secret in AWS Secrets Manager.
-2. Grant IAM permissions for that secret to application workloads that will access Neptune from within the VPC.
-3. Have those clients retrieve the secret at runtime and use it to construct the Neptune endpoint/connection string.
-
-The exact mechanism for loading and using secrets (for example, via environment variables, configuration files, or direct SDK calls to AWS Secrets Manager) is left to the consuming application or tooling and is not implemented in this CDK stack.
-
-> [!NOTE]
-> Retrieving secrets requires access to the AWS Secrets Manager (and/or SSM Parameter Store) and appropriate IAM permissions.
+There are none to manage. Neptune uses IAM authentication: every request is SigV4-signed by the
+calling Lambda's or task's role, and the API checks callers' Synapse tokens on each request
+without storing them.
