@@ -44,12 +44,12 @@ API_EDGE_ALARMS:
   # Scaling path 2: oldest message in the query or ask job queue
   queue_oldest_message_seconds: 300
 
-# Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
-# uploads and bulk-loads {portal}/YYYY-MM-DD/data/ (Turtle only) into its own
-# named graph. The manifest is the trigger and stays outside the load path.
+# Append-only ingestion pipeline. Triggers on {portal}/{tag}/manifest.ttl uploads
+# (tag: YYYY-MM-DD or v<release>) and bulk-loads {portal}/{tag}/data/ (Turtle only)
+# into its own named graph. The manifest is the trigger and stays outside the load path.
 NEPTUNE_PIPELINE:
   enabled: true
-  graph_uri_template: "urn:sagebrain:{portal}:{date}"
+  graph_uri_template: "urn:sagebrain:{portal}:{tag}"
   parallelism: "HIGH"
   wait_seconds: 30
 

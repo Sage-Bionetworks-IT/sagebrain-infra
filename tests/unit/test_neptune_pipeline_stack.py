@@ -28,7 +28,7 @@ def template():
         neptune_cluster_resource_id="cluster-ABCDEFGHIJKLMNOP",
         neptune_load_role_arn="arn:aws:iam::123456789012:role/NeptuneLoadRole",
         pipeline_config={
-            "graph_uri_template": "urn:sagebrain:{portal}:{date}",
+            "graph_uri_template": "urn:sagebrain:{portal}:{tag}",
             "parallelism": "HIGH",
             "wait_seconds": 30,
         },
@@ -61,7 +61,7 @@ def test_loader_env_uses_writer_endpoint(template):
                 "Variables": Match.object_like(
                     {
                         "NEPTUNE_ENDPOINT": "test-neptune.cluster.us-east-1.neptune.amazonaws.com",
-                        "GRAPH_URI_TEMPLATE": "urn:sagebrain:{portal}:{date}",
+                        "GRAPH_URI_TEMPLATE": "urn:sagebrain:{portal}:{tag}",
                     }
                 )
             },
@@ -136,6 +136,19 @@ def test_tracking_table_has_no_ttl(template):
 
 def test_state_machine_created(template):
     template.resource_count_is("AWS::StepFunctions::StateMachine", 1)
+
+
+def _state_machine_definition(template) -> str:
+    (sm,) = template.find_resources("AWS::StepFunctions::StateMachine").values()
+    parts = sm["Properties"]["DefinitionString"]["Fn::Join"][1]
+    return "".join(p if isinstance(p, str) else "" for p in parts)
+
+
+def test_start_load_passes_execution_start_time_as_released_at(template):
+    # Spec 004 FR-4: arrival order is the execution start time, not anything in the event.
+    assert '"released_at.$":"$$.Execution.StartTime"' in _state_machine_definition(
+        template
+    )
 
 
 def test_eventbridge_rule_matches_manifest_suffix(template):

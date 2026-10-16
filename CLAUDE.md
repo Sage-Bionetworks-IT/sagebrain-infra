@@ -36,12 +36,12 @@ aws --profile sagebrain sso login       # prod
 
 ## S3 Data Bucket
 
-Each contribution is a dated snapshot per portal, preserving a historical data lake. The
+Each contribution is a snapshot per portal, keyed by a date or a release tag, preserving a historical data lake. The
 ingestion pipeline (below) loads it into its own named graph:
 
 ```
 s3://<NeptuneDataBucketName>/
-  {portal}/YYYY-MM-DD/
+  {portal}/{tag}/   ← tag: YYYY-MM-DD, or a release such as v97
     data/          ← Turtle only; this whole prefix is bulk loaded
     other/         ← optional: anything that is not Turtle
     manifest.ttl   ← written LAST; its arrival triggers the load
@@ -51,22 +51,25 @@ Any principal authenticated to the AWS account can upload to the bucket. Bucket 
 
 ## Automated Ingestion Pipeline: src/neptune_pipeline_stack.py
 
-Data reaches Neptune only through the **append-only pipeline**: a transform pipeline deposits a dated snapshot per portal in S3 and writes
+Data reaches Neptune only through the **append-only pipeline**: a transform pipeline deposits a snapshot per portal in S3 and writes
 `manifest.ttl` **last** as the completion sentinel; its arrival drives a Neptune bulk load
 with no human in the loop.
 
 ### S3 layout it expects
 ```
 s3://<NeptuneDataBucketName>/
-  nf/YYYY-MM-DD/
+  nf/2026-10-14/          ← or reactome/v97/
     data/
       <anything>.ttl      ← full Turtle snapshot files (any names) — THE LOAD PATH
     other/                ← optional: anything that is not Turtle lives outside data/
     manifest.ttl          ← written LAST; its ObjectCreated event triggers the load
 ```
-Generic across portals — any `{portal}/YYYY-MM-DD/manifest.ttl` works. `nf` is the first portal.
+Generic across portals — any `{portal}/{tag}/manifest.ttl` works, where `tag` is `YYYY-MM-DD` or
+`v` + a digit + `[0-9A-Za-z.-]*` (`v97`, `v3.1`, `v1.0.0-rc1`); any other key fails as `BadManifestKey`.
+Portals starting with `_` are reserved. `nf` is the first portal. **Tags are immutable once
+published:** a correction goes under a new tag (the next date, or a new version).
 
-**Only `{portal}/YYYY-MM-DD/data/` is loaded.** Neptune's bulk loader takes a literal S3
+**Only `{portal}/{tag}/data/` is loaded.** Neptune's bulk loader takes a literal S3
 prefix — there is no include/exclude, glob, or extension filter, and it parses *every*
 object under `source` as Turtle. With `failOnError=TRUE`, one non-RDF object fails the
 entire snapshot load rather than being skipped. So the contract for depositors is
@@ -84,14 +87,15 @@ S3 "Object Created" (EventBridge) → EventBridge Rule (key suffix "manifest.ttl
   aren't bounded by the 15-min Lambda timeout. Each `loader.py` invocation is one fast
   SigV4-signed HTTP call to Neptune (`start` / `check` / `record` via the `action` field).
 - **One named graph per snapshot** — each snapshot's `data/` prefix loads into
-  `urn:sagebrain:{portal}:{date}` (via the bulk loader's `parserConfiguration.namedGraphUri`),
+  `urn:sagebrain:{portal}:{tag}` (via the bulk loader's `parserConfiguration.namedGraphUri`),
   so every historical version stays isolated. `manifest.ttl` is the trigger only and is **not**
   loaded (it sits outside the load path) — snapshot lineage lives in the DynamoDB tracking table.
 - Loads target the **writer/cluster endpoint** (bulk loads can't go to the reader).
   `failOnError=TRUE` (append-only surfaces bad data); `queueRequest=TRUE` (queue behind an
   in-flight load).
-- **Idempotent** — the tracking table stores each snapshot's manifest etag. A duplicate S3
-  event (same etag) is skipped; a genuine re-publish of the same date (new etag) reloads.
+- **Idempotent** — the tracking table stores each manifest PUT's S3 `sequencer`. A duplicate S3
+  event (same sequencer) is skipped; any re-upload is a new PUT with a new sequencer, even when its
+  bytes and etag are identical. Each row also records `released_at`, the execution start time.
 - **DynamoDB tracking table** (`app-dev-neptune-pipeline-loads`, PK `portal` / SK `snapshot`)
   is the append-only lineage/audit trail — no TTL. A descending query gives the latest
   snapshot graph per portal. Every load emits a structured `{"event":"kg_load", ...}` log line.
@@ -416,7 +420,7 @@ Tests live in `tests/unit/`. Lambda handler tests import from `src/lambda/` via 
 - The API is **POST only** — GET was removed to avoid URL length limits for complex SPARQL queries.
 - **Synapse team-gated auth** — both APIs require a valid Synapse PAT/OAuth token and membership in the environment's Synapse team (dev: 273957, prod: 3605470) (`AUTH.synapse_team_id`). The Lambda authorizer validates via Synapse's `/userProfile` + `/team/{id}/member/{userId}/membershipStatus` endpoints; successful results are cached 5 min in the authorizer Lambda's memory (API Gateway caching is off).
 - **S3 bulk loader** is used for all data loading — not SPARQL INSERT batches. Neptune assumes `NeptuneLoadRole` (trusted by `rds.amazonaws.com`) to read from S3.
-- **Date-partitioned S3 layout** (`{portal}/YYYY-MM-DD/data/`) preserves a historical data lake. Each snapshot loads append-only into its own named graph; nothing resets Neptune.
+- **Snapshot-partitioned S3 layout** (`{portal}/{tag}/data/`, tag a date or `v…` release) preserves a historical data lake. Each snapshot loads append-only into its own named graph; nothing resets Neptune.
 - **Both APIs are async (submit + poll)** — Neptune SPARQL on the 2.27M-triple graph takes 4–40s; synchronous API Gateway has a hard 29s limit. SQS + DynamoDB decouples HTTP from execution for both `/query` and `/ask`.
 - **Agent calls the shared query service in-process** (`sagebrain_core.run_query`), not `/query` over HTTP. The chokepoint is the library, not the endpoint: the same validation, Neptune timeout and `sparql_query` audit log apply to every caller.
 - **Worker concurrency is capped** — query worker per env (dev 5, prod 10) to protect the single Neptune instance; agent worker capped at 10 concurrent invocations to prevent Bedrock rate-limit errors under burst traffic.
