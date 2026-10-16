@@ -99,8 +99,9 @@ This repo has no control over clients: it publishes the new API and the sunset d
 move on their own. The old APIs keep serving until Phase 5's gate.
 - [x] T401 Config: `API_EDGE.enabled` in prod; the per-env test follows. Promoted only after #84
   deployed the in-process agent, because it also deletes the two `export_value` lines (T126)
-- [ ] T402 After CI deploys `app-prod-api`: confirm the SNS email subscription
-  (`aws-sagebrain-prod@sagebase.org`), check the alarms reach `OK` and the dashboard renders
+- [x] T402 After CI deploys `app-prod-api`: confirm the SNS email subscription
+  (`aws-sagebrain-prod@sagebase.org`), check the alarms reach `OK` and the dashboard renders.
+  Email checked end to end on 2026-10-14 with `cloudwatch set-alarm-state` on the query-queue alarm
 - [x] T403 Parity probe in prod (old vs new, `--legacy apigw`); results in `research.md`. No load
   or burst probe: T210 covered them in dev, and in prod they would compete with real users
 - [ ] T404 Announce to the Synapse team: the base URL (`ApiBaseUrl`, ending `/prod`), the docs at
@@ -113,16 +114,34 @@ metric) **and** the T404 sunset date at least 30 days past (plan, Phase 5). Two 
 that a deployed stack still imports.
 - [ ] T501 Gate, per env: 7 days of `Count` for `neptune-query-api` and `neptune-agent-api`, and
   the date. Record both here before T503 merges. On 2026-10-14, prod still had traffic (query
-  28 and 46 a day, agent 7 and 29)
+  28 and 46 a day, agent 7 and 29). On 2026-10-16 the last client traffic in prod was 10-12;
+  10-14's single hour (16:00 UTC) is the T403 probe. The 7 days weren't up and T404's sunset date
+  wasn't set, but a team meeting on 2026-10-16 decided to delete the old prod APIs now. Prod
+  gets T502 and T503 in two separate promotions
 - [x] T502 Release: `app-*-monitoring` stops graphing the old submit/status Lambdas, and `app.py`
   keeps their four exports with `export_value` until that deploy is done. Templates of the two
-  old stacks unchanged
-- [ ] T503 Removal (after T502 is deployed and T501 holds): delete the `export_value` lines, the
+  old stacks unchanged. Prod: promoted alone in #96, deployed 2026-10-16 17:19 UTC; afterwards
+  `list-imports` showed no importer for any of the four exports
+- [x] T503 Removal (after T502 is deployed and T501 holds): delete the `export_value` lines, the
   two old RestApis with their authorizers, access logs and URL outputs, and the old submit/status
   Lambdas; the monitoring dashboard loses the old API widgets. The workers accept only the new
-  messages (spec, Constraints). `test_job_api_handlers.py` and the vectors' `legacy` entries go
+  messages (spec, Constraints). `test_job_api_handlers.py`, the vectors' `legacy` entries and the
+  parity probe's `--legacy` go. Synth diffed: only API Gateway, authorizer and submit/status
+  resources leave the two stacks, and the table/queue exports the edge stack imports stay
 - [ ] T504 After CI deploys T503: `apigateway get-account` still names the edge stack's
-  CloudWatch role, and the edge API still writes access logs
+  CloudWatch role, and the edge API still writes access logs. The old APIs' CloudWatch roles
+  (`Neptune{,Agent}ApiCloudWatchRole*`) and access-log groups are `Retain`, so they stay behind;
+  delete them by hand or leave them. Dev checked on 2026-10-16: `get-account` names
+  `app-dev-api-SageBrainApiCloudWatchRole…`, the edge access log is written after the deploy,
+  and both old roles are still there
 
-## Phase 6 onward
-Tasks for docs (Phase 6) are added here when its PR starts.
+## Phase 6 — docs
+- [x] T601 README: one base URL, the `/api` docs, auth, submit-and-poll, limits and error shapes,
+  CI-only deploys and the per-env profiles; drop the Secrets Manager section (Neptune is IAM-only)
+- [x] T602 `docs/neptune.md`: Bearer auth on every curl, the agent's in-process queries and where
+  their audit lines land, `principal` and `job_id` in the audit sample, troubleshooting rows
+- [x] T603 CLAUDE.md: CI-only deploys (no `cdk deploy` recipes), the monitoring stack, prod's model;
+  comments in `app.py`, `src/api_edge_stack.py` and `config/` stop describing the old APIs
+- [x] T604 `tools/parity_probe.py` ignores the stage URL in the docs routes, so dev vs prod
+  compares clean. Run on 2026-10-16: 0 failures (`research.md`)
+- [x] T605 `docs/memory/open-work.md`: the prod Phase 5 gate and the retained T504 leftovers

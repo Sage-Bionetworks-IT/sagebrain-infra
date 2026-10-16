@@ -158,3 +158,12 @@ APIs, with a prod Synapse team-member PAT.
 job on the unified API completed. Its `sparql_query` event carries the caller's Synapse user id as
 `principal` (D-19); the old API's job logs `legacy-apigw`. No load or burst probe in prod: T210
 covered them in dev, and in prod they would compete with real users.
+
+## Dev vs prod after Phase 5 in dev (T604, 2026-10-16)
+`tools/parity_probe.py` with `--target dev` (`ftclvhk9nh…/dev`, after T503) and `--target prod`
+(`ullgxpkr61…/prod`, still at Phase 4): **0 failures, 0 differences**. Before T604 the three docs
+routes reported "targets disagree": the served contract's `servers` URL and Swagger UI's
+`/{stage}/api/openapi.json` differ per stage by design, and now count as equal. Observations
+match in both: `GET /query/` is 404 `{"message":"Not Found"}` with ACAO, and a body over
+10 MiB is API Gateway's own 413 without CORS. The old APIs' deletion in dev changed nothing
+the unified API returns.

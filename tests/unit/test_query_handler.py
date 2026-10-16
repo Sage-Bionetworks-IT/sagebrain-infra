@@ -58,6 +58,7 @@ def default_job(**overrides):
         "job_id": "abc-123",
         "query": "SELECT * WHERE { ?s ?p ?o } LIMIT 5",
         "source": "direct",
+        "user_id": "3412345",
         "source_ip": "1.2.3.4",
         "user_agent": "test-agent",
     }
@@ -266,7 +267,11 @@ def test_missing_optional_fields_default(
 ):
     """source/source_ip/user_agent are optional in the SQS message."""
     mock_post.return_value = sparql_response({"results": {"bindings": []}})
-    minimal_job = {"job_id": "min-1", "query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"}
+    minimal_job = {
+        "job_id": "min-1",
+        "query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1",
+        "user_id": "3412345",
+    }
 
     # Should not raise
     handler(make_sqs_event(minimal_job), {})
@@ -388,19 +393,22 @@ def test_principal_is_the_messages_user_id(
 ):
     mock_post.return_value = sparql_response({"results": {"bindings": []}})
 
-    handler(make_sqs_event(default_job(user_id="3412345")), {})
+    handler(make_sqs_event(default_job()), {})
 
     assert _audit_event(capsys)["principal"] == "3412345"
 
 
 @patch("sagebrain_core.neptune.requests.post")
-@patch("sagebrain_core.neptune.SigV4Auth")
-@patch("sagebrain_core.neptune.botocore.session.Session")
-def test_principal_is_legacy_apigw_when_the_message_has_no_user_id(
-    mock_session, mock_sigv4, mock_post, handler, mock_table, capsys
+def test_message_without_user_id_fails_the_job_without_running(
+    mock_post, handler, mock_table
 ):
-    mock_post.return_value = sparql_response({"results": {"bindings": []}})
+    """Spec 001 Constraints: with the old /query API gone, every message names its caller."""
+    job = default_job()
+    del job["user_id"]
 
-    handler(make_sqs_event(default_job()), {})
+    handler(make_sqs_event(job), {})  # no raise: a retry can't add a user_id
 
-    assert _audit_event(capsys)["principal"] == "legacy-apigw"
+    mock_post.assert_not_called()
+    final_values = _final_values(mock_table)
+    assert final_values[":status"] == "error"
+    assert "user_id" in final_values[":error"]

@@ -57,6 +57,10 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   the single serverless Neptune instance to max NCU and drain the account's Lambda pool. Neptune
   Serverless scales up one instance, not out, so the cap is per env. Stage isn't deployed, so
   rollout is dev → prod; old URLs retire after 7 quiet days and 30 days past an announced sunset.
+- **Prod's old APIs were deleted without the full Phase 5 gate (2026-10-16, team meeting).** Their
+  last client traffic was 10-12, and the team chose not to wait out the 7 quiet days or announce
+  a sunset date (T404). Prod got T502 and T503 as two promotions: one `cdk deploy --all` can't
+  drop exports a deployed stack still imports.
 - **Constitution I and IV amended for Lambda (2026-10-12, #74).** Article I no longer requires
   generated Pydantic models (pydantic's compiled deps complicate the x86 Lambdas); routes and
   responses are tested against the contract instead. Article IV no longer says "ECS secrets".
@@ -67,8 +71,8 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   was denied even with a valid token. `x-api-key` stays in the CORS allow-list (FR-6 parity).
 - **The query chokepoint is a library, `sagebrain_core`, not an endpoint** (#71). The agent's
   in-process queries get the same query limits and `sparql_query` audit log as `POST /query`, with
-  no HTTP loop-back and no bearer token in SQS. Jobs from the old APIs carry no caller id, so they
-  are attributed to `legacy-apigw` until those APIs are deleted (spec 001 D-19).
+  no HTTP loop-back and no bearer token in SQS. Every job message names its caller (`user_id`);
+  the old APIs' messages didn't and ran as `legacy-apigw` until Phase 5 deleted them (D-19).
 - **`sagebrain_core` lives in `core/`, not under `src/` (2026-10-12, #71).** `src/` is the CDK app,
   imported as `src.*`. In Lambda the layer puts `sagebrain_core` at the top level, so a copy under
   `src/` would invite `from src.sagebrain_core import …`, which passes tests and fails in Lambda.
@@ -92,10 +96,10 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   (the query worker cap) live in `config/`, not in `x-sagebrain-limits`.
 - **`/api` ships with the edge stack (Phase 2), not with the contract (2026-10-12, #73).** It's a
   route on the one combined API, and its `servers` URL is that API's stage URL. Building it earlier
-  would put it on one of the two APIs that Phase 5 deletes. The contract describes the routes now.
+  would have put it on one of the two APIs that Phase 5 deleted. The contract describes the routes now.
 - **The unified API's stage is named after the env (2026-10-13).** Dev's base URL ends in `/dev`,
   prod's in `/prod`, so a dev URL no longer reads as prod. Only the new API changed, before any
-  client moved to it; the old APIs keep CDK's default `/prod` in every env until Phase 5 deletes them.
+  client moved to it; the old APIs kept CDK's default `/prod` in every env until Phase 5 deleted them.
 - **An oversized query result fails the job, not the SQS message (2026-10-12, #71).** Over
   350 KB the worker marks the job `error` and returns: retrying would get the same result, then
   land in the DLQ (spec 001 D-16).

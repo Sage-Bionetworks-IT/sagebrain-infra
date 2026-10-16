@@ -1,6 +1,5 @@
 import aws_cdk as cdk
 from aws_cdk import aws_cloudwatch as cw
-from aws_cdk import aws_apigateway as apigw
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_sqs as sqs
@@ -9,27 +8,26 @@ from constructs import Construct
 
 class MonitoringStack(cdk.Stack):
     """
-    CloudWatch dashboard covering both APIs, all Lambdas, SQS queues/DLQs,
-    DynamoDB tables, and Neptune.
+    CloudWatch dashboard covering the job backends (workers, SQS queues/DLQs,
+    DynamoDB tables) and Neptune. The API itself has its own dashboard
+    (app-*-api-overview, src/api_edge_monitoring.py).
 
     Layout (top to bottom):
-      - Query API  (API GW, Lambdas, SQS + DLQ alarm, DynamoDB)
-      - Agent API  (API GW, Lambdas + concurrency, SQS + DLQ alarm, DynamoDB)
-      - Neptune    (CPU, memory, SPARQL req/s, cache hit ratio)
+      - Query jobs  (worker, SQS + DLQ alarm, DynamoDB)
+      - Agent jobs  (worker + concurrency, SQS + DLQ alarm, DynamoDB)
+      - Neptune     (CPU, memory, SPARQL req/s, cache hit ratio)
     """
 
     def __init__(
         self,
         scope: Construct,
         construct_id: str,
-        # Query API resources
-        query_api: apigw.RestApi,
+        # Query job resources
         query_worker_fn: lambda_.Function,
         query_job_queue: sqs.Queue,
         query_dlq: sqs.Queue,
         query_job_table: dynamodb.Table,
-        # Agent API resources
-        agent_api: apigw.RestApi,
+        # Agent job resources
         agent_worker_fn: lambda_.Function,
         agent_job_queue: sqs.Queue,
         agent_dlq: sqs.Queue,
@@ -39,14 +37,6 @@ class MonitoringStack(cdk.Stack):
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
-
-        def _apigw_metric(api: apigw.RestApi, metric_name: str, **kwargs) -> cw.Metric:
-            return cw.Metric(
-                namespace="AWS/ApiGateway",
-                metric_name=metric_name,
-                dimensions_map={"ApiName": api.rest_api_name},
-                **kwargs,
-            )
 
         def _neptune_metric(metric_name: str, **kwargs) -> cw.Metric:
             return cw.Metric(
@@ -64,65 +54,14 @@ class MonitoringStack(cdk.Stack):
         )
 
         # ------------------------------------------------------------------ #
-        # Query API
+        # Query jobs
         # ------------------------------------------------------------------ #
         dashboard.add_widgets(
             cw.TextWidget(
-                markdown="# Query API  (`POST /query` · `GET /query/{job_id}`)",
+                markdown="# Query jobs  (`POST /query` · `GET /query/{job_id}` on the unified API)",
                 width=24,
                 height=1,
             )
-        )
-        dashboard.add_widgets(
-            cw.GraphWidget(
-                title="Requests & Errors",
-                left=[
-                    _apigw_metric(
-                        query_api,
-                        "Count",
-                        statistic="Sum",
-                        label="Requests",
-                        period=cdk.Duration.minutes(1),
-                    )
-                ],
-                right=[
-                    _apigw_metric(
-                        query_api,
-                        "4XXError",
-                        statistic="Sum",
-                        label="4XX",
-                        period=cdk.Duration.minutes(1),
-                    ),
-                    _apigw_metric(
-                        query_api,
-                        "5XXError",
-                        statistic="Sum",
-                        label="5XX",
-                        period=cdk.Duration.minutes(1),
-                    ),
-                ],
-                width=12,
-            ),
-            cw.GraphWidget(
-                title="Latency (ms)",
-                left=[
-                    _apigw_metric(
-                        query_api,
-                        "Latency",
-                        statistic="p50",
-                        label="p50",
-                        period=cdk.Duration.minutes(1),
-                    ),
-                    _apigw_metric(
-                        query_api,
-                        "Latency",
-                        statistic="p99",
-                        label="p99",
-                        period=cdk.Duration.minutes(1),
-                    ),
-                ],
-                width=12,
-            ),
         )
         dashboard.add_widgets(
             cw.GraphWidget(
@@ -214,65 +153,14 @@ class MonitoringStack(cdk.Stack):
         )
 
         # ------------------------------------------------------------------ #
-        # Agent API
+        # Agent jobs
         # ------------------------------------------------------------------ #
         dashboard.add_widgets(
             cw.TextWidget(
-                markdown="# Agent API  (`POST /ask` · `GET /ask/{job_id}`)",
+                markdown="# Agent jobs  (`POST /ask` · `GET /ask/{job_id}` on the unified API)",
                 width=24,
                 height=1,
             )
-        )
-        dashboard.add_widgets(
-            cw.GraphWidget(
-                title="Requests & Errors",
-                left=[
-                    _apigw_metric(
-                        agent_api,
-                        "Count",
-                        statistic="Sum",
-                        label="Requests",
-                        period=cdk.Duration.minutes(1),
-                    )
-                ],
-                right=[
-                    _apigw_metric(
-                        agent_api,
-                        "4XXError",
-                        statistic="Sum",
-                        label="4XX",
-                        period=cdk.Duration.minutes(1),
-                    ),
-                    _apigw_metric(
-                        agent_api,
-                        "5XXError",
-                        statistic="Sum",
-                        label="5XX",
-                        period=cdk.Duration.minutes(1),
-                    ),
-                ],
-                width=12,
-            ),
-            cw.GraphWidget(
-                title="Latency (ms)",
-                left=[
-                    _apigw_metric(
-                        agent_api,
-                        "Latency",
-                        statistic="p50",
-                        label="p50",
-                        period=cdk.Duration.minutes(1),
-                    ),
-                    _apigw_metric(
-                        agent_api,
-                        "Latency",
-                        statistic="p99",
-                        label="p99",
-                        period=cdk.Duration.minutes(1),
-                    ),
-                ],
-                width=12,
-            ),
         )
         dashboard.add_widgets(
             cw.GraphWidget(

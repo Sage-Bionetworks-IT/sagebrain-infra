@@ -16,7 +16,7 @@ NEPTUNE_VIZ:
     - 52.44.61.21/32  # Sage network egress IP (VPN / office) — only source allowed to reach the UI
 
 API_EDGE:
-  enabled: true  # alongside the old APIs until Phase 5 (spec 001 Phase 4)
+  enabled: true
 
 AGENT:
   # Pinned to the model prod already runs; dev uses config/base.yaml's default (Sonnet 5.5).

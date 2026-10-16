@@ -1,25 +1,19 @@
 """
 Replay tests/contract/cases.yaml against one or more live deployments and diff them.
 
-Used to (1) pin down exactly what API Gateway returns today for edge cases that unit tests
-can't see (auth failures, unknown routes, preflight), and (2) prove the unified API Gateway
-endpoint behaves identically before cutover.
+Pins down what API Gateway returns for edge cases that unit tests can't see (auth failures,
+unknown routes, preflight), and shows that deployments (e.g. dev and prod) agree.
 
 Usage:
     export SYNAPSE_AUTH_TOKEN=<synapse-pat>          # team member token for "valid" auth cases
-    # API Gateway: the two APIs have different hosts, so pass both bases (stage included)
+    # One host serves /query and /ask; pass the same base (stage included) twice
     python tools/parity_probe.py \\
-        --target apigw https://<query-api>/prod https://<agent-api>/prod
-    # Unified API: one host serves both; pass the same base twice
-    python tools/parity_probe.py \\
-        --target apigw https://<query-api>/prod https://<agent-api>/prod \\
-        --target unified https://<api-id>.execute-api.us-east-1.amazonaws.com/<env> \\
-                         https://<api-id>.execute-api.us-east-1.amazonaws.com/<env> \\
-        --legacy apigw
+        --target dev https://<dev-api-id>.execute-api.us-east-1.amazonaws.com/dev \\
+                     https://<dev-api-id>.execute-api.us-east-1.amazonaws.com/dev \\
+        --target prod https://<prod-api-id>.execute-api.us-east-1.amazonaws.com/prod \\
+                      https://<prod-api-id>.execute-api.us-east-1.amazonaws.com/prod
 
---legacy LABEL checks that target against a case's `legacy` expectation (the recorded
-current behaviour) where one exists; a Lambda that `raises` surfaces as API Gateway 502.
-Expected legacy-vs-new differences are then not reported as DIFFs.
+The old APIs (and the `--legacy` mode that compared them) were deleted in spec 001 T503.
 
 Safety: cases that would create jobs are skipped except `query_submit_ok_live`
 (one cheap LIMIT 1 query). Cases with `given` (seeded DynamoDB items) can't be replayed
@@ -34,6 +28,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -98,16 +93,7 @@ def _runnable(case):
     return True, ""
 
 
-def _expectation(case, legacy):
-    if legacy and case.get("legacy"):
-        expect = dict(case["legacy"])
-        if "raises" in expect:
-            return {"status": 502}
-        return expect
-    return case["expect"]
-
-
-def run_case(case, target, token, legacy=False):
+def run_case(case, target, token):
     label, query_base, ask_base = target
     base = query_base if case["api"] == "query" else ask_base
     headers = {**(case["request"].get("headers") or {})}
@@ -121,21 +107,26 @@ def run_case(case, target, token, legacy=False):
     try:
         expect = {
             k: v
-            for k, v in _expectation(case, legacy).items()
+            for k, v in case["expect"].items()
             if not k.startswith(("stored", "enqueued"))
         }
         check_response(expect, status, decoded, resp_headers)
         error = None
     except AssertionError as e:
         error = str(e)
-    return {"status": status, "body": decoded, "error": error}
+    return {"status": status, "body": decoded, "error": error, "base": base}
 
 
 def _comparable(result):
+    """Status and body, minus what differs by design: job ids and the docs' own stage URL."""
     body = result["body"]
     if isinstance(body, dict):
         body = {k: v for k, v in body.items() if k != "job_id"}
-    return result["status"], body
+    base = result["base"].rstrip("/")
+    # Swagger UI loads the contract from "/{stage}/api/..."
+    stage = urllib.parse.urlparse(base).path
+    text = json.dumps(body, sort_keys=True).replace(base, "<base>")
+    return result["status"], text.replace(f'"{stage}/api/', '"<stage>/api/')
 
 
 def _parse_args():
@@ -149,13 +140,6 @@ def _parse_args():
         required=True,
         metavar=("LABEL", "QUERY_BASE", "ASK_BASE"),
         help="deployment to probe; repeat to compare deployments",
-    )
-    parser.add_argument(
-        "--legacy",
-        action="append",
-        default=[],
-        metavar="LABEL",
-        help="target label running the current (API Gateway) implementation",
     )
     parser.add_argument("--token", default=os.environ.get("SYNAPSE_AUTH_TOKEN"))
     parser.add_argument("--only", help="comma-separated case ids")
@@ -176,12 +160,7 @@ def _parse_args():
 
 def _probe_case(case, args) -> int:
     """Run one case on every target; print results; return the number of failures."""
-    absent_on_legacy = (case.get("legacy") or {}).get("absent")
-    results = {
-        t[0]: run_case(case, t, args.token, t[0] in args.legacy)
-        for t in args.target
-        if not (absent_on_legacy and t[0] in args.legacy)
-    }
+    results = {t[0]: run_case(case, t, args.token) for t in args.target}
     failures = 0
     for label, r in results.items():
         mark = "ok  " if r["error"] is None else "FAIL"
@@ -192,9 +171,8 @@ def _probe_case(case, args) -> int:
             print(f"       {r['error']}")
             failures += 1
 
-    expected_divergence = case.get("legacy") and args.legacy
-    distinct = {json.dumps(_comparable(r), sort_keys=True) for r in results.values()}
-    if not expected_divergence and len(distinct) > 1:
+    distinct = {_comparable(r) for r in results.values()}
+    if len(distinct) > 1:
         print(f"DIFF {case['id']}: targets disagree")
         failures += 1
     return failures

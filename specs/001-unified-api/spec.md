@@ -1,6 +1,6 @@
 # 001 — One API Gateway endpoint for `/query` and `/ask`
 
-**Status:** Proposed
+**Status:** Implemented (Phases 0–6)
 **Contract:** the first deliverable after this spec is a hand-written OpenAPI 3.1 contract,
 `api/openapi.yaml` ([R-0](research.md)). It describes the existing API plus the deviations below.
 
@@ -99,8 +99,7 @@ beyond the team.
     endpoint with SigV4, read-only IAM and a 60 s timeout, and emit the `sparql_query` audit
     event. The event keeps today's fields (`job_id, query, query_length, source, source_ip,
     user_agent, status_code, duration_ms, timestamp`) and adds `principal`: the caller's
-    `user_id` for direct and agent queries, or `legacy-apigw` for a query message from the old
-    API, which has no `user_id` (D-19).
+    `user_id` for direct and agent queries (D-19).
 
   A result larger than 350 KB (350000 bytes, `max_result_bytes`) is not stored: the job is
   marked `error` with `"Result exceeds 350 KB; add LIMIT or narrow the query"` (D-16).
@@ -133,11 +132,11 @@ beyond the team.
 
 ## Constraints
 - The job table items keep today's shapes, and the query SQS message keeps today's fields with
-  `user_id` added (D-19); the workers depend on them. Until the old `/query` API is deleted, the
-  query worker accepts messages with and without `user_id`.
-- Until the old `/ask` API is deleted, the agent worker accepts both the legacy message
-  `{job_id, question, authorization}` and the new `{job_id, question, user_id, source_ip}`.
-  A legacy job runs as principal `legacy-apigw`; the `authorization` value is never used.
+  `user_id` added (D-19); the workers depend on them.
+- With the old APIs deleted (Phase 5), the workers accept only messages that carry `user_id`:
+  the query message, and the agent's `{job_id, question, user_id, source_ip}`. A message
+  without one fails its job, not the SQS batch. While the old APIs ran, their messages had no
+  `user_id` and ran as principal `legacy-apigw`.
 
 ## Thresholds
 Every threshold is declared once, in the contract's `info.x-sagebrain-limits`. Where each one is
@@ -165,7 +164,7 @@ retired with the move away from FastAPI ([R-5](research.md)).
 | D-16 | A result over DynamoDB's 400 KB item limit fails the worker's write, though Neptune succeeded (`src/lambda/query.py`) | Results over 350 KB mark the job `error` with an actionable message | A limit that exists only as a DynamoDB error breaks constitution III. Offloading big results to S3 is a separate spec |
 | D-17 | Status methods share the 50 / 100 stage throttle | `GET /query/{job_id}` and `GET /ask/{job_id}` get 100 rps / 200 burst; the POSTs stay 50 / 100 | At the design target, worst-case polling is 50 rps, exactly the old limit |
 | D-18 | A throttled request gets API Gateway's default 429, with no CORS header and no retry hint | The `THROTTLED` gateway response adds `Retry-After: 1` and `Access-Control-Allow-Origin: *` | Browser clients can read the 429, and polling clients back off instead of retrying at once |
-| D-19 | The query SQS message has no caller identity, so the query worker can't say who ran a query | The message gains `user_id` from the authorizer; the worker logs it as `principal`, or `legacy-apigw` when it's missing | Every `sparql_query` event names its caller, and spec 002's ACLs need that identity at the query service |
+| D-19 | The query SQS message has no caller identity, so the query worker can't say who ran a query | The message gains `user_id` from the authorizer; the worker logs it as `principal` | Every `sparql_query` event names its caller, and spec 002's ACLs need that identity at the query service |
 
 ## Known issues
 - **F8 (resolved by D-8):** today, the agent re-presents the caller's `Authorization` header to
