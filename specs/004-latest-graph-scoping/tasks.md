@@ -29,20 +29,20 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
 - [ ] T308 Operator: run the dev backfill after deploy (`--portal nf`; leave `test` unregistered)
 
 ## Phase 4 — scoping in dev
-- [ ] T401 Contract first: `/query` and `/ask` descriptions, the `SERVICE` 400 example,
+- [x] T401 Contract first: `/query` and `/ask` descriptions, the `SERVICE` 400 example,
   `x-sagebrain-limits.live_graphs_cache_seconds: 60`; a `SERVICE` vector in
   `tests/contract/cases.yaml` with a `legacy:` entry (D-3)
-- [ ] T402 Test: `validate_query` rejects `SERVICE` outside comments, strings and IRIs (FR-15) →
+- [x] T402 Test: `validate_query` rejects `SERVICE` outside comments, strings and IRIs (FR-15) →
   `validation.py`
-- [ ] T403 Test: `live_graphs()` reads `_live`, caches for `live_graphs_cache_seconds`, returns the
+- [x] T403 Test: `live_graphs()` reads `_live`, caches for `live_graphs_cache_seconds`, returns the
   sentinel when empty and raises on a read error (FR-13, FR-14) → `graphs.py`
-- [ ] T404 Test: with scoping on, `execute_query` sends each graph as both `default-graph-uri` and
+- [x] T404 Test: with scoping on, `execute_query` sends each graph as both `default-graph-uri` and
   `named-graph-uri` and logs `graphs`; off, the request and log are unchanged (FR-11, FR-16, D-8)
-- [ ] T405 The query worker rejects `SERVICE` in messages from the old submit Lambda, which
+- [x] T405 The query worker rejects `SERVICE` in messages from the old submit Lambda, which
   doesn't use `validate_query`
-- [ ] T406 Stacks: query and agent workers get `dynamodb:Query` on the pipeline table, limited to the
+- [x] T406 Stacks: query and agent workers get `dynamodb:Query` on the pipeline table, limited to the
   `_live` partition, and `LOAD_TABLE_NAME` / `GRAPH_SCOPING`; `NEPTUNE_API.graph_scoping` on in dev
-- [ ] T407 Agent system prompt (FR-17); test that a `SERVICE` query becomes a `tool_result` error step
+- [x] T407 Agent system prompt (FR-17); test that a `SERVICE` query becomes a `tool_result` error step
 - [ ] T408 Operator: on dev, check the success criteria in [spec.md](spec.md)
 
 ## Phase 5 — prod

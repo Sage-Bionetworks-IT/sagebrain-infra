@@ -494,6 +494,37 @@ def test_over_length_agent_query_never_reaches_neptune(agent, monkeypatch, neptu
     assert job["status"] == "complete"
 
 
+def test_service_agent_query_never_reaches_neptune(agent, monkeypatch, neptune):
+    """Spec 004 FR-15: a federated query is the model's to fix, like an over-length one."""
+    federated = "SELECT * WHERE { SERVICE <https://example.org/sparql> { ?s ?p ?o } }"
+    returned = []
+    _use_agent(
+        agent,
+        monkeypatch,
+        lambda tools: returned.append(tools["query_neptune"](federated)) or "answer",
+    )
+
+    job = _run(agent, NEW_MESSAGE)
+
+    neptune.assert_not_called()
+    message = "SERVICE (federated query) is not permitted"
+    assert returned == [f"Error: {message}"]
+    assert job["steps"][-1] == {
+        "type": "tool_result",
+        "tool": "query_neptune",
+        "error": message,
+    }
+    assert job["status"] == "complete"
+
+
+def test_system_prompt_says_the_default_graph_is_the_latest_snapshot(agent):
+    """Spec 004 FR-17: versions aren't the model's to choose."""
+    prompt = agent.SYSTEM_PROMPT
+    assert "latest published snapshot of each portal" in prompt
+    assert "Do not use FROM, FROM NAMED or GRAPH" in prompt
+    assert "SERVICE" in prompt
+
+
 def test_legacy_job_audit_event_names_legacy_apigw(agent, monkeypatch, neptune, capsys):
     """Spec 001 Constraints: a legacy {authorization} job runs as `legacy-apigw`."""
     _use_agent(agent, monkeypatch, _queries(1))

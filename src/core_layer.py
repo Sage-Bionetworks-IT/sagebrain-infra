@@ -1,4 +1,5 @@
 import aws_cdk as cdk
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from constructs import Construct
 
@@ -32,4 +33,34 @@ def sagebrain_core_layer(scope: Construct, construct_id: str = "SageBrainCoreLay
             lambda_.Architecture.ARM_64,
         ],
         description="sagebrain_core: limits, validation, Neptune execution, audit log",
+    )
+
+
+def scope_to_live_graphs(
+    fn: lambda_.Function, *, registry_table_name: str, graph_scoping: bool
+):
+    """Let a query-service caller read the live registry, and turn scoping on or off (spec 004).
+
+    The registry is the `_live` partition of the pipeline's tracking table. The ARN is built
+    from its deterministic name, so no cross-stack export; the grant is `Query` on that one
+    partition only.
+    """
+    stack = cdk.Stack.of(fn)
+    fn.add_environment("LOAD_TABLE_NAME", registry_table_name)
+    fn.add_environment("GRAPH_SCOPING", "true" if graph_scoping else "false")
+    fn.add_to_role_policy(
+        iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=["dynamodb:Query"],
+            resources=[
+                stack.format_arn(
+                    service="dynamodb",
+                    resource="table",
+                    resource_name=registry_table_name,
+                )
+            ],
+            conditions={
+                "ForAllValues:StringEquals": {"dynamodb:LeadingKeys": ["_live"]}
+            },
+        )
     )

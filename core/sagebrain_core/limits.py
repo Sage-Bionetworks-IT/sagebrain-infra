@@ -25,6 +25,9 @@ AUTH_FAILURE_RETRY_AFTER_SECONDS = (
 )
 JOB_TTL_SECONDS = 86400
 JOB_ID_MAX_CHARS = 128
+LIVE_GRAPHS_CACHE_SECONDS = (
+    60  # a newly published snapshot is visible within this (spec 004)
+)
 
 
 def as_spec_dict() -> dict:

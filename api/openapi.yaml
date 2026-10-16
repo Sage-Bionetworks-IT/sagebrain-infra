@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Sage Brain API
-  version: 1.0.0
+  version: 1.1.0
   summary: Async SPARQL query and natural-language agent API over the Sage Brain knowledge graph.
   description: |
     Run read-only SPARQL queries, or ask natural-language questions, against the Sage Brain
@@ -16,6 +16,12 @@ info:
     **Authentication.** Every `/query` and `/ask` request needs `Authorization: Bearer <token>`,
     where the token is a Synapse personal access token or OAuth access token whose user is a
     member of the deployment's Synapse team. The `/api` documentation routes are public.
+
+    **Data scope.** The knowledge graph keeps every published snapshot of each portal, but
+    queries see only the **latest published snapshot of each portal**: it is the default graph,
+    and the only named graphs that `GRAPH` patterns can match. `FROM` and `FROM NAMED` clauses
+    can't reach other snapshots. A newly published snapshot becomes visible within
+    `live_graphs_cache_seconds`. Federated queries (`SERVICE`) are rejected.
 
     **Agent queries.** The agent answers a question by running its own SPARQL queries. They
     are subject to the same query limits and audit logging as `POST /query`, attributed to
@@ -59,6 +65,8 @@ info:
     auth_failure_retry_after_seconds: 300
     job_ttl_seconds: 86400
     job_id_max_chars: 128
+    # How long the query service caches the list of live (latest published) snapshot graphs.
+    live_graphs_cache_seconds: 60
 
 servers:
   - url: https://api.sagebrain.example.org
@@ -83,7 +91,9 @@ paths:
       summary: Submit a SPARQL query job
       description: |
         Validates the query and creates a `pending` job that runs it.
-        The query is trimmed before the length check.
+        The query is trimmed before the length check. It runs against the latest published
+        snapshot of each portal (see **Data scope**). A query containing the `SERVICE` keyword
+        (outside comments, strings and IRIs) is rejected.
       parameters:
         - $ref: "#/components/parameters/XSource"
       requestBody:
@@ -118,6 +128,8 @@ paths:
                   value: { error: "Request body must be a JSON object" }
                 sourceTooLong:
                   value: { error: "'X-Source' exceeds maximum length of 64 characters" }
+                federated:
+                  value: { error: "SERVICE (federated query) is not permitted" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "413":
@@ -190,8 +202,9 @@ paths:
       description: |
         Validates the question and creates a `pending` job for the agent to answer.
         The agent's SPARQL queries get the same query limits and audit logging as
-        `POST /query`, attributed to the caller with `source: agent`. The question is
-        trimmed before the length check.
+        `POST /query`, attributed to the caller with `source: agent`, and see the same data:
+        the latest published snapshot of each portal. The question is trimmed before the
+        length check.
       requestBody:
         required: true
         content:

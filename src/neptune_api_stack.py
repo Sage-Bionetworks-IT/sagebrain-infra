@@ -9,7 +9,7 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
-from src.core_layer import sagebrain_core_layer
+from src.core_layer import sagebrain_core_layer, scope_to_live_graphs
 
 _BUNDLING = cdk.BundlingOptions(
     image=lambda_.Runtime.PYTHON_3_11.bundling_image,
@@ -43,6 +43,8 @@ class NeptuneApiStack(cdk.Stack):
         neptune_security_group: ec2.SecurityGroup,
         synapse_team_id: str,
         query_worker_concurrency: int,
+        live_registry_table_name: str,
+        graph_scoping: bool,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -160,6 +162,12 @@ class NeptuneApiStack(cdk.Stack):
             reserved_concurrent_executions=query_worker_concurrency,
         )
         self.job_table.grant_read_write_data(self.query_fn)
+        # Spec 004: each query sees only the latest published snapshot of each portal
+        scope_to_live_graphs(
+            self.query_fn,
+            registry_table_name=live_registry_table_name,
+            graph_scoping=graph_scoping,
+        )
         self.query_fn.add_event_source(
             lambda_event_sources.SqsEventSource(
                 self.job_queue,

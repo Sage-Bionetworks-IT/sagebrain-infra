@@ -6,6 +6,7 @@ import boto3
 from sagebrain_core import limits  # Lambda layer
 from sagebrain_core.neptune import NeptuneConfig, execute_query
 from sagebrain_core.query_service import LEGACY_PRINCIPAL
+from sagebrain_core.validation import SERVICE_REJECTED, has_service_keyword
 
 DYNAMODB_TABLE = os.environ["JOB_TABLE_NAME"]
 
@@ -35,6 +36,11 @@ RESULT_TOO_LARGE = "Result exceeds 350 KB; add LIMIT or narrow the query"
 def _execute_job(job: dict):
     """Run one admitted query job. Validation happened at submit time."""
     job_id = job["job_id"]
+    # The old /query submit Lambda doesn't use validate_query, so its messages can still carry
+    # SERVICE (spec 004 FR-15). A rejection fails the job, not the SQS message.
+    if has_service_keyword(job["query"]):
+        _update_job(job_id, status="error", error=SERVICE_REJECTED)
+        return
     _update_job(job_id, status="running")
     try:
         # Signing, the Neptune timeout and the sparql_query audit log live in sagebrain_core.

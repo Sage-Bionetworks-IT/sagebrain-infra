@@ -219,6 +219,18 @@ cases:
       body: { error: "'X-Source' exceeds maximum length of 64 characters" }
     legacy: { status: 202, enqueued_subset: { source: "${repeat:s:65}" } }  # deviation D-11
 
+  - id: query_submit_service_rejected
+    api: query
+    layer: handler
+    request:
+      method: POST
+      path: /query
+      json: { query: "SELECT * WHERE { SERVICE <https://example.org/sparql> { ?s ?p ?o } }" }
+    expect:
+      status: 400
+      body: { error: "SERVICE (federated query) is not permitted" }
+    legacy: { status: 202, body_subset: { status: pending } }  # spec 004 deviation D-3
+
   - id: query_submit_body_too_large
     api: query
     layer: handler

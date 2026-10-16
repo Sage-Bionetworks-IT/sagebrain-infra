@@ -2,7 +2,7 @@
 
 import json
 from unittest.mock import MagicMock, patch
-from urllib.parse import unquote_plus
+from urllib.parse import parse_qs, unquote_plus
 
 import pytest
 import requests
@@ -131,3 +131,100 @@ def test_config_from_env(monkeypatch):
     monkeypatch.setenv("NEPTUNE_ENDPOINT", "ep.example")
     monkeypatch.setenv("AWS_REGION", "eu-west-1")
     assert NeptuneConfig.from_env() == NeptuneConfig("ep.example", "eu-west-1")
+
+
+# ---------------------------------------------------------------------------
+# Spec 004: graph scoping (FR-11, FR-13, FR-16, D-1, D-8)
+# ---------------------------------------------------------------------------
+
+SCOPED = NeptuneConfig(
+    endpoint="reader.example",
+    region="us-east-1",
+    graph_scoping=True,
+    registry_table="app-dev-neptune-pipeline-loads",
+)
+LIVE = ["urn:sagebrain:nf:2026-07-28", "urn:sagebrain:reactome:v97"]
+
+
+@pytest.fixture
+def live():
+    with patch("sagebrain_core.neptune.live_graphs", return_value=LIVE) as live:
+        yield live
+
+
+def _form(post):
+    return parse_qs(post.call_args.kwargs["data"])
+
+
+def test_unscoped_request_sends_only_the_query(post, capsys):
+    """D-1 old behaviour: no dataset, so Neptune reads the union of every named graph."""
+    post.return_value = _response()
+    _run()
+    assert set(_form(post)) == {"query"}
+    (event,) = _audit_events(capsys)
+    assert "graphs" not in event
+
+
+def test_scoped_request_sends_each_graph_as_both_lists(post, live):
+    post.return_value = _response()
+    _run(config=SCOPED)
+
+    live.assert_called_once_with("app-dev-neptune-pipeline-loads")
+    form = _form(post)
+    assert form["query"] == ["SELECT * WHERE { ?s ?p ?o } LIMIT 1"]
+    # Both: default-graph-uri alone empties GRAPH patterns, named-graph-uri alone empties
+    # the default graph (research Q4).
+    assert form["default-graph-uri"] == LIVE
+    assert form["named-graph-uri"] == LIVE
+
+
+def test_scoped_request_is_signed_over_the_dataset(post, live):
+    post.return_value = _response()
+    with patch("sagebrain_core.neptune.AWSRequest") as aws_request:
+        aws_request.return_value.headers = {}
+        _run(config=SCOPED)
+    signed_body = aws_request.call_args.kwargs["data"]
+    assert signed_body == post.call_args.kwargs["data"]
+    assert "default-graph-uri" in signed_body
+
+
+def test_scoped_audit_event_records_graphs(post, live, capsys):
+    """D-8: every sparql_query line records which graphs the query could see."""
+    post.return_value = _response()
+    _run(config=SCOPED)
+    (event,) = _audit_events(capsys)
+    assert event["graphs"] == LIVE
+
+
+def test_registry_error_fails_the_query_without_calling_neptune(post, capsys):
+    # FR-13: fail closed — never fall back to the union.
+    with patch(
+        "sagebrain_core.neptune.live_graphs", side_effect=RuntimeError("registry down")
+    ):
+        with pytest.raises(RuntimeError):
+            _run(config=SCOPED)
+    post.assert_not_called()
+    (event,) = _audit_events(capsys)
+    assert event["status_code"] == 500
+    assert event["graphs"] is None
+
+
+def test_scoping_config_from_env(monkeypatch):
+    monkeypatch.setenv("NEPTUNE_ENDPOINT", "ep.example")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("GRAPH_SCOPING", "true")
+    monkeypatch.setenv("LOAD_TABLE_NAME", "loads")
+    config = NeptuneConfig.from_env()
+    assert config.graph_scoping is True
+    assert config.registry_table == "loads"
+
+
+@pytest.mark.parametrize("value", [None, "false", "False", "1", ""])
+def test_scoping_is_off_unless_exactly_true(monkeypatch, value):
+    monkeypatch.setenv("NEPTUNE_ENDPOINT", "ep.example")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    if value is None:
+        monkeypatch.delenv("GRAPH_SCOPING", raising=False)
+    else:
+        monkeypatch.setenv("GRAPH_SCOPING", value)
+    assert NeptuneConfig.from_env().graph_scoping is False

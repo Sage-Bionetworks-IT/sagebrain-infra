@@ -22,6 +22,10 @@ NEPTUNE_API:
   # Reserved concurrency of the SQS query worker: the most SPARQL jobs that run on Neptune at
   # once; extra jobs wait in the queue (spec 001 D-14). A safety bound, not a tuned value.
   query_worker_concurrency: 10
+  # Spec 004: scope every query (POST /query and the agent's) to the latest published snapshot
+  # of each portal, from the pipeline's live registry. Off: the union of every graph. Seed the
+  # registry (tools/backfill_live_registry.py) before turning this on in an env.
+  graph_scoping: false
 
 # The unified API (spec 001): one REST API for /query, /ask and /api docs, stack app-{env}-api.
 # Runs alongside the two old APIs until cutover; enable per env.

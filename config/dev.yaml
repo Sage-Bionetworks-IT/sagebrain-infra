@@ -12,6 +12,7 @@ NEPTUNE:
 
 NEPTUNE_API:
   query_worker_concurrency: 5  # dev's Neptune maxes at 4 NCU (prod: 10, from base.yaml)
+  graph_scoping: true  # spec 004 Phase 4; prod turns it on in Phase 5
 
 API_EDGE:
   enabled: true  # deployed alongside the old APIs (spec 001 Phase 2)
