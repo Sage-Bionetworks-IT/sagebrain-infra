@@ -33,7 +33,9 @@ resolves it.
 
 ## Spec 001 follow-ups
 - **Retained leftovers** (T504): the old APIs' `Neptune{,Agent}ApiCloudWatchRole*` roles and
-  access-log groups are `Retain`, so they outlive the stacks in each account. Delete by hand or leave.
+  access-log groups are `Retain`, so they outlive the stacks in each account. The prod account
+  also still holds `app-dev-neptune-{api,agent}-*` roles and log groups from before dev moved to
+  its own account. Delete by hand or leave.
 
 ## Infra hygiene
 - Narrow Neptune SG egress to the S3 prefix list (#15). Make the endpoint configurable per env (#14).

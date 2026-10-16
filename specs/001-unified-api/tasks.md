@@ -112,7 +112,7 @@ The gate is client-driven, per env: the old APIs at ~0 requests for 7 days (thei
 metric) **and** the T404 sunset date at least 30 days past (plan, Phase 5). Two deploys, because
 `app-*-monitoring` imports the old submit/status Lambdas: CloudFormation won't delete an export
 that a deployed stack still imports.
-- [ ] T501 Gate, per env: 7 days of `Count` for `neptune-query-api` and `neptune-agent-api`, and
+- [x] T501 Gate, per env: 7 days of `Count` for `neptune-query-api` and `neptune-agent-api`, and
   the date. Record both here before T503 merges. On 2026-10-14, prod still had traffic (query
   28 and 46 a day, agent 7 and 29). On 2026-10-16 the last client traffic in prod was 10-12;
   10-14's single hour (16:00 UTC) is the T403 probe. The 7 days weren't up and T404's sunset date
@@ -128,12 +128,14 @@ that a deployed stack still imports.
   messages (spec, Constraints). `test_job_api_handlers.py`, the vectors' `legacy` entries and the
   parity probe's `--legacy` go. Synth diffed: only API Gateway, authorizer and submit/status
   resources leave the two stacks, and the table/queue exports the edge stack imports stay
-- [ ] T504 After CI deploys T503: `apigateway get-account` still names the edge stack's
+- [x] T504 After CI deploys T503: `apigateway get-account` still names the edge stack's
   CloudWatch role, and the edge API still writes access logs. The old APIs' CloudWatch roles
   (`Neptune{,Agent}ApiCloudWatchRole*`) and access-log groups are `Retain`, so they stay behind;
   delete them by hand or leave them. Dev checked on 2026-10-16: `get-account` names
   `app-dev-api-SageBrainApiCloudWatchRole…`, the edge access log is written after the deploy,
-  and both old roles are still there
+  and both old roles are still there. Prod checked on 2026-10-16 after #97 deployed (17:44 UTC):
+  `sagebrain-api` is the only RestApi, `get-account` names `app-prod-api-SageBrainApiCloudWatchRole…`,
+  and the edge access log is written after the deploy
 
 ## Phase 6 — docs
 - [x] T601 README: one base URL, the `/api` docs, auth, submit-and-poll, limits and error shapes,

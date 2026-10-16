@@ -167,3 +167,8 @@ routes reported "targets disagree": the served contract's `servers` URL and Swag
 match in both: `GET /query/` is 404 `{"message":"Not Found"}` with ACAO, and a body over
 10 MiB is API Gateway's own 413 without CORS. The old APIs' deletion in dev changed nothing
 the unified API returns.
+
+## Prod after Phase 5 (T504, 2026-10-16)
+Prod got T502 (#96, 17:19 UTC) and then T503 (#97, 17:44 UTC) as two promotions. `tools/parity_probe.py
+--target prod` against `ullgxpkr61…/prod`: **0 failures**, the same observations as in dev. The old
+hosts (`vyar2xyj0k`, `6fvdijm02h`) no longer resolve.
