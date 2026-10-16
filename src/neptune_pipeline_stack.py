@@ -30,12 +30,13 @@ class NeptunePipelineStack(cdk.Stack):
     """
     Append-only, event-driven Neptune ingestion pipeline.
 
-    A transform pipeline deposits a dated snapshot per portal in S3 and writes
-    ``manifest.ttl`` last as the completion sentinel:
+    A transform pipeline deposits a snapshot per portal in S3, keyed by a tag (a
+    ``YYYY-MM-DD`` date or a ``v…`` release), and writes ``manifest.ttl`` last as
+    the completion sentinel:
 
-        s3://<bucket>/{portal}/YYYY-MM-DD/data/*.ttl    ← the load path (Turtle only)
-        s3://<bucket>/{portal}/YYYY-MM-DD/other/...     ← anything non-RDF
-        s3://<bucket>/{portal}/YYYY-MM-DD/manifest.ttl  ← written last, trigger only
+        s3://<bucket>/{portal}/{tag}/data/*.ttl    ← the load path (Turtle only)
+        s3://<bucket>/{portal}/{tag}/other/...     ← anything non-RDF
+        s3://<bucket>/{portal}/{tag}/manifest.ttl  ← written last, trigger only
 
     Flow:
       S3 "Object Created" (EventBridge)
@@ -47,7 +48,7 @@ class NeptunePipelineStack(cdk.Stack):
     single non-RDF sibling would fail the whole snapshot.
 
     Each snapshot is bulk-loaded into its own named graph
-    (``urn:sagebrain:{portal}:{date}``) so every historical version stays
+    (``urn:sagebrain:{portal}:{tag}``) so every historical version stays
     isolated — the append-only model. Neptune is an ingestion/serving target
     only; it computes no diffs and performs no upserts.
     """
@@ -68,7 +69,7 @@ class NeptunePipelineStack(cdk.Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         graph_uri_template = pipeline_config.get(
-            "graph_uri_template", "urn:sagebrain:{portal}:{date}"
+            "graph_uri_template", "urn:sagebrain:{portal}:{tag}"
         )
         parallelism = pipeline_config.get("parallelism", "HIGH")
         wait_seconds = pipeline_config.get("wait_seconds", 30)
@@ -164,6 +165,8 @@ class NeptunePipelineStack(cdk.Stack):
                     "action": "start",
                     "bucket": sfn.JsonPath.object_at("$.bucket"),
                     "object": sfn.JsonPath.object_at("$.object"),
+                    # Arrival order of this manifest (spec 004 FR-4)
+                    "released_at": sfn.JsonPath.string_at("$$.Execution.StartTime"),
                 }
             ),
             payload_response_only=True,
@@ -197,6 +200,8 @@ class NeptunePipelineStack(cdk.Stack):
             "named_graph": sfn.JsonPath.string_at("$.load.named_graph"),
             "prefix": sfn.JsonPath.string_at("$.load.prefix"),
             "etag": sfn.JsonPath.string_at("$.load.etag"),
+            "sequencer": sfn.JsonPath.string_at("$.load.sequencer"),
+            "released_at": sfn.JsonPath.string_at("$.load.released_at"),
             "load_status": sfn.JsonPath.string_at("$.check.load_status"),
             "overall_status": sfn.JsonPath.object_at("$.check.overall_status"),
         }

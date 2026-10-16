@@ -3,13 +3,18 @@
 Newest first within each theme. Each entry: the decision → why → where it was made.
 
 ## Data model / ingestion
-- **One named graph per snapshot, append-only** (`urn:sagebrain:{portal}:{date}`); Neptune does no
+- **One named graph per snapshot, append-only** (`urn:sagebrain:{portal}:{tag}`); Neptune does no
   diffs or upserts. Chosen over a full reset + reload (API downtime during loads) and over
   blue/green clusters (cost). Discussed in #12, built in #39 (SKG-149).
+- **Snapshot tags are a date or a `v…` release, immutable once published (2026-10-15, spec 004,
+  #61).** A correction goes under a new tag; there is no suffix for same-date corrections, so
+  "latest" is simply the last arrival (`released_at`, the execution start time), not a sort of tags.
+  Duplicate S3 deliveries are detected by `object.sequencer`: an identical re-upload has the same
+  etag but is a new PUT.
 - **Neptune's default graph is the union of all named graphs.** Unscoped SPARQL reads every
   snapshot at once. "Query the latest snapshot per portal" is the required follow-up, and it is
   still not built.
-- **Only `{portal}/{date}/data/` is loaded.** The bulk loader parses every object under its prefix
+- **Only `{portal}/{tag}/data/` is loaded.** The bulk loader parses every object under its prefix
   as Turtle, and `failOnError=TRUE` means one stray README fails the whole snapshot (#42).
 - **`DefaultNamedGraph` was legacy data and was removed (2026-10-08, #60).** The old manual
   loader, `tools/load_kg.py`, didn't set `namedGraphUri`, so what it loaded landed there and silently

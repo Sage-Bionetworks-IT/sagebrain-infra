@@ -8,8 +8,6 @@ resolves it.
   are drop-before-load (self-healing on re-publish) vs drop-on-failure (covers the gap), and a
   staging cluster would make the question moot (#51). That depends on a staging → prod promotion
   strategy (#52).
-- **Release-keyed sources** (e.g. Reactome `v97`) are rejected because the snapshot token must be
-  a date; the proposal is to widen it to `v…` tags (#61).
 - **Bulk loader mode**: `NEW` vs the inherited `AUTO` (#44). Move the loader to the boto3
   `neptunedata` client (#50). Note: `neptunedata` has **no SPARQL execute API**, only loader,
   openCypher and Gremlin.

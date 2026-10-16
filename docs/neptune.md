@@ -133,15 +133,15 @@ Agent invocations (question asked, answer status, total duration, step count) ar
 ## Loading Data
 
 Data is loaded by the append-only ingestion pipeline (`app-dev-neptune-pipeline`) using the
-Neptune S3 bulk loader. Each data release is a dated snapshot per portal, so S3 keeps a
+Neptune S3 bulk loader. Each data release is a snapshot per portal, keyed by a date or a `v…` release tag, so S3 keeps a
 historical data lake and Neptune keeps every snapshot in its own named graph
-(`urn:sagebrain:{portal}:{date}`).
+(`urn:sagebrain:{portal}:{tag}`).
 
 ### S3 Layout
 
 ```
 s3://<NeptuneDataBucketName>/
-  {portal}/YYYY-MM-DD/
+  {portal}/{tag}/   ← tag: YYYY-MM-DD, or a release such as v97
     data/          ← Turtle only; this whole prefix is bulk loaded
     other/         ← optional: anything that is not Turtle
     manifest.ttl   ← written LAST; its arrival triggers the load

@@ -178,12 +178,12 @@ Response includes the answer and the SPARQL steps taken:
 ## Loading Data
 
 Data loads automatically through the ingestion pipeline (`app-dev-neptune-pipeline`). Upload a
-dated snapshot per portal, and write `manifest.ttl` **last**: its arrival starts a Neptune bulk
-load of that snapshot's `data/` prefix into the named graph `urn:sagebrain:{portal}:{date}`.
+snapshot per portal (keyed by a date or a `v…` release tag), and write `manifest.ttl` **last**: its arrival starts a Neptune bulk
+load of that snapshot's `data/` prefix into the named graph `urn:sagebrain:{portal}:{tag}`.
 
 ```
 s3://<NeptuneDataBucketName>/
-  {portal}/YYYY-MM-DD/
+  {portal}/{tag}/   ← tag: YYYY-MM-DD, or a release such as v97
     data/          ← Turtle only; this whole prefix is bulk loaded
     other/         ← optional: anything that is not Turtle
     manifest.ttl   ← written LAST; its arrival triggers the load

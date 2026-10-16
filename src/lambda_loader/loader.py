@@ -3,7 +3,7 @@ Neptune bulk-load worker for the append-only ingestion pipeline.
 
 Invoked as three distinct Step Functions tasks via the ``action`` field:
 
-    start   →  submit a Neptune bulk-load job for one dated snapshot folder
+    start   →  submit a Neptune bulk-load job for one snapshot folder
     check   →  poll the load job status (called in the state machine's Wait loop)
     record  →  write the terminal result to the tracking table + emit an audit log
 
@@ -12,13 +12,15 @@ mirroring the query worker in src/lambda/query.py. The Lambda itself does not wa
 for the load — the state machine owns the Wait/Choice polling loop, so each
 invocation is a single fast HTTP call.
 
-The snapshot folder key drives everything:
+The snapshot folder key drives everything. The tag is a date or a ``v…`` release:
 
     nf/2026-04-25/manifest.ttl
       → portal      = "nf"
-      → date        = "2026-04-25"
+      → tag         = "2026-04-25"
       → prefix      = "s3://<bucket>/nf/2026-04-25/data/"
       → named_graph = "urn:sagebrain:nf:2026-04-25"   (from GRAPH_URI_TEMPLATE)
+
+    reactome/v97/manifest.ttl → tag "v97", graph "urn:sagebrain:reactome:v97"
 
 The whole ``data/`` subprefix is loaded into a per-snapshot named graph, so every
 historical version stays isolated (append-only).
@@ -27,8 +29,8 @@ The manifest is the trigger only and deliberately sits *outside* the load path.
 Neptune's bulk loader takes a literal S3 prefix with no include/exclude or glob
 support — it parses every object under ``source`` as Turtle — and ``failOnError``
 is TRUE, so one non-RDF object would fail the whole snapshot. Loading from
-``{portal}/{date}/data/`` gives depositors a place to put anything non-Turtle
-(``{portal}/{date}/other/``) without breaking the load.
+``{portal}/{tag}/data/`` gives depositors a place to put anything non-Turtle
+(``{portal}/{tag}/other/``) without breaking the load.
 """
 
 import json
@@ -49,12 +51,13 @@ REGION = os.environ["AWS_REGION"]
 LOAD_TABLE_NAME = os.environ["LOAD_TABLE_NAME"]
 NEPTUNE_LOAD_ROLE_ARN = os.environ["NEPTUNE_LOAD_ROLE_ARN"]
 GRAPH_URI_TEMPLATE = os.environ.get(
-    "GRAPH_URI_TEMPLATE", "urn:sagebrain:{portal}:{date}"
+    "GRAPH_URI_TEMPLATE", "urn:sagebrain:{portal}:{tag}"
 )
 PARALLELISM = os.environ.get("LOAD_PARALLELISM", "HIGH")
 
 NEPTUNE_PORT = 8182
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# A dated snapshot or a release tag (spec 004 FR-1). Tags are immutable once published (FR-3).
+_TAG_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}|v[0-9][0-9A-Za-z.\-]*)$")
 
 _dynamodb = boto3.resource("dynamodb")
 
@@ -68,8 +71,10 @@ def parse_snapshot(bucket: str, key: str) -> dict:
     """
     Derive the load target from an S3 manifest object key.
 
-    Expects ``{portal}/{YYYY-MM-DD}/manifest.ttl``. Raises ValueError on any
-    other shape so malformed keys fail loudly instead of loading the wrong data.
+    Expects ``{portal}/{tag}/manifest.ttl``, where tag is ``YYYY-MM-DD`` or ``v…``.
+    Raises ValueError on any other shape so malformed keys fail loudly instead of
+    loading the wrong data. Portals starting with ``_`` are reserved (the live
+    registry's partition is ``_live``).
 
     The load target is the sibling ``data/`` subprefix — the manifest itself is
     not loaded (see the module docstring).
@@ -77,24 +82,28 @@ def parse_snapshot(bucket: str, key: str) -> dict:
     parts = key.split("/")
     if len(parts) != 3 or parts[2] != "manifest.ttl":
         raise ValueError(
-            f"Unexpected manifest key '{key}'; expected '{{portal}}/YYYY-MM-DD/manifest.ttl'"
+            f"Unexpected manifest key '{key}'; expected '{{portal}}/{{tag}}/manifest.ttl'"
         )
-    portal, date, _ = parts
+    portal, tag, _ = parts
     if not portal:
         raise ValueError(f"Empty portal in key '{key}'")
-    if not _DATE_RE.match(date):
-        raise ValueError(f"Snapshot date '{date}' is not YYYY-MM-DD (key '{key}')")
+    if portal.startswith("_"):
+        raise ValueError(f"Portal '{portal}' is reserved: '_' prefix (key '{key}')")
+    if not _TAG_RE.match(tag):
+        raise ValueError(
+            f"Snapshot tag '{tag}' is not YYYY-MM-DD or v<release> (key '{key}')"
+        )
 
     return {
         "bucket": bucket,
         "portal": portal,
-        "date": date,
-        # SK on the tracking table — an ordering-friendly per-portal history key.
-        "snapshot": date,
+        "tag": tag,
+        # SK on the tracking table — the per-portal history key.
+        "snapshot": tag,
         # Load only the data/ subprefix: Neptune parses every object under the
         # prefix as Turtle, so non-RDF siblings must stay out of the load path.
-        "prefix": f"s3://{bucket}/{portal}/{date}/data/",
-        "named_graph": GRAPH_URI_TEMPLATE.format(portal=portal, date=date),
+        "prefix": f"s3://{bucket}/{portal}/{tag}/data/",
+        "named_graph": GRAPH_URI_TEMPLATE.format(portal=portal, tag=tag),
     }
 
 
@@ -123,7 +132,7 @@ def _start_bulk_load(prefix: str, named_graph: str) -> str:
         "region": REGION,
         # NEW, never the AUTO default: AUTO resumes a prior job from the same
         # source, and our source is byte-identical on a re-publish of the same
-        # date. RESUME semantics would then reload nothing and return success,
+        # tag. RESUME semantics would then reload nothing and return success,
         # so corrected data would never land while the tracking table recorded
         # a completed load. NEW also means dropped graph data does get reloaded.
         "mode": "NEW",
@@ -217,28 +226,32 @@ def _start(event: dict) -> dict:
     """
     Submit a bulk load for the snapshot described by the S3 event detail.
 
-    Idempotent: skip if this exact snapshot content already loaded successfully.
-    The manifest's etag distinguishes a duplicate S3 delivery (same etag → skip)
-    from a genuine re-publish of the same date (new etag → reload).
+    Idempotent: skip if this exact S3 event already loaded successfully. The
+    manifest's ``sequencer`` identifies one PUT, so a duplicate delivery (same
+    sequencer) is skipped while any re-upload, even of identical bytes, reloads
+    (spec 004 D-5; the etag can't tell those apart).
     """
     bucket = event["bucket"]["name"]
     key = event["object"]["key"]
-    etag = event["object"].get("etag", "")
     snap = parse_snapshot(bucket, key)
-    snap["etag"] = etag
+    snap["etag"] = event["object"].get("etag", "")
+    snap["sequencer"] = event["object"].get("sequencer", "")
+    # The Step Functions execution start time (ISO-8601): the arrival order (FR-4).
+    snap["released_at"] = event.get("released_at", "")
 
     existing = _get_load(snap["portal"], snap["snapshot"])
     if (
         existing
         and existing.get("status") == "complete"
-        and existing.get("etag") == etag
+        and snap["sequencer"]
+        and existing.get("sequencer") == snap["sequencer"]
     ):
         _log(
             action="start",
             skip=True,
             portal=snap["portal"],
             snapshot=snap["snapshot"],
-            reason="already_complete",
+            reason="duplicate_event",
         )
         return {**snap, "skip": True, "load_id": existing.get("load_id")}
 
@@ -250,7 +263,9 @@ def _start(event: dict) -> dict:
         load_id=load_id,
         named_graph=snap["named_graph"],
         prefix=snap["prefix"],
-        etag=etag,
+        etag=snap["etag"],
+        sequencer=snap["sequencer"],
+        released_at=snap["released_at"],
         started_at=int(time.time()),
     )
     _log(
@@ -261,6 +276,7 @@ def _start(event: dict) -> dict:
         named_graph=snap["named_graph"],
         prefix=snap["prefix"],
         load_id=load_id,
+        released_at=snap["released_at"],
     )
     return {**snap, "skip": False, "load_id": load_id}
 
@@ -291,6 +307,8 @@ def _record(event: dict) -> dict:
         named_graph=event.get("named_graph"),
         prefix=event.get("prefix"),
         etag=event.get("etag", ""),
+        sequencer=event.get("sequencer", ""),
+        released_at=event.get("released_at", ""),
         total_records=int(overall.get("totalRecords", 0)),
         parsing_errors=int(overall.get("parsingErrors", 0)),
         load_status=load_status,
@@ -306,6 +324,7 @@ def _record(event: dict) -> dict:
         named_graph=event.get("named_graph"),
         status="complete" if succeeded else "error",
         load_status=load_status,
+        released_at=event.get("released_at", ""),
         total_records=int(overall.get("totalRecords", 0)),
         parsing_errors=int(overall.get("parsingErrors", 0)),
         load_errors=errors,
