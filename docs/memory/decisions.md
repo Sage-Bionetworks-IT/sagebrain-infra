@@ -14,6 +14,13 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 - **Neptune's default graph is the union of all named graphs.** Unscoped SPARQL reads every
   snapshot at once. "Query the latest snapshot per portal" is the required follow-up, and it is
   still not built.
+- **The live registry is the tracking table's `_live` partition (2026-10-15, spec 004).** One item
+  per portal, written by the pipeline's Publish step with a conditional put (absent or older
+  `released_at`), so out-of-order completions can't roll a portal back. Chosen over deleting old
+  graphs for correctness: Neptune stays append-only, and a rollback is a re-upload of the older
+  `manifest.ttl` with no reload. Failed tags are dropped (in batches) only before their own retry.
+  The loader's batched `DELETE`/`ASK` run outside `sagebrain_core`: a write path with no
+  user-facing caller, a standing exception to constitution V.
 - **Only `{portal}/{tag}/data/` is loaded.** The bulk loader parses every object under its prefix
   as Turtle, and `failOnError=TRUE` means one stray README fails the whole snapshot (#42).
 - **`DefaultNamedGraph` was legacy data and was removed (2026-10-08, #60).** The old manual

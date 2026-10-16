@@ -52,6 +52,9 @@ NEPTUNE_PIPELINE:
   graph_uri_template: "urn:sagebrain:{portal}:{tag}"
   parallelism: "HIGH"
   wait_seconds: 30
+  # Triples per DELETE when clearing a failed tag before its retry (spec 004 FR-8). Each batch
+  # must finish inside Neptune's 120 s query timeout: 300k takes ~50 s on prod serverless.
+  drop_batch_size: 300000
 
 # Graph Explorer visualization UI (open-source). Disabled by default; enable
 # per-env and list the source IP/CIDRs allowed to reach the ALB.

@@ -34,6 +34,10 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
 - **`DROP GRAPH` on ~2M triples → `TimeLimitExceededException` after 120s** (the default
   `neptune_query_timeout`). The update rolls back atomically, so nothing is deleted. Delete in
   `LIMIT 300000` batches instead (≈50s each on prod serverless). `bastion.sh drop` does this.
+- **A tag stuck `in_progress` skips every new manifest** (spec 004 FR-9). Any failed step after
+  Prepare marks the row `error` (Abort), but an execution that's stopped by hand or times out
+  (12 h) leaves it `in_progress`. Check no load is running for it, set the row's `status` to
+  `error` in `app-{env}-neptune-pipeline-loads`, and re-upload the manifest.
 - **Never `DROP DEFAULT` / `CLEAR DEFAULT`** to remove "default graph" data. In Neptune the default
   graph is the union of every graph. Name `<http://aws.amazon.com/neptune/vocab/v01/DefaultNamedGraph>`
   explicitly.

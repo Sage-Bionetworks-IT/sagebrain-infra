@@ -13,19 +13,19 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
   etag, new sequencer) reloads, and the old etag behaviour is recorded in the test (FR-5, D-5)
 
 ## Phase 3 — live registry, Prepare / Publish / DropLoop (#51)
-- [ ] T301 Test: `prepare` classifies new / duplicate / in progress / published / failed and claims
+- [x] T301 Test: `prepare` classifies new / duplicate / in progress / published / failed and claims
   the row with a conditional write (FR-5, FR-7, FR-8, FR-9)
-- [ ] T302 Test: `publish` writes `_live/<portal>` only if absent or older than this `released_at`;
+- [x] T302 Test: `publish` writes `_live/<portal>` only if absent or older than this `released_at`;
   a loss is logged and the execution still succeeds (FR-6)
-- [ ] T303 Test: `drop` deletes one batch of `drop_batch_size` from the tag's own graph and reports
+- [x] T303 Test: `drop` deletes one batch of `drop_batch_size` from the tag's own graph and reports
   whether any triples remain (FR-8)
-- [ ] T304 Test: a failure after the row is claimed marks it `error` before the execution fails, so
+- [x] T304 Test: a failure after the row is claimed marks it `error` before the execution fails, so
   the tag can be retried; a failed load is never published (FR-10)
-- [ ] T305 State machine: Prepare → Route → [DropLoop] → StartLoad → Wait/Check → RecordSuccess →
+- [x] T305 State machine: Prepare → Route → [DropLoop] → StartLoad → Wait/Check → RecordSuccess →
   Publish; stack tests for the states
-- [ ] T306 Stack: loader timeout 150 s, `ReadDataViaQuery` + `DeleteDataViaQuery` on the cluster,
+- [x] T306 Stack: loader timeout 150 s, `ReadDataViaQuery` + `DeleteDataViaQuery` on the cluster,
   `DROP_BATCH_SIZE` from `NEPTUNE_PIPELINE.drop_batch_size` (dev 100000, prod 300000)
-- [ ] T307 `tools/backfill_live_registry.py` (`--dry-run`, `--portal`, idempotent) with unit tests
+- [x] T307 `tools/backfill_live_registry.py` (`--dry-run`, `--portal`, idempotent) with unit tests
 - [ ] T308 Operator: run the dev backfill after deploy (`--portal nf`; leave `test` unregistered)
 
 ## Phase 4 — scoping in dev
