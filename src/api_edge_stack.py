@@ -368,7 +368,7 @@ class ApiEdgeStack(cdk.Stack):
                     method_responses=[not_found_response],
                 )
 
-        ApiEdgeMonitoring(
+        monitoring = ApiEdgeMonitoring(
             self,
             "Monitoring",
             api=self.api,
@@ -386,6 +386,8 @@ class ApiEdgeStack(cdk.Stack):
             thresholds=alarm_thresholds,
             alarm_email=alarm_email,
         )
+        # The env's one alarm email topic; the monitoring and pipeline stacks notify it too
+        self.alarm_topic = monitoring.alarm_topic
 
         # -------------------
         # Outputs

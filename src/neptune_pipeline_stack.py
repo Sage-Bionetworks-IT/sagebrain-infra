@@ -1,5 +1,6 @@
 import aws_cdk as cdk
 from aws_cdk import aws_cloudwatch as cw
+from aws_cdk import aws_cloudwatch_actions as cw_actions
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_events as events
@@ -8,6 +9,7 @@ from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sqs as sqs
 from aws_cdk import aws_stepfunctions as sfn
 from aws_cdk import aws_stepfunctions_tasks as tasks
@@ -63,6 +65,8 @@ class NeptunePipelineStack(cdk.Stack):
         neptune_cluster_resource_id: str,
         neptune_load_role_arn: str,
         pipeline_config: dict,
+        # Alarms email this topic (the unified API's, src/api_edge_monitoring.py); None: no action
+        alarm_topic: sns.ITopic | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -325,7 +329,7 @@ class NeptunePipelineStack(cdk.Stack):
         # -------------------
         # Alarms
         # -------------------
-        cw.Alarm(
+        failed_alarm = cw.Alarm(
             self,
             "PipelineExecutionsFailedAlarm",
             metric=self.state_machine.metric_failed(period=cdk.Duration.minutes(5)),
@@ -335,7 +339,7 @@ class NeptunePipelineStack(cdk.Stack):
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
             alarm_description="A Neptune load pipeline execution failed",
         )
-        cw.Alarm(
+        rule_dlq_alarm = cw.Alarm(
             self,
             "PipelineRuleDLQAlarm",
             metric=self.rule_dlq.metric_approximate_number_of_messages_visible(
@@ -347,6 +351,9 @@ class NeptunePipelineStack(cdk.Stack):
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
             alarm_description="EventBridge failed to start a load pipeline execution",
         )
+        if alarm_topic:
+            for alarm in (failed_alarm, rule_dlq_alarm):
+                alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
 
         # -------------------
         # Outputs

@@ -1,7 +1,9 @@
 import aws_cdk as cdk
 from aws_cdk import aws_cloudwatch as cw
+from aws_cdk import aws_cloudwatch_actions as cw_actions
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_lambda as lambda_
+from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
@@ -34,6 +36,8 @@ class MonitoringStack(cdk.Stack):
         agent_job_table: dynamodb.Table,
         # Neptune
         neptune_cluster_id: str,
+        # Alarms email this topic (the unified API's, src/api_edge_monitoring.py); None: no action
+        alarm_topic: sns.ITopic | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -114,6 +118,8 @@ class MonitoringStack(cdk.Stack):
             alarm_description="Query jobs landing in DLQ — all 2 attempts failed",
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
         )
+        if alarm_topic:
+            query_dlq_alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
         dashboard.add_widgets(
             cw.AlarmWidget(
                 title="Query DLQ (alarm if > 0 messages)",
@@ -219,6 +225,8 @@ class MonitoringStack(cdk.Stack):
             alarm_description="Agent jobs landing in DLQ — all 2 attempts failed",
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
         )
+        if alarm_topic:
+            agent_dlq_alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
         dashboard.add_widgets(
             cw.AlarmWidget(
                 title="Agent DLQ (alarm if > 0 messages)",

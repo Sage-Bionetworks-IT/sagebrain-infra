@@ -52,6 +52,10 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   shallowly (`{**base, **env}`), so `API_EDGE: {enabled: true}` in `dev.yaml` drops every other
   `API_EDGE` key from `base.yaml`. Put shared settings under their own top-level key
   (`API_EDGE_ALARMS`), or repeat them in the env file.
+- **A `cw.Alarm` without `add_alarm_action` notifies nobody.** The job DLQ and pipeline alarms
+  had none until 2026-10-16; prod's query DLQ alarm had sat in `ALARM` since 2026-09-16 unseen.
+  Actions fire only on a transition into `ALARM`, so wiring one to an alarm already in `ALARM`
+  sends nothing until it clears and fires again.
 - **A CDK metric with a `label` makes an alarm use the `Metrics` (math) form**, with no top-level
   `MetricName`. Label the dashboard copy (`metric.with_(label=…)`), not the alarm's metric.
 - **An API Gateway REST throttle is not a strict token bucket.** 300 concurrent `POST /query` (273

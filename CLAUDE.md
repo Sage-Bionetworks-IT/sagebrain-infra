@@ -94,7 +94,8 @@ S3 "Object Created" (EventBridge) → EventBridge Rule (key suffix "manifest.ttl
 - **Idempotent** — the tracking table stores each snapshot's manifest etag. A duplicate S3
   event (same etag) is skipped; a genuine re-publish of the same date (new etag) reloads.
 - **DynamoDB tracking table** (`app-dev-neptune-pipeline-loads`, PK `portal` / SK `snapshot`)
-  is the append-only lineage/audit trail — no TTL. A descending query gives the latest
+  is the append-only lineage/audit trail — no TTL. A failed execution or an event EventBridge
+  couldn't deliver (rule DLQ) emails `ALARM_EMAIL` through the API's alarm topic. A descending query gives the latest
   snapshot graph per portal. Every load emits a structured `{"event":"kg_load", ...}` log line.
 
 ### Sample manifest.ttl
@@ -220,7 +221,9 @@ APIs, deleted in Phase 5 (T503). The tables, queues and workers stay in `app-*-n
   503, Synapse unavailable (60 min of 503s; the ~30 min Sunday maintenance stays quiet), 15 min of
   429s on a status method, requests/day (1M reopens R-1), oldest queued job. 5XX/503/429 come from
   access-log metric filters: `5XXError` includes the authorizer's 503. Thresholds in `API_EDGE_ALARMS` (`config/base.yaml`); alarms
-  email `ALARM_EMAIL` (per env) via SNS, which needs a one-time subscription confirmation
+  email `ALARM_EMAIL` (per env) via SNS, which needs a one-time subscription confirmation. That topic
+  is the env's only alarm topic: `app.py` passes it (`ApiEdgeStack.alarm_topic`) to the monitoring
+  stack's job DLQ alarms and the pipeline's failed-execution and rule-DLQ alarms
 - Probes: `tools/parity_probe.py` (same base twice; compares deployments, e.g. dev vs prod) and
   `tools/load_probe.py` (`load`: design-target polling; `burst`: 600 POSTs → some 429s, each with D-18's headers). Dev results (T210) are in
   the spec's `research.md`.
