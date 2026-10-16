@@ -87,8 +87,9 @@ Ordered, test-first. Phases are the ones in [plan.md](plan.md); each is independ
 - [x] T304 Test: an oldest-message alarm on the query and ask queues, 5 min (scaling path 2)
 - [x] T305 Test: the dashboard graphs every contract route (requests, 4XX, 5XX, p99 latency, 429s),
   the edge Lambdas' errors and p99 duration, and queue age
-- [ ] T306 After CI deploys `app-dev-api`: confirm the SNS email subscription, check the alarms
-  reach `OK` and the dashboard renders
+- [x] T306 After CI deploys `app-dev-api`: confirm the SNS email subscription, check the alarms
+  reach `OK` and the dashboard renders. Email checked end to end on 2026-10-14 with
+  `cloudwatch set-alarm-state` on the query-queue alarm
 - [x] T307 Test: every alarm notifies one SNS topic with an email subscription from `ALARM_EMAIL`
   (dev `aws-sagebrain-dev@sagebase.org`, prod `aws-sagebrain-prod@sagebase.org`). The
   subscription needs a one-time confirmation from that mailbox
@@ -100,11 +101,28 @@ move on their own. The old APIs keep serving until Phase 5's gate.
   deployed the in-process agent, because it also deletes the two `export_value` lines (T126)
 - [ ] T402 After CI deploys `app-prod-api`: confirm the SNS email subscription
   (`aws-sagebrain-prod@sagebase.org`), check the alarms reach `OK` and the dashboard renders
-- [ ] T403 Parity probe in prod (old vs new, `--legacy apigw`); results in `research.md`. No load
+- [x] T403 Parity probe in prod (old vs new, `--legacy apigw`); results in `research.md`. No load
   or burst probe: T210 covered them in dev, and in prod they would compete with real users
 - [ ] T404 Announce to the Synapse team: the base URL (`ApiBaseUrl`, ending `/prod`), the docs at
   `/api`, and a sunset date for the two old URLs. Record the date here
 
-## Phase 5 onward
-Tasks for removal (Phase 5) are added here when its PR starts. Its gate is client-driven: the old
-APIs at ~0 requests for 7 days (their `Count` metric) **and** the T404 sunset date at least 30 days past (plan, Phase 5).
+## Phase 5 — delete the old APIs
+The gate is client-driven, per env: the old APIs at ~0 requests for 7 days (their `Count`
+metric) **and** the T404 sunset date at least 30 days past (plan, Phase 5). Two deploys, because
+`app-*-monitoring` imports the old submit/status Lambdas: CloudFormation won't delete an export
+that a deployed stack still imports.
+- [ ] T501 Gate, per env: 7 days of `Count` for `neptune-query-api` and `neptune-agent-api`, and
+  the date. Record both here before T503 merges. On 2026-10-14, prod still had traffic (query
+  28 and 46 a day, agent 7 and 29)
+- [x] T502 Release: `app-*-monitoring` stops graphing the old submit/status Lambdas, and `app.py`
+  keeps their four exports with `export_value` until that deploy is done. Templates of the two
+  old stacks unchanged
+- [ ] T503 Removal (after T502 is deployed and T501 holds): delete the `export_value` lines, the
+  two old RestApis with their authorizers, access logs and URL outputs, and the old submit/status
+  Lambdas; the monitoring dashboard loses the old API widgets. The workers accept only the new
+  messages (spec, Constraints). `test_job_api_handlers.py` and the vectors' `legacy` entries go
+- [ ] T504 After CI deploys T503: `apigateway get-account` still names the edge stack's
+  CloudWatch role, and the edge API still writes access logs
+
+## Phase 6 onward
+Tasks for docs (Phase 6) are added here when its PR starts.

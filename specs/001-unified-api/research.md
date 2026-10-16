@@ -148,3 +148,13 @@ both have a 50 / 100 throttle. 600 got 60 and then 179 429s on two runs. API Gat
 throttle approximately across its fleet, so "about 100 of 300 accepted" isn't a property it has;
 the success criterion now asks for what is: the throttle engages, and every 429 carries
 `Retry-After: 1` and ACAO `*` (D-18). All 179 did, with the `{"message":"Too Many Requests"}` body.
+
+## Unified API in prod (T403, 2026-10-14)
+`app-prod-api` (`https://ullgxpkr61.execute-api.us-east-1.amazonaws.com/prod`) against the old prod
+APIs, with a prod Synapse team-member PAT.
+
+**Parity probe** (`--legacy apigw`): **0 failures**, with the same listed deviations as in dev
+(D-2, D-3, D-5, D-10, D-11). The docs routes serve Swagger UI and the contract. The live `LIMIT 1`
+job on the unified API completed. Its `sparql_query` event carries the caller's Synapse user id as
+`principal` (D-19); the old API's job logs `legacy-apigw`. No load or burst probe in prod: T210
+covered them in dev, and in prod they would compete with real users.
