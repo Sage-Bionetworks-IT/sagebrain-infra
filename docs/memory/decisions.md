@@ -101,6 +101,18 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   land in the DLQ (spec 001 D-16).
 
 ## Governance
-- **Access requirements first, then ACLs** (spec 002, #66; it builds on spec 001: #74, #73, #71, #72). It replaces earlier
-  explorations: #54 (ReBAC concept + AVP) and #58 (policy engine + query rewriter). Issue #16 is
-  the original question.
+- **ACL and access requirements checked at query time, always enforced** (spec 002, #66; it builds
+  on spec 001: #74, #73, #71, #72). It replaces earlier explorations: #54 (ReBAC concept + AVP) and
+  #58 (policy engine + query rewriter). Issue #16 is the original question.
+  - **Fail closed, no modes (2026-10-14).** Governance is part of the service: wherever it's
+    deployed it's enforced, and missing data or a backend error returns nothing. `GOVERNANCE.enabled`
+    says only whether it's deployed in an env; no `off`/`shadow`/`report`.
+  - **DynamoDB from Snowflake, not a governance graph in Neptune (2026-10-14).** Cedar takes its
+    entities in each request, so the store doesn't matter to the policies. Two flattened tables
+    (entities, grants) exported from the Synapse warehouse replace a second Neptune cluster,
+    governanceDUO's per-entity sync and its ACT credential. A graph store is a Stage 2 question.
+  - **Grants are managed ACT only in the POC:** the latest accessor change on an Approved
+    submission is `GRANT_ACCESS`/`RENEW_ACCESS`. Other AR types are denied to everyone for now.
+    ARs inherit down the parent path; ACLs come from the benefactor.
+  - **Non-Synapse nodes are allowed through**, flagged as open (spec 002 research Q-2). Graph
+    Explorer stays a standing exception: no synth guard against it.
