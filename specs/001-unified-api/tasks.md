@@ -115,8 +115,9 @@ that a deployed stack still imports.
 - [ ] T501 Gate, per env: 7 days of `Count` for `neptune-query-api` and `neptune-agent-api`, and
   the date. Record both here before T503 merges. On 2026-10-14, prod still had traffic (query
   28 and 46 a day, agent 7 and 29). On 2026-10-16 the last client traffic in prod was 10-12;
-  10-14's single hour (16:00 UTC) is the T403 probe. Prod has not met the gate: the 7 days end
-  10-19 at the earliest and T404's sunset date isn't set, so T503 stays out of `prod`
+  10-14's single hour (16:00 UTC) is the T403 probe. The 7 days weren't up and T404's sunset date
+  wasn't set, but a team meeting on 2026-10-16 decided to delete the old prod APIs now. Prod
+  gets T502 and T503 in two separate promotions
 - [x] T502 Release: `app-*-monitoring` stops graphing the old submit/status Lambdas, and `app.py`
   keeps their four exports with `export_value` until that deploy is done. Templates of the two
   old stacks unchanged
