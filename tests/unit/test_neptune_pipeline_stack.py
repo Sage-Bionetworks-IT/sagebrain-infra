@@ -1,3 +1,5 @@
+import json
+
 import aws_cdk as cdk
 import pytest
 from aws_cdk import aws_ec2 as ec2
@@ -178,13 +180,53 @@ def test_alarms_created(template):
     template.resource_count_is("AWS::CloudWatch::Alarm", 2)
 
 
-def test_every_alarm_notifies_the_alarm_topic(template):
-    for props in (
+def _alarm(template, construct_id):
+    (props,) = (
         a["Properties"]
-        for a in template.find_resources("AWS::CloudWatch::Alarm").values()
-    ):
-        assert len(props["AlarmActions"]) == 1
-        assert "AlarmTopic" in str(props["AlarmActions"][0])
+        for k, a in template.find_resources("AWS::CloudWatch::Alarm").items()
+        if k.startswith(construct_id)
+    )
+    return props
+
+
+def test_rule_dlq_alarm_emails_the_alarm_topic(template):
+    actions = _alarm(template, "PipelineRuleDLQAlarm")["AlarmActions"]
+    assert len(actions) == 1 and "AlarmTopic" in str(actions[0])
+
+
+def test_failed_executions_alarm_sends_no_email(template):
+    # Each failure emails once through the rule below; an alarm action would group them
+    assert "AlarmActions" not in _alarm(template, "PipelineExecutionsFailedAlarm")
+
+
+def _failure_rule(template):
+    (rule,) = (
+        r["Properties"]
+        for r in template.find_resources("AWS::Events::Rule").values()
+        if r["Properties"]["EventPattern"].get("source") == ["aws.states"]
+    )
+    return rule
+
+
+def test_each_failed_execution_emails_the_alarm_topic(template):
+    rule = _failure_rule(template)
+    pattern = rule["EventPattern"]
+    assert pattern["detail-type"] == ["Step Functions Execution Status Change"]
+    assert pattern["detail"]["status"] == ["FAILED", "TIMED_OUT"]
+    assert "LoadPipeline" in str(pattern["detail"]["stateMachineArn"])
+    (target,) = rule["Targets"]
+    assert "AlarmTopic" in str(target["Arn"])
+    # A role, not a topic policy: the topic keeps SNS's default policy
+    assert "RoleArn" in target
+    paths = set(target["InputTransformer"]["InputPathsMap"].values())
+    assert {"$.detail.error", "$.detail.cause", "$.detail.executionArn"} <= paths
+
+
+def test_fail_states_carry_the_real_error(template):
+    (sm,) = template.find_resources("AWS::StepFunctions::StateMachine").values()
+    definition = json.dumps(sm["Properties"]["DefinitionString"])
+    for path in ("$.error.Cause", "$.record.error"):
+        assert path in definition
 
 
 def test_outputs_exist(template):
