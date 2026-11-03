@@ -30,7 +30,7 @@ aws --profile sagebrain sso login       # prod
 | NeptuneStack | `app-dev-neptune` | Neptune cluster + S3 data bucket + load role |
 | NeptuneApiStack | `app-dev-neptune-api` | Query job backend: table, queue and SPARQL worker behind `/query` |
 | NeptuneAgentStack | `app-dev-neptune-agent` | Agent job backend: table, queue and Bedrock Strands worker behind `/ask` (async NL-to-SPARQL) |
-| NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only) |
+| NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only). **Dev only**: not in prod |
 | NeptunePipelineStack | `app-dev-neptune-pipeline` | Append-only ingestion — S3 `manifest.ttl` → EventBridge → Step Functions → Neptune bulk loader (one named graph per snapshot) |
 | ApiEdgeStack | `app-dev-api` | Unified API (spec 001): the one REST API: `/query`, `/ask` and public docs at `/api`, in front of the job tables/queues. `API_EDGE.enabled` (on in dev and prod) |
 | MonitoringStack | `app-dev-monitoring` | Dashboard for the workers, queues/DLQs, job tables and Neptune (the API's own alarms and dashboard are in `app-dev-api`) |
@@ -249,17 +249,19 @@ curl -H "Authorization: Bearer <synapse-pat>" <base>/query/$JOB_ID   # same for 
 ## Graph Explorer Visualization: src/neptune_viz_stack.py
 
 Open-source [Graph Explorer](https://github.com/aws/graph-explorer) for visually browsing the knowledge graph — for non-technical users.
+**Dev only** (SKG-230): it has no user identity and no audit log, so prod doesn't run it. Prod users go
+through `/query` and `/ask`.
 
 ### Architecture
 - Single **Fargate** task running `public.ecr.aws/neptune/graph-explorer:latest` (X86_64) in **private subnets**, no public IP.
 - The task signs Neptune requests with **SigV4** (`IAM=true`, `SERVICE_TYPE=neptune-db`) using a least-privilege task role — read-only `neptune-db` actions only (same set as the query worker). `GRAPH_TYPE=sparql` (RDF triplestore). The proxy is locked to our cluster via `PROXY_SERVER_ALLOWED_DB_ORIGINS`.
 - Fronted by an **internet-facing ALB on plain HTTP (port 80)** whose security group admits **only Sage's network egress IP** (`52.44.61.21/32`, set in `config/*.yaml` as `NEPTUNE_VIZ.allowed_cidrs`). Graph Explorer has no auth of its own — **the SG IP allow-list IS the access control**. Reach it over the Sage VPN.
-- Gated by `NEPTUNE_VIZ.enabled` (default `false`; enable per-environment in `config/<env>.yaml`).
+- Gated by `NEPTUNE_VIZ.enabled` (default `false`; only `config/dev.yaml` enables it, and a test pins prod off).
 
 ### Access
 ```bash
 # Get the URL (only resolves/loads from the Sage VPN)
-aws --profile sagebrain cloudformation describe-stacks \
+aws --profile sagebrain-dev cloudformation describe-stacks \
   --stack-name app-dev-neptune-viz \
   --query "Stacks[0].Outputs[?OutputKey=='GraphExplorerUrl'].OutputValue" --output text
 # → http://<alb-dns>/explorer

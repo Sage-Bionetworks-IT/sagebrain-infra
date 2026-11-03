@@ -332,3 +332,11 @@ def test_graph_explorer_url_output_exists(template):
 def test_cluster_and_service_name_outputs_exist(template):
     template.has_output("VizClusterName", {})
     template.has_output("VizServiceName", {})
+
+
+@pytest.mark.parametrize("env_name,enabled", [("dev", True), ("prod", False)])
+def test_graph_explorer_is_dev_only(env_name, enabled):
+    """No user identity or audit log, so prod doesn't run it (SKG-230)."""
+    from src.utils import load_context_config
+
+    assert load_context_config(env_name)["NEPTUNE_VIZ"]["enabled"] is enabled

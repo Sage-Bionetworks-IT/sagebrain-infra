@@ -53,8 +53,8 @@ NEPTUNE_PIPELINE:
   parallelism: "HIGH"
   wait_seconds: 30
 
-# Graph Explorer visualization UI (open-source). Disabled by default; enable
-# per-env and list the source IP/CIDRs allowed to reach the ALB.
+# Graph Explorer visualization UI (open-source). Disabled by default; dev enables it and
+# lists the source IP/CIDRs allowed to reach the ALB. Dev-only: off in prod (SKG-230).
 NEPTUNE_VIZ:
   enabled: false
   allowed_cidrs: []

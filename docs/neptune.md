@@ -6,19 +6,19 @@ Amazon Neptune cluster for the Sage Brain knowledge graph.
 
 - **Neptune Cluster**: Managed graph database in private subnets, IAM auth enabled
 - **Security Groups**: No broad ingress — each consumer stack adds a targeted SG-to-SG rule on port 8182
-- **Graph Explorer** (`app-dev-neptune-viz`): Visual graph browsing interface running on Fargate behind an IP-restricted ALB (VPN-only access). Open-source Neptune Graph Explorer for non-technical users to explore the knowledge graph visually.
+- **Graph Explorer** (`app-dev-neptune-viz`, dev only): Visual graph browsing interface running on Fargate behind an IP-restricted ALB (VPN-only access). Open-source Neptune Graph Explorer for non-technical users to explore the knowledge graph visually. Prod doesn't run it (SKG-230).
 - **SPARQL API** (`app-dev-api`, jobs in `app-dev-neptune-api`): Async read-only SPARQL interface, Synapse team-gated. `POST /query` submits a job and returns a `job_id`. A worker Lambda executes the SPARQL against Neptune and writes results to DynamoDB. Callers poll `GET /query/{job_id}`. All queries logged to CloudWatch with source, principal, IP, duration, and query text.
 - **AI Agent API** (`app-dev-api`, jobs in `app-dev-neptune-agent`): Async natural-language interface. `POST /ask` enqueues a job and returns a `job_id` immediately. A worker Lambda (Bedrock Strands, model from `AGENT.bedrock_model_id`) processes the job via SQS, writes the result to DynamoDB, and the caller polls `GET /ask/{job_id}` for the answer.
 - **Backup & Monitoring**: Automated backups and CloudWatch audit/slow-query logging
 
 ## Accessing Neptune
 
-### Via Graph Explorer (visual interface)
+### Via Graph Explorer (visual interface, dev only)
 
 Get the URL from CloudFormation (only accessible from Sage VPN):
 
 ```bash
-aws --profile sagebrain cloudformation describe-stacks \
+aws --profile sagebrain-dev cloudformation describe-stacks \
   --stack-name app-dev-neptune-viz \
   --query "Stacks[0].Outputs[?OutputKey=='GraphExplorerUrl'].OutputValue" \
   --output text
@@ -189,7 +189,7 @@ table; see the "Automated Ingestion Pipeline" section of CLAUDE.md.
 
 ## Adding Graph Explorer Users
 
-To grant more users access to Graph Explorer, add their egress CIDR to `config/<env>.yaml`:
+To grant more users access to Graph Explorer, add their egress CIDR to `config/dev.yaml`:
 
 ```yaml
 NEPTUNE_VIZ:

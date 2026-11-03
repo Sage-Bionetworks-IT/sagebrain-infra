@@ -43,8 +43,8 @@ concurrency and the service's timeout. Each bound has a test. A new query path m
 the service and name its rate bound.
 
 Standing exceptions (not user-facing query paths; each recorded in `decisions.md`):
-Graph Explorer, which signs its own requests to Neptune behind the ALB IP allow-list, and the
-temporary operator bastion
+Graph Explorer (dev only), which signs its own requests to Neptune behind the ALB IP allow-list,
+and the temporary operator bastion
 ([runbook](runbooks/direct-neptune-access.md)), which is never left deployed.
 Neither emits a `sparql_query` audit log. A new exception needs its own decisions entry.
 
