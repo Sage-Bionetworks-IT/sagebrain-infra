@@ -311,6 +311,9 @@ GitHub and SKG Jira, so agents recall facts instead of reading `docs/memory/`.
 Draft: [specs/004-latest-graph-scoping](specs/004-latest-graph-scoping/spec.md) — queries see only
 the latest published snapshot of each portal (via `default-graph-uri`/`named-graph-uri`),
 release-keyed tags (#61), invisible failed loads (#51).
+Draft: [specs/006-agent-telemetry](specs/006-agent-telemetry/spec.md) — curated OpenTelemetry
+traces, one per job, sent to SigNoz Cloud through a fail-closed attribute allowlist, so agents
+triage jobs, errors and loads through the SigNoz MCP. CloudWatch stays the audit log.
 
 - **Query limits are server-side.** The agent calls the shared query service in-process (not
   `POST /query` over HTTP), so every query limit and the `sparql_query` audit log live in that
