@@ -10,10 +10,7 @@ NEPTUNE:
   serverless_max_capacity: 16.0
   deletion_protection: true
 
-NEPTUNE_VIZ:
-  enabled: true
-  allowed_cidrs:
-    - 52.44.61.21/32  # Sage network egress IP (VPN / office) — only source allowed to reach the UI
+# Graph Explorer is dev-only (SKG-230): prod keeps config/base.yaml's NEPTUNE_VIZ.enabled: false.
 
 API_EDGE:
   enabled: true
