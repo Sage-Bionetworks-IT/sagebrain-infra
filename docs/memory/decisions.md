@@ -26,6 +26,10 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 - **Graph Explorer queries Neptune directly** (#36), so they bypass the `/query` audit log. Its
   access control is the ALB's IP allow-list. A standing exception to constitution article V, as is
   the temporary bastion (#67): both are operator/VPN-only, not user-facing query paths.
+- **Graph Explorer is dev only (2026-11-03, SKG-230).** No user identity, plain HTTP and no audit
+  log, so prod dropped it; prod reads go through `/query` and `/ask`. Removing a stack from the app
+  doesn't delete it (`cdk deploy --all` skips it), so `app-prod-neptune-viz` is deleted by hand
+  (`delete-stack`) after the promotion deploys.
 
 ## API / auth
 - **Both APIs are async (submit + poll)**, because SPARQL takes 4–40s and API Gateway caps at 29s (#18).
