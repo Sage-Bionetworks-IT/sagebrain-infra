@@ -18,6 +18,22 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   `?errors=TRUE&details=TRUE`, so you rarely need direct Neptune access to see what broke.
 
 ## Infrastructure
+- **AWS-managed keys are enough; only the SNS topic gets a customer-managed key (2026-11-03, spec
+  005 N21; not built).** NIST 800-171 doesn't require customer-managed keys, and AWS-managed keys
+  sit in the same FIPS-validated KMS. This drops a KMS stack and a Neptune cluster rebuild. Given
+  up: key policies as a second gate, and crypto-shred at decommission. SNS is the exception,
+  because CloudWatch alarms and EventBridge can't publish to a topic on `aws/sns` (its policy
+  can't be edited).
+- **Change control is the reviewed PR; CI deploys with `--require-approval never` (2026-10-27).**
+  The `dev` ruleset requires a squash PR with 1 approval, and only CI deploys, through the OIDC role.
+  `cdk deploy` doesn't prompt again, because the review already happened at the PR. This is
+  accepted for NIST 800-171 03.04.03 and 03.01.04 (spec 005 N10).
+- **The data bucket's write path is enforced and audited in this repo, not by IT (2026-10-28, spec
+  005 N13/N46; not built).** The bucket and the depositor OIDC roles (organizations-infra #1605)
+  share the sagebrain account, so the bucket policy's explicit Denies override the roles' broad
+  Allows: per-prefix writes, and no `DeleteObjectVersion`. A bucket-scoped CloudTrail trail
+  (write data events only) gives each upload's role, and so its depositor repo. This is the one
+  exception to "CloudTrail is IT's". Narrowing IT's roles is optional cleanup.
 - **Neptune is serverless-only** with per-env min/max capacity (#45). Big Turtle files can OOM the
   loader on small capacity (#10).
 - **Removed: the SageMaker stack** (#56). It was the old way into the VPC; direct access is now the
@@ -29,9 +45,16 @@ Newest first within each theme. Each entry: the decision → why → where it wa
 - **Graph Explorer is dev only (2026-11-03, SKG-230).** No user identity, plain HTTP and no audit
   log, so prod dropped it; prod reads go through `/query` and `/ask`. Removing a stack from the app
   doesn't delete it (`cdk deploy --all` skips it), so `app-prod-neptune-viz` is deleted by hand
-  (`delete-stack`) after the promotion deploys.
+  (`delete-stack`) after the promotion deploys. Dev never holds CUI, so dev's Graph Explorer is
+  outside spec 005's CUI boundary. This replaces the 2026-10-27 plan to harden it for prod with a
+  Synapse OAuth login at the ALB and an audit sidecar.
 
 ## API / auth
+- **MFA for API users is inherited from Synapse (2026-11-03, spec 005 N04; evidence pending).**
+  Synapse requires MFA at login, and the PATs and OAuth tokens the API accepts are created from a
+  logged-in session, so the authorizer doesn't check 2FA itself. The remaining gap is PAT lifetime:
+  Synapse sets no `exp` or maximum age. That's Synapse's to fix, so it's POAM-001, not a ticket here. If an assessor rejects the inheritance, the fallback is a
+  `GET /auth/v1/2fa` check at auth time.
 - **Both APIs are async (submit + poll)**, because SPARQL takes 4–40s and API Gateway caps at 29s (#18).
 - **Synapse team-gated authorizer** (#31, #40). Dev and prod use different teams (#63, issue #62).
 - **Spec-driven development, one API Gateway endpoint** (spec 001). The contract comes first: a

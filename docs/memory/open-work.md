@@ -3,6 +3,15 @@
 Durable context only. Check current status with `gh issue view N`. Delete an entry in the PR that
 resolves it.
 
+## Compliance (NIST SP 800-171, CUI)
+- **The system will hold CUI.** The gaps found by the 2026-10-23 scrub are tracked as tickets
+  N01–N76 in [specs/005-nist-800-171/tickets.md](../../specs/005-nist-800-171/tickets.md), not
+  copied here. Account-level services (CloudTrail, GuardDuty, Config, Security Hub, Identity
+  Center MFA) are Sage IT's and inherited (2026-10-23). No env loads CUI until the spec's CUI gate
+  closes.
+  Open weaknesses and their milestones are in the POA&M,
+  [docs/compliance/poam.md](../compliance/poam.md).
+
 ## Ingestion pipeline
 - **Failed or partial loads stay live in the union** until someone re-publishes that date. Options
   are drop-before-load (self-healing on re-publish) vs drop-on-failure (covers the gap), and a

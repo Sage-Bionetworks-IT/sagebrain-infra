@@ -16,8 +16,9 @@ only write path besides the bulk loader. Last used 2026-10-08 to drop the stale
   problems you get when forwarding `localhost:8182`.
 - The role is limited to `ReadDataViaQuery`, `DeleteDataViaQuery`, `GetQueryStatus` and
   `CancelQuery` on the cluster. To INSERT or run the loader, add actions in `app.py` deliberately.
-- These calls don't produce a `sparql_query` audit log. Neptune's own `audit` CloudWatch log
-  still records them.
+- These calls don't produce a `sparql_query` audit log. Neptune's `audit` log is exported, but
+  the cluster has no parameter group, so `neptune_enable_audit_log=0` and **nothing records them**
+  (spec 004 research Q7). Spec 005 N14 turns it on.
 
 ## Steps
 ```bash
