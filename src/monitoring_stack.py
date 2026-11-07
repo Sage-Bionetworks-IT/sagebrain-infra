@@ -17,7 +17,7 @@ class MonitoringStack(cdk.Stack):
     Layout (top to bottom):
       - Query jobs  (worker, SQS + DLQ alarm, DynamoDB)
       - Agent jobs  (worker + concurrency, SQS + DLQ alarm, DynamoDB)
-      - Neptune     (CPU + per-instance CPU alarm, memory, SPARQL req/s, cache hit ratio)
+      - Neptune     (CPU and memory, each with a per-instance alarm; SPARQL req/s, cache hit ratio)
     """
 
     def __init__(
@@ -38,7 +38,7 @@ class MonitoringStack(cdk.Stack):
         neptune_cluster_id: str,
         # DBInstanceIdentifier of each instance: one CPU alarm each
         neptune_instance_ids: list[str],
-        # NEPTUNE_ALARMS (config/base.yaml): neptune_cpu_percent, neptune_cpu_minutes
+        # NEPTUNE_ALARMS (config/base.yaml): CPU and freeable-memory thresholds
         neptune_alarms: dict,
         # Alarms email this topic (the unified API's, src/api_edge_monitoring.py); None: no action
         alarm_topic: sns.ITopic | None = None,
@@ -362,35 +362,63 @@ class MonitoringStack(cdk.Stack):
             ),
         )
 
-        # One CPU alarm per instance: Vanta's "SQL database CPU monitored" test checks each
-        # DB instance for a CPUUtilization alarm, so a cluster-level one doesn't count.
+        # Per-instance alarms: Vanta's "SQL database CPU monitored" and "SQL database freeable
+        # memory monitored" tests check each DB instance for an alarm on that metric, so
+        # cluster-level ones don't count.
         # No label on the alarm's metric: it would switch the alarm to the math form (gotchas).
+        for key in ("neptune_cpu_minutes", "neptune_freeable_memory_minutes"):
+            if neptune_alarms[key] <= 0 or neptune_alarms[key] % 5:
+                raise ValueError(
+                    f"NEPTUNE_ALARMS.{key} must be a positive multiple of 5"
+                )
         cpu_percent = neptune_alarms["neptune_cpu_percent"]
         cpu_minutes = neptune_alarms["neptune_cpu_minutes"]
-        if cpu_minutes <= 0 or cpu_minutes % 5:
-            raise ValueError(
-                "NEPTUNE_ALARMS.neptune_cpu_minutes must be a positive multiple of 5"
-            )
+        memory_mib = neptune_alarms["neptune_freeable_memory_mib"]
+        memory_minutes = neptune_alarms["neptune_freeable_memory_minutes"]
+        instance_alarms = [
+            (
+                "Cpu",
+                "CPUUtilization",
+                cpu_percent,
+                cpu_minutes,
+                cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+                f"average CPU >= {cpu_percent}% for {cpu_minutes} min",
+            ),
+            (
+                "FreeableMemory",
+                "FreeableMemory",
+                memory_mib * 1024 * 1024,
+                memory_minutes,
+                cw.ComparisonOperator.LESS_THAN_THRESHOLD,
+                f"average freeable memory < {memory_mib} MiB for {memory_minutes} min",
+            ),
+        ]
         for i, instance_id in enumerate(neptune_instance_ids, start=1):
-            cpu_alarm = cw.Alarm(
-                self,
-                f"NeptuneInstance{i}CpuAlarm",
-                metric=cw.Metric(
-                    namespace="AWS/Neptune",
-                    metric_name="CPUUtilization",
-                    dimensions_map={"DBInstanceIdentifier": instance_id},
-                    statistic="Average",
-                    period=cdk.Duration.minutes(5),
-                ),
-                threshold=cpu_percent,
-                evaluation_periods=cpu_minutes // 5,
-                comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-                alarm_description=(
-                    f"Neptune instance {i} average CPU >= {cpu_percent}% for {cpu_minutes} min"
-                ),
-            )
-            if alarm_topic:
-                cpu_alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
+            for (
+                name,
+                metric_name,
+                threshold,
+                minutes,
+                operator,
+                what,
+            ) in instance_alarms:
+                alarm = cw.Alarm(
+                    self,
+                    f"NeptuneInstance{i}{name}Alarm",
+                    metric=cw.Metric(
+                        namespace="AWS/Neptune",
+                        metric_name=metric_name,
+                        dimensions_map={"DBInstanceIdentifier": instance_id},
+                        statistic="Average",
+                        period=cdk.Duration.minutes(5),
+                    ),
+                    threshold=threshold,
+                    evaluation_periods=minutes // 5,
+                    comparison_operator=operator,
+                    alarm_description=f"Neptune instance {i} {what}",
+                )
+                if alarm_topic:
+                    alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
 
         # -------------------------------------------------------------- #
         # Outputs

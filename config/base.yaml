@@ -51,6 +51,11 @@ NEPTUNE_ALARMS:
   neptune_cpu_percent: 80
   # A multiple of 5
   neptune_cpu_minutes: 15
+  # Average FreeableMemory below this in every 5 minutes for neptune_freeable_memory_minutes.
+  # A db.serverless instance has 2 GiB per NCU, so this is a floor at any capacity
+  neptune_freeable_memory_mib: 512
+  # A multiple of 5
+  neptune_freeable_memory_minutes: 15
 
 # Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
 # uploads and bulk-loads {portal}/YYYY-MM-DD/data/ (Turtle only) into its own
