@@ -33,7 +33,7 @@ aws --profile sagebrain sso login       # prod
 | NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only). **Dev only**: not in prod |
 | NeptunePipelineStack | `app-dev-neptune-pipeline` | Append-only ingestion — S3 `manifest.ttl` → EventBridge → Step Functions → Neptune bulk loader (one named graph per snapshot) |
 | ApiEdgeStack | `app-dev-api` | Unified API (spec 001): the one REST API: `/query`, `/ask` and public docs at `/api`, in front of the job tables/queues. `API_EDGE.enabled` (on in dev and prod) |
-| MonitoringStack | `app-dev-monitoring` | Dashboard for the workers, queues/DLQs, job tables and Neptune (the API's own alarms and dashboard are in `app-dev-api`) |
+| MonitoringStack | `app-dev-monitoring` | Dashboard for the workers, queues/DLQs, job tables and Neptune; job DLQ alarms and per-instance Neptune CPU and freeable-memory alarms (`NEPTUNE_ALARMS`, for the Vanta "SQL database CPU / freeable memory monitored" tests). The API's own alarms and dashboard are in `app-dev-api` |
 
 ## S3 Data Bucket
 

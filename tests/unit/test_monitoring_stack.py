@@ -54,6 +54,13 @@ def template():
         agent_dlq=_queue("ADLQ"),
         agent_job_table=_table("ATable"),
         neptune_cluster_id="cluster-TESTCLUSTERID",
+        neptune_instance_ids=["instance-TESTINSTANCEID"],
+        neptune_alarms={
+            "neptune_cpu_percent": 80,
+            "neptune_cpu_minutes": 15,
+            "neptune_freeable_memory_mib": 512,
+            "neptune_freeable_memory_minutes": 15,
+        },
         alarm_topic=sns.Topic(stub, "AlarmTopic"),
     )
     return Template.from_stack(stack)
@@ -84,8 +91,27 @@ def test_dashboard_url_output_exists(template):
 # ---------------------------------------------------------------------------
 
 
-def test_two_dlq_alarms_created(template):
-    template.resource_count_is("AWS::CloudWatch::Alarm", 2)
+def test_two_dlq_alarms_and_cpu_and_memory_alarms_per_instance(template):
+    template.resource_count_is("AWS::CloudWatch::Alarm", 4)
+
+
+def test_neptune_instance_cpu_alarm(template):
+    # Vanta "SQL database CPU monitored": a CPUUtilization alarm on each DB instance
+    template.has_resource_properties(
+        "AWS::CloudWatch::Alarm",
+        {
+            "Namespace": "AWS/Neptune",
+            "MetricName": "CPUUtilization",
+            "Dimensions": [
+                {"Name": "DBInstanceIdentifier", "Value": "instance-TESTINSTANCEID"}
+            ],
+            "Statistic": "Average",
+            "Period": 300,
+            "Threshold": 80,
+            "EvaluationPeriods": 3,
+            "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        },
+    )
 
 
 def test_every_alarm_notifies_the_alarm_topic(template):
@@ -118,6 +144,25 @@ def test_agent_dlq_alarm_threshold_is_one(template):
             "EvaluationPeriods": 1,
             "ComparisonOperator": "GreaterThanOrEqualToThreshold",
             "TreatMissingData": "notBreaching",
+        },
+    )
+
+
+def test_neptune_instance_freeable_memory_alarm(template):
+    # Vanta "SQL database freeable memory monitored": a FreeableMemory alarm on each DB instance
+    template.has_resource_properties(
+        "AWS::CloudWatch::Alarm",
+        {
+            "Namespace": "AWS/Neptune",
+            "MetricName": "FreeableMemory",
+            "Dimensions": [
+                {"Name": "DBInstanceIdentifier", "Value": "instance-TESTINSTANCEID"}
+            ],
+            "Statistic": "Average",
+            "Period": 300,
+            "Threshold": 512 * 1024 * 1024,
+            "EvaluationPeriods": 3,
+            "ComparisonOperator": "LessThanThreshold",
         },
     )
 

@@ -44,6 +44,19 @@ API_EDGE_ALARMS:
   # Scaling path 2: oldest message in the query or ask job queue
   queue_oldest_message_seconds: 300
 
+# Neptune alarms (src/monitoring_stack.py), one per instance; they email the API's alarm topic.
+NEPTUNE_ALARMS:
+  # Average CPUUtilization at or above this in every 5 minutes for neptune_cpu_minutes. On a
+  # db.serverless instance, sustained high CPU means it is pinned at serverless_max_capacity
+  neptune_cpu_percent: 80
+  # A multiple of 5
+  neptune_cpu_minutes: 15
+  # Average FreeableMemory below this in every 5 minutes for neptune_freeable_memory_minutes.
+  # A db.serverless instance has 2 GiB per NCU, so this is a floor at any capacity
+  neptune_freeable_memory_mib: 512
+  # A multiple of 5
+  neptune_freeable_memory_minutes: 15
+
 # Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
 # uploads and bulk-loads {portal}/YYYY-MM-DD/data/ (Turtle only) into its own
 # named graph. The manifest is the trigger and stays outside the load path.
