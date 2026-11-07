@@ -277,3 +277,41 @@ def test_neptune_requires_capacity_values(app_and_vpc):
             vpc=vpc,
             neptune_config=neptune_config,
         )
+
+
+@pytest.mark.parametrize(
+    "resource_type",
+    ["AWS::S3::Bucket", "AWS::Neptune::DBCluster", "AWS::Neptune::DBInstance"],
+)
+def test_data_store_tags_applied(app_and_vpc, neptune_config, resource_type):
+    """data_store_tags land on the bucket, the cluster and the instances"""
+    app, vpc = app_and_vpc
+    stack = NeptuneStack(
+        app,
+        "TestNeptuneStack",
+        vpc=vpc,
+        neptune_config=neptune_config,
+        data_store_tags={"DataClass": "internal"},
+    )
+    template = Template.from_stack(stack)
+    template.has_resource_properties(
+        resource_type,
+        {"Tags": Match.array_with([{"Key": "DataClass", "Value": "internal"}])},
+    )
+
+
+def test_data_store_tags_not_on_other_resources(app_and_vpc, neptune_config):
+    """Only data stores get them, not e.g. the load role"""
+    app, vpc = app_and_vpc
+    stack = NeptuneStack(
+        app,
+        "TestNeptuneStack",
+        vpc=vpc,
+        neptune_config=neptune_config,
+        data_store_tags={"DataClass": "internal"},
+    )
+    template = Template.from_stack(stack)
+    role = next(iter(template.find_resources("AWS::IAM::Role").values()))
+    assert {"Key": "DataClass", "Value": "internal"} not in role["Properties"].get(
+        "Tags", []
+    )
