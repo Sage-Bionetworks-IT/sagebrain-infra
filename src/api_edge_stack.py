@@ -148,7 +148,7 @@ class ApiEdgeStack(cdk.Stack):
         # Authorizer — no VPC (calls Synapse's public API)
         # Synapse bearer tokens are the only credential; x-api-key is ignored (D-4).
         # -------------------
-        authorizer_fn = lambda_.Function(
+        self.authorizer_fn = authorizer_fn = lambda_.Function(
             self,
             "SynapseAuthorizerFunction",
             runtime=lambda_.Runtime.PYTHON_3_11,

@@ -123,6 +123,14 @@ if config.get("NEPTUNE_PIPELINE", {}).get("enabled", True):
         env=env,
     )
 
+lambda_sustained_minutes = {}
+if alarm_topic:
+    # The authorizer raises (503) while Synapse is down, ~30 min every Sunday: alarm on the
+    # same sustained window as the API's 503 alarm
+    lambda_sustained_minutes[api_edge_stack.authorizer_fn.node.path] = config[
+        "API_EDGE_ALARMS"
+    ]["synapse_outage_minutes"]
+
 monitoring_stack = MonitoringStack(
     scope=cdk_app,
     construct_id=f"{STACK_NAME_PREFIX}-monitoring",
@@ -136,6 +144,10 @@ monitoring_stack = MonitoringStack(
     agent_job_table=neptune_agent_stack.job_table,
     neptune_cluster_id=neptune_stack.neptune_cluster.ref,
     alarm_topic=alarm_topic,
+    # Every stack built above: each of their Lambda functions gets an Errors alarm
+    lambda_stacks=tuple(c for c in cdk_app.node.children if isinstance(c, cdk.Stack)),
+    lambda_error_alarms=config["LAMBDA_ERROR_ALARMS"],
+    lambda_sustained_minutes=lambda_sustained_minutes,
     env=env,
 )
 

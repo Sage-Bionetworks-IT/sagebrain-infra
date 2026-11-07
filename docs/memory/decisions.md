@@ -30,6 +30,14 @@ Newest first within each theme. Each entry: the decision → why → where it wa
   log, so prod dropped it; prod reads go through `/query` and `/ask`. Removing a stack from the app
   doesn't delete it (`cdk deploy --all` skips it), so `app-prod-neptune-viz` is deleted by hand
   (`delete-stack`) after the promotion deploys.
+- **An `Errors` alarm per Lambda, all in the monitoring stack (2026-11-06).** For Vanta's
+  "Serverless function error rate monitored (AWS)" (`serverless-function-error-rate-monitored-aws`,
+  NIST 800-53 / FedRAMP 20x). Per function, not one account-wide alarm: the email names the
+  function, and one noisy function (the authorizer on Sundays) can't hold an account-wide alarm in
+  `ALARM` and hide the rest. Found by scanning the stacks, so CDK's helper functions are covered
+  too. In the monitoring stack because the network, Neptune and worker stacks can't import the
+  API's alarm topic without a cycle. Workers and the loader can email twice (this alarm, then the
+  DLQ alarm or the pipeline's failure email); accepted, the first is sooner.
 
 ## API / auth
 - **Both APIs are async (submit + poll)**, because SPARQL takes 4–40s and API Gateway caps at 29s (#18).

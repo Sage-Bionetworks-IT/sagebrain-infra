@@ -33,7 +33,7 @@ aws --profile sagebrain sso login       # prod
 | NeptuneVizStack | `app-dev-neptune-viz` | Open-source Graph Explorer on Fargate behind an IP-restricted ALB (VPN-only). **Dev only**: not in prod |
 | NeptunePipelineStack | `app-dev-neptune-pipeline` | Append-only ingestion — S3 `manifest.ttl` → EventBridge → Step Functions → Neptune bulk loader (one named graph per snapshot) |
 | ApiEdgeStack | `app-dev-api` | Unified API (spec 001): the one REST API: `/query`, `/ask` and public docs at `/api`, in front of the job tables/queues. `API_EDGE.enabled` (on in dev and prod) |
-| MonitoringStack | `app-dev-monitoring` | Dashboard for the workers, queues/DLQs, job tables and Neptune (the API's own alarms and dashboard are in `app-dev-api`) |
+| MonitoringStack | `app-dev-monitoring` | Dashboard for the workers, queues/DLQs, job tables and Neptune, and an `Errors` alarm on every Lambda in the app (the API's own alarms and dashboard are in `app-dev-api`) |
 
 ## S3 Data Bucket
 
@@ -227,6 +227,11 @@ APIs, deleted in Phase 5 (T503). The tables, queues and workers stay in `app-*-n
   email `ALARM_EMAIL` (per env) via SNS, which needs a one-time subscription confirmation. That topic
   is the env's only alarm topic: `app.py` passes it (`ApiEdgeStack.alarm_topic`) to the monitoring
   stack's job DLQ alarms, the pipeline's rule-DLQ alarm and its per-failure email rule
+- **Lambda `Errors` alarms** (`src/lambda_error_alarms.py`, Vanta "Serverless function error rate
+  monitored"): the monitoring stack finds every `AWS::Lambda::Function` in the app's other stacks,
+  CDK's own included, and alarms on ≥ `LAMBDA_ERROR_ALARMS.errors_per_5_minutes` (1) errors in
+  5 minutes, named `<stack>-<function>-errors`. The authorizer alarms only after
+  `synapse_outage_minutes` of errors, like the 503 alarm. A new function needs no code change
 - Probes: `tools/parity_probe.py` (same base twice; compares deployments, e.g. dev vs prod) and
   `tools/load_probe.py` (`load`: design-target polling; `burst`: 600 POSTs → some 429s, each with D-18's headers). Dev results (T210) are in
   the spec's `research.md`.
