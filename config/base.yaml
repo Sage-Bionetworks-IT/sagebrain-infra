@@ -1,6 +1,12 @@
 TAGS:
   CostCenter: NO PROGRAM / 000000
 
+# Extra tags for the resources that store graph data only (S3 data bucket, Neptune
+# cluster and instances), e.g. data classification read by compliance tooling.
+DATA_STORE_TAGS:
+  VantaContainsUserData: "true"
+  VantaUserDataStored: Namespaces mostly contain public metadata but can contain controlled access data
+
 NEPTUNE:
   engine_version: "1.3.2.1"
   serverless_min_capacity: 1.0

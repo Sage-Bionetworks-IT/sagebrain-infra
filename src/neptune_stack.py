@@ -17,9 +17,16 @@ class NeptuneStack(cdk.Stack):
         construct_id: str,
         vpc: ec2.Vpc,
         neptune_config: dict,
+        data_store_tags: dict | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        # Tags for the resources that store graph data (the S3 data bucket and the
+        # Neptune cluster and instances), e.g. data classification (DATA_STORE_TAGS).
+        def tag_data_store(construct: Construct) -> None:
+            for key, value in (data_store_tags or {}).items():
+                cdk.Tags.of(construct).add(key, value)
 
         # -------------------
         # Security Group for Neptune
@@ -57,6 +64,7 @@ class NeptuneStack(cdk.Stack):
             # pipeline (NeptunePipelineStack) can trigger on manifest.ttl uploads.
             event_bridge_enabled=True,
         )
+        tag_data_store(self.data_bucket)
 
         # Any principal authenticated to this AWS account can read/write the bucket.
         # Access is still subject to IAM identity policies — this just removes the
@@ -181,6 +189,7 @@ class NeptuneStack(cdk.Stack):
             "NeptuneCluster",
             **cluster_props,
         )
+        tag_data_store(self.neptune_cluster)
 
         # -------------------
         # Neptune Instances
@@ -205,6 +214,7 @@ class NeptuneStack(cdk.Stack):
                     cdk.CfnTag(key="Name", value=f"{construct_id}-instance-{i + 1}"),
                 ],
             )
+            tag_data_store(instance)
             self.neptune_instances.append(instance)
 
         # -------------------

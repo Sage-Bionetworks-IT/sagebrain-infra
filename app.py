@@ -41,6 +41,7 @@ neptune_stack = NeptuneStack(
     construct_id=f"{STACK_NAME_PREFIX}-neptune",
     vpc=network_stack.vpc,
     neptune_config=config["NEPTUNE"],
+    data_store_tags=config.get("DATA_STORE_TAGS"),
     env=env,
 )
 neptune_stack.add_dependency(network_stack)
