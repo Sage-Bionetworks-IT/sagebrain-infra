@@ -17,7 +17,7 @@ class MonitoringStack(cdk.Stack):
     Layout (top to bottom):
       - Query jobs  (worker, SQS + DLQ alarm, DynamoDB)
       - Agent jobs  (worker + concurrency, SQS + DLQ alarm, DynamoDB)
-      - Neptune     (CPU, memory, SPARQL req/s, cache hit ratio)
+      - Neptune     (CPU + per-instance CPU alarm, memory, SPARQL req/s, cache hit ratio)
     """
 
     def __init__(
@@ -36,6 +36,10 @@ class MonitoringStack(cdk.Stack):
         agent_job_table: dynamodb.Table,
         # Neptune
         neptune_cluster_id: str,
+        # DBInstanceIdentifier of each instance: one CPU alarm each
+        neptune_instance_ids: list[str],
+        # NEPTUNE_ALARMS (config/base.yaml): neptune_cpu_percent, neptune_cpu_minutes
+        neptune_alarms: dict,
         # Alarms email this topic (the unified API's, src/api_edge_monitoring.py); None: no action
         alarm_topic: sns.ITopic | None = None,
         **kwargs,
@@ -357,6 +361,36 @@ class MonitoringStack(cdk.Stack):
                 width=12,
             ),
         )
+
+        # One CPU alarm per instance: Vanta's "SQL database CPU monitored" test checks each
+        # DB instance for a CPUUtilization alarm, so a cluster-level one doesn't count.
+        # No label on the alarm's metric: it would switch the alarm to the math form (gotchas).
+        cpu_percent = neptune_alarms["neptune_cpu_percent"]
+        cpu_minutes = neptune_alarms["neptune_cpu_minutes"]
+        if cpu_minutes <= 0 or cpu_minutes % 5:
+            raise ValueError(
+                "NEPTUNE_ALARMS.neptune_cpu_minutes must be a positive multiple of 5"
+            )
+        for i, instance_id in enumerate(neptune_instance_ids, start=1):
+            cpu_alarm = cw.Alarm(
+                self,
+                f"NeptuneInstance{i}CpuAlarm",
+                metric=cw.Metric(
+                    namespace="AWS/Neptune",
+                    metric_name="CPUUtilization",
+                    dimensions_map={"DBInstanceIdentifier": instance_id},
+                    statistic="Average",
+                    period=cdk.Duration.minutes(5),
+                ),
+                threshold=cpu_percent,
+                evaluation_periods=cpu_minutes // 5,
+                comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+                alarm_description=(
+                    f"Neptune instance {i} average CPU >= {cpu_percent}% for {cpu_minutes} min"
+                ),
+            )
+            if alarm_topic:
+                cpu_alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
 
         # -------------------------------------------------------------- #
         # Outputs

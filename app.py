@@ -135,6 +135,8 @@ monitoring_stack = MonitoringStack(
     agent_dlq=neptune_agent_stack.dlq,
     agent_job_table=neptune_agent_stack.job_table,
     neptune_cluster_id=neptune_stack.neptune_cluster.ref,
+    neptune_instance_ids=[i.ref for i in neptune_stack.neptune_instances],
+    neptune_alarms=config["NEPTUNE_ALARMS"],
     alarm_topic=alarm_topic,
     env=env,
 )

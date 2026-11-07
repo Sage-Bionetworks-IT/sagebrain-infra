@@ -54,6 +54,8 @@ def template():
         agent_dlq=_queue("ADLQ"),
         agent_job_table=_table("ATable"),
         neptune_cluster_id="cluster-TESTCLUSTERID",
+        neptune_instance_ids=["instance-TESTINSTANCEID"],
+        neptune_alarms={"neptune_cpu_percent": 80, "neptune_cpu_minutes": 15},
         alarm_topic=sns.Topic(stub, "AlarmTopic"),
     )
     return Template.from_stack(stack)
@@ -84,8 +86,27 @@ def test_dashboard_url_output_exists(template):
 # ---------------------------------------------------------------------------
 
 
-def test_two_dlq_alarms_created(template):
-    template.resource_count_is("AWS::CloudWatch::Alarm", 2)
+def test_two_dlq_alarms_and_one_cpu_alarm_per_instance(template):
+    template.resource_count_is("AWS::CloudWatch::Alarm", 3)
+
+
+def test_neptune_instance_cpu_alarm(template):
+    # Vanta "SQL database CPU monitored": a CPUUtilization alarm on each DB instance
+    template.has_resource_properties(
+        "AWS::CloudWatch::Alarm",
+        {
+            "Namespace": "AWS/Neptune",
+            "MetricName": "CPUUtilization",
+            "Dimensions": [
+                {"Name": "DBInstanceIdentifier", "Value": "instance-TESTINSTANCEID"}
+            ],
+            "Statistic": "Average",
+            "Period": 300,
+            "Threshold": 80,
+            "EvaluationPeriods": 3,
+            "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        },
+    )
 
 
 def test_every_alarm_notifies_the_alarm_topic(template):
