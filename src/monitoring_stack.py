@@ -7,6 +7,8 @@ from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
+from src.lambda_error_alarms import add_lambda_error_alarms
+
 
 class MonitoringStack(cdk.Stack):
     """
@@ -18,6 +20,8 @@ class MonitoringStack(cdk.Stack):
       - Query jobs  (worker, SQS + DLQ alarm, DynamoDB)
       - Agent jobs  (worker + concurrency, SQS + DLQ alarm, DynamoDB)
       - Neptune     (CPU, memory, SPARQL req/s, cache hit ratio)
+
+    Also an Errors alarm on every Lambda function in `lambda_stacks` (src/lambda_error_alarms.py).
     """
 
     def __init__(
@@ -38,6 +42,11 @@ class MonitoringStack(cdk.Stack):
         neptune_cluster_id: str,
         # Alarms email this topic (the unified API's, src/api_edge_monitoring.py); None: no action
         alarm_topic: sns.ITopic | None = None,
+        # Stacks whose Lambda functions each get an Errors alarm (LAMBDA_ERROR_ALARMS)
+        lambda_stacks: tuple[cdk.Stack, ...] = (),
+        lambda_error_alarms: dict | None = None,
+        # Function construct path -> minutes of errors in a row before it alarms
+        lambda_sustained_minutes: dict[str, int] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -356,6 +365,19 @@ class MonitoringStack(cdk.Stack):
                 ],
                 width=12,
             ),
+        )
+
+        # ------------------------------------------------------------------ #
+        # Lambda Errors alarms (Vanta: serverless-function-error-rate-monitored-aws)
+        # ------------------------------------------------------------------ #
+        add_lambda_error_alarms(
+            self,
+            lambda_stacks,
+            errors_per_5_minutes=(lambda_error_alarms or {}).get(
+                "errors_per_5_minutes", 1
+            ),
+            sustained_minutes=lambda_sustained_minutes,
+            alarm_topic=alarm_topic,
         )
 
         # -------------------------------------------------------------- #

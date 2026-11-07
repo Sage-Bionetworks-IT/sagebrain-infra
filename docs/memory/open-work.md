@@ -41,3 +41,10 @@ resolves it.
 - Narrow Neptune SG egress to the S3 prefix list (#15). Make the endpoint configurable per env (#14).
 - Extract the Synapse authorizer into a reusable construct (#32). Stop reading env at import time (#8).
 - #4 and #13 refer to the removed SageMaker stack and are likely obsolete.
+- **Vanta's Lambda error test still fails in prod on Sage IT's functions** (`lambda-ebs-cleanup`,
+  `cfn-s3objects-macro` ×2, the `sagebase-systemsmanager-patch-group` Tagger). They're deployed
+  into every Sage account and fail there too, so the fix is IT's (an alarm in their StackSets), or
+  an account-wide `Errors` alarm here with a sustained threshold. Our 11 are covered.
+- **Readable Lambda names** (`app-prod-query-worker` over `…NeptuneQueryFunctionB8541B6D-up0H…`):
+  set `function_name=`. Each rename replaces the function, starts a new log group (the old one,
+  with its audit history, stays) and is blocked by the monitoring stack's import (see gotchas).

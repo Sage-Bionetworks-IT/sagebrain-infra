@@ -63,6 +63,12 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   `targets.SnsTopic(..., authorize_using_role=True)` instead.
 - **A CDK metric with a `label` makes an alarm use the `Metrics` (math) form**, with no top-level
   `MetricName`. Label the dashboard copy (`metric.with_(label=…)`), not the alarm's metric.
+  Vanta's alarm tests read `MetricName` and the dimensions, so a labelled alarm doesn't count.
+- **The monitoring stack imports every Lambda's name** (its `Errors` alarms and dashboard), and
+  CloudFormation can't change an export another stack imports. Renaming a function (or anything
+  that replaces it) fails until the import is gone: drop the alarm in one PR, rename in the next.
+- **Synth without `cdk` (`python app.py`) skips `cdk.json`'s feature flags** unless they're in
+  `CDK_CONTEXT_JSON`, so the templates differ (no VPC default-SG custom resource, for one).
 - **An API Gateway REST throttle is not a strict token bucket.** 300 concurrent `POST /query` (273
   of them in one second) all got through a 50 / 100 stage on both the old and the unified API;
   600 got 60, then 179, 429s (dev, 2026-10-13). A burst probe can show the throttle engages, not

@@ -44,6 +44,12 @@ API_EDGE_ALARMS:
   # Scaling path 2: oldest message in the query or ask job queue
   queue_oldest_message_seconds: 300
 
+# An Errors alarm on every Lambda function the app deploys, emailing ALARM_EMAIL (Vanta:
+# "Serverless function error rate monitored (AWS)"). The authorizer alarms only after
+# API_EDGE_ALARMS.synapse_outage_minutes of errors (Synapse's Sunday maintenance), see app.py.
+LAMBDA_ERROR_ALARMS:
+  errors_per_5_minutes: 1
+
 # Append-only ingestion pipeline. Triggers on {portal}/YYYY-MM-DD/manifest.ttl
 # uploads and bulk-loads {portal}/YYYY-MM-DD/data/ (Turtle only) into its own
 # named graph. The manifest is the trigger and stays outside the load path.

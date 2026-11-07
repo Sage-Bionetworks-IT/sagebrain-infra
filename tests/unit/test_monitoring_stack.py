@@ -30,6 +30,17 @@ def template():
             code=lambda_.Code.from_inline("def handler(e, c): pass"),
         )
 
+    # An L1 function (CDK's own helpers, e.g. custom-resource providers, are L1)
+    raw = cdk.Stack(app, "Raw")
+    lambda_.CfnFunction(
+        raw,
+        "RawFn",
+        code=lambda_.CfnFunction.CodeProperty(zip_file="def handler(e, c): pass"),
+        role="arn:aws:iam::123456789012:role/test",
+        handler="index.handler",
+        runtime="python3.11",
+    )
+
     def _queue(name: str) -> sqs.Queue:
         return sqs.Queue(stub, name)
 
@@ -55,6 +66,9 @@ def template():
         agent_job_table=_table("ATable"),
         neptune_cluster_id="cluster-TESTCLUSTERID",
         alarm_topic=sns.Topic(stub, "AlarmTopic"),
+        lambda_stacks=(stub, raw),
+        lambda_error_alarms={"errors_per_5_minutes": 1},
+        lambda_sustained_minutes={"Stubs/AWorker": 60},
     )
     return Template.from_stack(stack)
 
@@ -84,8 +98,9 @@ def test_dashboard_url_output_exists(template):
 # ---------------------------------------------------------------------------
 
 
-def test_two_dlq_alarms_created(template):
-    template.resource_count_is("AWS::CloudWatch::Alarm", 2)
+def test_two_dlq_alarms_and_one_per_lambda(template):
+    # QDLQ, ADLQ + QWorker, AWorker, RawFn
+    template.resource_count_is("AWS::CloudWatch::Alarm", 5)
 
 
 def test_every_alarm_notifies_the_alarm_topic(template):
@@ -120,6 +135,48 @@ def test_agent_dlq_alarm_threshold_is_one(template):
             "TreatMissingData": "notBreaching",
         },
     )
+
+
+def _lambda_error_alarms(template) -> dict:
+    alarms = template.find_resources("AWS::CloudWatch::Alarm")
+    return {
+        a["Properties"]["AlarmName"]: a["Properties"]
+        for a in alarms.values()
+        if a["Properties"].get("MetricName") == "Errors"
+    }
+
+
+def test_every_lambda_has_a_plain_errors_alarm(template):
+    """Vanta reads the top-level MetricName and the FunctionName dimension."""
+    alarms = _lambda_error_alarms(template)
+    assert set(alarms) == {
+        "Stubs-QWorker-errors",
+        "Stubs-AWorker-errors",
+        "Raw-RawFn-errors",
+    }
+    for props in alarms.values():
+        assert props["Namespace"] == "AWS/Lambda"
+        assert props["Statistic"] == "Sum"
+        assert props["Period"] == 300
+        assert "Metrics" not in props  # not the math form (a labelled metric)
+        [dimension] = props["Dimensions"]
+        assert dimension["Name"] == "FunctionName"
+        assert "Fn::ImportValue" in dimension["Value"]
+
+
+def test_lambda_errors_alarm_fires_on_one_error(template):
+    props = _lambda_error_alarms(template)["Stubs-QWorker-errors"]
+    assert props["Threshold"] == 1
+    assert props["EvaluationPeriods"] == 1
+    assert props["DatapointsToAlarm"] == 1
+    assert props["TreatMissingData"] == "notBreaching"
+
+
+def test_sustained_lambda_errors_alarm_needs_every_period(template):
+    props = _lambda_error_alarms(template)["Stubs-AWorker-errors"]
+    assert props["Threshold"] == 1
+    assert props["EvaluationPeriods"] == 12
+    assert props["DatapointsToAlarm"] == 12
 
 
 # ---------------------------------------------------------------------------
