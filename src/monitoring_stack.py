@@ -7,6 +7,8 @@ from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
+from src.queue_alarms import dlq_age_alarm
+
 
 class MonitoringStack(cdk.Stack):
     """
@@ -120,6 +122,7 @@ class MonitoringStack(cdk.Stack):
         )
         if alarm_topic:
             query_dlq_alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
+        dlq_age_alarm(self, "QueryDLQAgeAlarm", query_dlq, "A query job", alarm_topic)
         dashboard.add_widgets(
             cw.AlarmWidget(
                 title="Query DLQ (alarm if > 0 messages)",
@@ -227,6 +230,7 @@ class MonitoringStack(cdk.Stack):
         )
         if alarm_topic:
             agent_dlq_alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
+        dlq_age_alarm(self, "AgentDLQAgeAlarm", agent_dlq, "An agent job", alarm_topic)
         dashboard.add_widgets(
             cw.AlarmWidget(
                 title="Agent DLQ (alarm if > 0 messages)",

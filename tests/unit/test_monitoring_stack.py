@@ -84,8 +84,22 @@ def test_dashboard_url_output_exists(template):
 # ---------------------------------------------------------------------------
 
 
-def test_two_dlq_alarms_created(template):
-    template.resource_count_is("AWS::CloudWatch::Alarm", 2)
+def test_four_dlq_alarms_created(template):
+    # A message count and a message age alarm per DLQ
+    template.resource_count_is("AWS::CloudWatch::Alarm", 4)
+
+
+@pytest.mark.parametrize("dlq", ["QDLQ", "ADLQ"])
+def test_each_dlq_has_a_message_age_alarm(template, dlq):
+    # Vanta "Messaging queue message age monitored": every queue, at most 5000 s
+    (props,) = (
+        a["Properties"]
+        for a in template.find_resources("AWS::CloudWatch::Alarm").values()
+        if a["Properties"]["MetricName"] == "ApproximateAgeOfOldestMessage"
+        and dlq in str(a["Properties"]["Dimensions"])
+    )
+    assert props["Dimensions"][0]["Name"] == "QueueName"
+    assert props["Threshold"] == 3600
 
 
 def test_every_alarm_notifies_the_alarm_topic(template):

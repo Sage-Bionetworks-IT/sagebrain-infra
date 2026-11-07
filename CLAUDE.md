@@ -97,7 +97,8 @@ S3 "Object Created" (EventBridge) → EventBridge Rule (key suffix "manifest.ttl
   is the append-only lineage/audit trail — no TTL. **Each** failed or timed-out execution emails
   `ALARM_EMAIL` once (EventBridge rule → the API's alarm topic) with its error, cause and a console
   link. The Fail states carry the real error (`cause_path`): the loader's exception for a bad key,
-  or the snapshot plus Neptune's load errors (`record` returns `error`). The rule-DLQ alarm emails too;
+  or the snapshot plus Neptune's load errors (`record` returns `error`). The rule-DLQ alarm emails too (and
+  again if the message is still there an hour later: every DLQ has that age alarm, for Vanta);
   the failed-executions alarm has no action, since an alarm emails once per incident. A descending query gives the latest
   snapshot graph per portal. Every load emits a structured `{"event":"kg_load", ...}` log line.
 

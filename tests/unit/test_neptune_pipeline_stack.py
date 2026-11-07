@@ -177,7 +177,7 @@ def test_rule_dlq_created(template):
 
 
 def test_alarms_created(template):
-    template.resource_count_is("AWS::CloudWatch::Alarm", 2)
+    template.resource_count_is("AWS::CloudWatch::Alarm", 3)
 
 
 def _alarm(template, construct_id):
@@ -192,6 +192,17 @@ def _alarm(template, construct_id):
 def test_rule_dlq_alarm_emails_the_alarm_topic(template):
     actions = _alarm(template, "PipelineRuleDLQAlarm")["AlarmActions"]
     assert len(actions) == 1 and "AlarmTopic" in str(actions[0])
+
+
+def test_rule_dlq_age_alarm_emails_after_an_hour(template):
+    # Vanta "Messaging queue message age monitored": every queue, at most 5000 s
+    props = _alarm(template, "PipelineRuleDLQAgeAlarm")
+    assert props["MetricName"] == "ApproximateAgeOfOldestMessage"
+    assert props["Dimensions"][0]["Name"] == "QueueName"
+    assert props["Threshold"] == 3600
+    assert len(props["AlarmActions"]) == 1 and "AlarmTopic" in str(
+        props["AlarmActions"][0]
+    )
 
 
 def test_failed_executions_alarm_sends_no_email(template):
