@@ -58,6 +58,11 @@ Symptom → cause → fix. Add one when something cost you more than 15 minutes.
   sends nothing until it clears and fires again. That also makes an alarm one email per
   incident: failures while it's in `ALARM` stay silent. For one email per failure, use an
   EventBridge rule on the event (the pipeline's `PipelineFailureEmailRule`).
+- **Vanta wants an `ApproximateAgeOfOldestMessage` alarm on every SQS queue.** Its test
+  "Messaging queue message age monitored" (in the SageBionetworks.Staging org, which scans the
+  prod account) failed on the three DLQs until 2026-11-06. A new queue needs one too:
+  `src/queue_alarms.py` `dlq_age_alarm` for a DLQ, or an age alarm like the job queues' in
+  `src/api_edge_monitoring.py`. The test's fail message implies a threshold of at most 5000 s.
 - **An SNS topic-policy grant to `events.amazonaws.com` has no source condition**, so any
   account's rule could publish, and the new policy replaces SNS's default one. Use
   `targets.SnsTopic(..., authorize_using_role=True)` instead.

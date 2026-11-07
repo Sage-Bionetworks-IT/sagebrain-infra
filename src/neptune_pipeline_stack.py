@@ -15,6 +15,8 @@ from aws_cdk import aws_stepfunctions as sfn
 from aws_cdk import aws_stepfunctions_tasks as tasks
 from constructs import Construct
 
+from src.queue_alarms import dlq_age_alarm
+
 _BUNDLING = cdk.BundlingOptions(
     image=lambda_.Runtime.PYTHON_3_11.bundling_image,
     command=[
@@ -371,6 +373,13 @@ class NeptunePipelineStack(cdk.Stack):
         if alarm_topic:
             rule_dlq_alarm.add_alarm_action(cw_actions.SnsAction(alarm_topic))
             self._email_each_failure(alarm_topic)
+        dlq_age_alarm(
+            self,
+            "PipelineRuleDLQAgeAlarm",
+            self.rule_dlq,
+            "A pipeline start event",
+            alarm_topic,
+        )
 
         # -------------------
         # Outputs
