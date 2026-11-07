@@ -43,8 +43,9 @@ resolves it.
 - #4 and #13 refer to the removed SageMaker stack and are likely obsolete.
 - **Vanta's Lambda error test still fails in prod on Sage IT's functions** (`lambda-ebs-cleanup`,
   `cfn-s3objects-macro` ×2, the `sagebase-systemsmanager-patch-group` Tagger). They're deployed
-  into every Sage account and fail there too, so the fix is IT's (an alarm in their StackSets), or
-  an account-wide `Errors` alarm here with a sustained threshold. Our 11 are covered.
+  into every Sage account and fail there too, so the fix is IT's (an alarm in their templates):
+  IT-5468, like IT-5456–5458 for account 325565585839. Fallback: alarms on their names from config
+  here (stale when IT replaces a function). Our 11 are covered.
 - **Readable Lambda names** (`app-prod-query-worker` over `…NeptuneQueryFunctionB8541B6D-up0H…`):
   set `function_name=`. Each rename replaces the function, starts a new log group (the old one,
   with its audit history, stays) and is blocked by the monitoring stack's import (see gotchas).
